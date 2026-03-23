@@ -1,0 +1,25 @@
+{
+  "name": "talking-agents",
+  "version": "0.1.0-alpha",
+  "description": "Multi-agent room communication system — AI and human agents converse and cooperate through rooms",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "dev": "bun --watch src/main.ts",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "test:unit": "bun test --filter '!Ollama'"
+  },
+  "keywords": ["agents", "multi-agent", "llm", "ollama", "communication", "rooms", "bun", "typescript"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "1.3.11"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
