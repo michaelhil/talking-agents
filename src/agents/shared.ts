@@ -1,5 +1,5 @@
 // ============================================================================
-// Shared agent utilities — extracted to avoid duplication across agent types.
+// Shared agent utilities — profile extraction and join metadata.
 // ============================================================================
 
 import type { Agent, AgentProfile, Message } from '../core/types.ts'
@@ -19,12 +19,12 @@ export const extractAgentProfile = (
   const description = meta.agentDescription
   const kind = meta.agentKind
 
-  if (typeof name === 'string' && typeof kind === 'string') {
+  if (typeof name === 'string' && (kind === 'ai' || kind === 'human')) {
     profiles.set(message.senderId, {
       id: message.senderId,
       name,
       description: typeof description === 'string' ? description : '',
-      kind: kind as 'ai' | 'human',
+      kind,
     })
   }
 }

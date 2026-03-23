@@ -10,12 +10,14 @@
 // - DM trigger: context built from DM thread with peer
 // Both paths produce the same AgentResponse with target field.
 //
+// ID Architecture: The agent generates its own UUID. The LLM sees names only.
+// Names are resolved to UUIDs externally by resolveTarget in spawn.ts.
 // The agent does NOT hold references to house, team, or postAndDeliver.
 // Side effects are handled via the onDecision callback.
 // ============================================================================
 
 import type {
-  Agent,
+  AIAgent,
   AgentProfile,
   AIAgentConfig,
   AgentResponse,
@@ -27,6 +29,13 @@ import type {
   RoomProfile,
 } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
+import {
+  addMessageWithEviction,
+  getMessagesAll,
+  getMessagesForPeer as getMessagesForPeerHelper,
+  getMessagesForRoom as getMessagesForRoomHelper,
+  getRoomIdsFromMessages,
+} from '../core/messages.ts'
 import { extractAgentProfile as extractProfile } from './shared.ts'
 
 // === Decision — what the agent wants to do after evaluation ===
@@ -51,88 +60,41 @@ export const createAIAgent = (
   config: AIAgentConfig,
   llmProvider: LLMProvider,
   onDecision: OnDecision,
-): Agent => {
+): AIAgent => {
+  const agentId = crypto.randomUUID()
   const messages: Message[] = []
   const roomProfiles = new Map<string, RoomProfile>()
   const agentProfiles = new Map<string, AgentProfile>()
   const cooldowns = new Map<string, number>()
   const generatingContexts = new Set<string>()
   const pendingContexts = new Set<string>()
+  let idleResolvers: Array<() => void> = []
 
   const historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
 
   // --- Profile extraction from join messages ---
 
   const extractAgentProfileFromMessage = (message: Message): void => {
-    extractProfile(message, config.participantId, agentProfiles)
+    extractProfile(message, agentId, agentProfiles)
   }
 
-  // --- Message management ---
+  // --- Message management (delegates to shared helpers) ---
 
   const addMessage = (message: Message): void => {
-    messages.push(message)
-    if (message.roomId) {
-      evictByFilter(m => m.roomId === message.roomId)
-    } else if (message.recipientId || message.senderId !== config.participantId) {
-      const peerId = message.senderId === config.participantId
-        ? message.recipientId
-        : message.senderId
-      if (peerId) {
-        evictByFilter(m =>
-          m.roomId === undefined && (
-            (m.senderId === peerId && m.recipientId === config.participantId) ||
-            (m.senderId === config.participantId && m.recipientId === peerId)
-          ),
-        )
-      }
-    }
+    addMessageWithEviction(messages, message, agentId, historyLimit)
   }
 
-  const evictByFilter = (filter: (m: Message) => boolean): void => {
-    const matching = messages.filter(filter)
-    if (matching.length <= historyLimit) return
-
-    const excess = matching.length - historyLimit
-    const toRemove = new Set(matching.slice(0, excess).map(m => m.id))
-    const kept = messages.filter(m => !toRemove.has(m.id))
-    messages.length = 0
-    messages.push(...kept)
-  }
-
-  // --- Derived data from own messages ---
-
-  const getMessages = (): ReadonlyArray<Message> => [...messages]
-
-  const getRoomIds = (): ReadonlyArray<string> =>
-    [...new Set(
-      messages
-        .filter(m => m.roomId !== undefined)
-        .map(m => m.roomId!),
-    )]
-
-  const getMessagesForRoom = (roomId: string, limit?: number): ReadonlyArray<Message> => {
-    const roomMsgs = messages.filter(m => m.roomId === roomId)
-    const effectiveLimit = limit ?? historyLimit
-    if (roomMsgs.length <= effectiveLimit) return roomMsgs
-    return roomMsgs.slice(-effectiveLimit)
-  }
-
-  const getMessagesForPeer = (peerId: string, limit?: number): ReadonlyArray<Message> => {
-    const peerMsgs = messages.filter(m =>
-      m.roomId === undefined && (
-        (m.senderId === peerId && m.recipientId === config.participantId) ||
-        (m.senderId === config.participantId && m.recipientId === peerId)
-      ),
-    )
-    const effectiveLimit = limit ?? historyLimit
-    if (peerMsgs.length <= effectiveLimit) return peerMsgs
-    return peerMsgs.slice(-effectiveLimit)
-  }
+  const getMessages = (): ReadonlyArray<Message> => getMessagesAll(messages)
+  const getRoomIds = (): ReadonlyArray<string> => getRoomIdsFromMessages(messages)
+  const getMessagesForRoom = (roomId: string, limit?: number): ReadonlyArray<Message> =>
+    getMessagesForRoomHelper(messages, roomId, limit ?? historyLimit)
+  const getMessagesForPeer = (peerId: string, limit?: number): ReadonlyArray<Message> =>
+    getMessagesForPeerHelper(messages, agentId, peerId, limit ?? historyLimit)
 
   const getParticipantsForRoom = (roomId: string): ReadonlyArray<AgentProfile | string> => {
     const senderIds = new Set<string>()
     for (const msg of messages) {
-      if (msg.roomId === roomId && msg.senderId !== SYSTEM_SENDER_ID && msg.senderId !== config.participantId) {
+      if (msg.roomId === roomId && msg.senderId !== SYSTEM_SENDER_ID && msg.senderId !== agentId) {
         senderIds.add(msg.senderId)
       }
     }
@@ -143,7 +105,7 @@ export const createAIAgent = (
 
   const resolveName = (senderId: string): string => {
     if (senderId === SYSTEM_SENDER_ID) return 'System'
-    if (senderId === config.participantId) return config.name
+    if (senderId === agentId) return config.name
     return agentProfiles.get(senderId)?.name ?? senderId
   }
 
@@ -159,7 +121,30 @@ export const createAIAgent = (
     cooldowns.set(key, Date.now())
   }
 
-  // --- Context assembly ---
+  // --- Idle detection — resolves when all evaluations complete ---
+
+  const checkIdle = (): void => {
+    if (generatingContexts.size === 0 && pendingContexts.size === 0) {
+      const resolvers = idleResolvers
+      idleResolvers = []
+      for (const resolve of resolvers) resolve()
+    }
+  }
+
+  const whenIdle = (timeoutMs = 30_000): Promise<void> => {
+    if (generatingContexts.size === 0 && pendingContexts.size === 0) {
+      return Promise.resolve()
+    }
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`whenIdle timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      )
+      idleResolvers.push(() => { clearTimeout(timer); resolve() })
+    })
+  }
+
+  // --- Context assembly (names only — no UUIDs shown to LLM) ---
 
   const buildContext = (triggerRoomId?: string, triggerPeerId?: string): ChatRequest['messages'] => {
     let systemContent = config.systemPrompt
@@ -176,9 +161,9 @@ export const createAIAgent = (
       const participants = getParticipantsForRoom(triggerRoomId)
       if (participants.length > 0) {
         const lines = participants.map(p =>
-          typeof p === 'string' ? p : `${p.name} [${p.id}]: ${p.description} (${p.kind})`,
+          typeof p === 'string' ? `- ${p}` : `- ${p.name}: ${p.description} (${p.kind})`,
         )
-        systemContent += `\n\nOther participants in this room:\n${lines.join('\n')}`
+        systemContent += `\n\nOther participants:\n${lines.join('\n')}`
       }
     } else if (triggerPeerId) {
       const peerProfile = agentProfiles.get(triggerPeerId)
@@ -187,29 +172,27 @@ export const createAIAgent = (
       if (peerProfile?.description) systemContent += ` ${peerProfile.description}`
     }
 
-    // Available rooms (so agent can target them) — show ID prominently
+    // Available rooms — names only
     const roomIds = getRoomIds()
     if (roomIds.length > 0) {
-      const roomLines = roomIds.map(id => {
-        const rp = roomProfiles.get(id)
-        return rp ? `"${id}" (${rp.name})` : `"${id}"`
-      })
-      systemContent += `\n\nYour room IDs: ${roomLines.join(', ')}`
+      const roomNames = roomIds
+        .map(id => roomProfiles.get(id)?.name ?? id)
+        .map(name => `"${name}"`)
+      systemContent += `\n\nYour rooms: ${roomNames.join(', ')}`
     }
 
-    // Known agents (so agent can DM them) — show ID prominently
-    const knownAgents = [...agentProfiles.values()].filter(a => a.id !== config.participantId)
+    // Known agents — names only
+    const knownAgents = [...agentProfiles.values()].filter(a => a.id !== agentId)
     if (knownAgents.length > 0) {
-      const agentLines = knownAgents.map(a => `"${a.id}" (${a.name})`)
-      systemContent += `\nKnown agent IDs: ${agentLines.join(', ')}`
+      const agentNames = knownAgents.map(a => `"${a.name}" (${a.kind})`)
+      systemContent += `\nKnown agents: ${agentNames.join(', ')}`
     }
 
-    // Response format with target — emphasize using IDs
-    systemContent += `\n\nRespond with JSON. You MUST include a "target" with room IDs or agent IDs.
-IMPORTANT: Use the exact IDs shown above, NOT display names.
-To reply in a room: {"action": "respond", "content": "...", "target": {"rooms": ["room-id-here"]}}
-To message an agent directly: {"action": "respond", "content": "...", "target": {"agents": ["agent-id-here"]}}
-To do both: {"action": "respond", "content": "...", "target": {"rooms": ["room-id"], "agents": ["agent-id"]}}
+    // Response format — target uses names
+    systemContent += `\n\nRespond with JSON. You MUST include a "target" with room or agent names.
+To reply in a room: {"action": "respond", "content": "...", "target": {"rooms": ["Room Name"]}}
+To message an agent directly: {"action": "respond", "content": "...", "target": {"agents": ["Agent Name"]}}
+To do both: {"action": "respond", "content": "...", "target": {"rooms": ["Room Name"], "agents": ["Agent Name"]}}
 To stay silent: {"action": "pass", "reason": "..."}
 
 Only respond when you have substantive input. Do not respond just to acknowledge.`
@@ -228,7 +211,7 @@ Only respond when you have substantive input. Do not respond just to acknowledge
 
     for (const msg of recentMessages) {
       if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave') continue
-      if (msg.senderId === config.participantId) {
+      if (msg.senderId === agentId) {
         chatMessages.push({ role: 'assistant' as const, content: msg.content })
       } else {
         const name = resolveName(msg.senderId)
@@ -249,7 +232,6 @@ Only respond when you have substantive input. Do not respond just to acknowledge
         if (target && ((target.rooms && target.rooms.length > 0) || (target.agents && target.agents.length > 0))) {
           return parsed as AgentResponse
         }
-        // Valid respond but no/empty target — return with empty target (caller applies fallback)
         return { action: 'respond', content: parsed.content as string, target: {}, actions: parsed.actions as AgentResponse['actions'] }
       }
       if (parsed.action === 'pass') {
@@ -318,6 +300,8 @@ Only respond when you have substantive input. Do not respond just to acknowledge
         if (pendingContexts.has(key)) {
           pendingContexts.delete(key)
           tryEvaluate(triggerRoomId, triggerPeerId)
+        } else {
+          checkIdle()
         }
       })
   }
@@ -328,7 +312,7 @@ Only respond when you have substantive input. Do not respond just to acknowledge
     addMessage(message)
     extractAgentProfileFromMessage(message)
 
-    if (message.senderId === config.participantId) return
+    if (message.senderId === agentId) return
     if (message.type === 'system' || message.type === 'leave') return
 
     if (message.roomId) {
@@ -388,7 +372,7 @@ Only respond when you have substantive input. Do not respond just to acknowledge
   }
 
   return {
-    id: config.participantId,
+    id: agentId,
     name: config.name,
     description: config.description,
     kind: 'ai',
@@ -399,5 +383,6 @@ Only respond when you have substantive input. Do not respond just to acknowledge
     getRoomIds,
     getMessagesForRoom,
     getMessagesForPeer,
+    whenIdle,
   }
 }

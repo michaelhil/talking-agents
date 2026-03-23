@@ -11,10 +11,12 @@ export type {
   AgentProfile,
   PostParams,
   PostResult,
+  CreateResult,
   Room,
   House,
   RoomConfig,
   Agent,
+  AIAgent,
   Team,
   PostAndDeliver,
   AIAgentConfig,
@@ -25,11 +27,12 @@ export type {
   LLMProvider,
 } from './core/types.ts'
 
-export { SYSTEM_SENDER_ID, INTRODUCTIONS_ROOM_ID, DEFAULTS } from './core/types.ts'
+export { SYSTEM_SENDER_ID, DEFAULTS } from './core/types.ts'
 
 // Core factories
 export { createRoom } from './core/room.ts'
-export { createHouse, initIntroductionsRoom } from './core/house.ts'
+export { createHouse } from './core/house.ts'
+export { createPostAndDeliver } from './core/delivery.ts'
 
 // Agent factories
 export { createTeam } from './agents/team.ts'
@@ -42,6 +45,11 @@ export type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 export { spawnAIAgent, spawnHumanAgent } from './agents/spawn.ts'
 export { executeActions } from './agents/actions.ts'
 export { extractAgentProfile, makeJoinMetadata } from './agents/shared.ts'
+export { validateName, ensureUniqueName } from './core/names.ts'
 
 // LLM providers
 export { createOllamaProvider } from './llm/ollama.ts'
+
+// System factory
+export { createSystem } from './main.ts'
+export type { System } from './main.ts'

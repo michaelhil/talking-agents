@@ -1,6 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { createHouse, initIntroductionsRoom } from './house.ts'
-import { INTRODUCTIONS_ROOM_ID } from './types.ts'
+import { createHouse } from './house.ts'
 
 describe('House — room collection', () => {
   test('starts empty', () => {
@@ -9,7 +8,7 @@ describe('House — room collection', () => {
     expect(house.listPublicRooms()).toEqual([])
   })
 
-  test('creates a room and retrieves it', () => {
+  test('creates a room with auto-generated UUID', () => {
     const house = createHouse()
     const room = house.createRoom({
       name: 'General',
@@ -21,36 +20,66 @@ describe('House — room collection', () => {
     expect(room.profile.visibility).toBe('public')
     expect(room.profile.createdBy).toBe('alice')
     expect(room.profile.createdAt).toBeGreaterThan(0)
+    expect(room.profile.id).toHaveLength(36) // UUID format
 
     const retrieved = house.getRoom(room.profile.id)
-    expect(retrieved).toBe(room) // same reference
-  })
-
-  test('creates a room with fixed ID', () => {
-    const house = createHouse()
-    const room = house.createRoom({
-      id: 'my-room',
-      name: 'Fixed',
-      visibility: 'public',
-      createdBy: 'alice',
-    })
-
-    expect(room.profile.id).toBe('my-room')
-    expect(house.getRoom('my-room')).toBe(room)
-  })
-
-  test('returns existing room if ID already exists', () => {
-    const house = createHouse()
-    const first = house.createRoom({ id: 'dup', name: 'First', visibility: 'public', createdBy: 'alice' })
-    const second = house.createRoom({ id: 'dup', name: 'Second', visibility: 'public', createdBy: 'bob' })
-
-    expect(second).toBe(first)
-    expect(second.profile.name).toBe('First')
+    expect(retrieved).toBe(room)
   })
 
   test('getRoom returns undefined for nonexistent room', () => {
     const house = createHouse()
     expect(house.getRoom('nope')).toBeUndefined()
+  })
+
+  test('findByName returns room (case-insensitive)', () => {
+    const house = createHouse()
+    const room = house.createRoom({ name: 'General', visibility: 'public', createdBy: 'alice' })
+
+    expect(house.findByName('General')).toBe(room)
+    expect(house.findByName('general')).toBe(room)
+    expect(house.findByName('GENERAL')).toBe(room)
+    expect(house.findByName('nonexistent')).toBeUndefined()
+  })
+
+  test('name uniqueness enforced (case-insensitive)', () => {
+    const house = createHouse()
+    house.createRoom({ name: 'General', visibility: 'public', createdBy: 'alice' })
+
+    expect(() => {
+      house.createRoom({ name: 'General', visibility: 'public', createdBy: 'bob' })
+    }).toThrow('Room name "General" is already taken')
+
+    expect(() => {
+      house.createRoom({ name: 'general', visibility: 'public', createdBy: 'bob' })
+    }).toThrow('Room name "general" is already taken')
+  })
+
+  test('createRoomSafe auto-renames on collision', () => {
+    const house = createHouse()
+    house.createRoom({ name: 'Planning', visibility: 'public', createdBy: 'alice' })
+
+    const result = house.createRoomSafe({ name: 'Planning', visibility: 'public', createdBy: 'bob' })
+
+    expect(result.requestedName).toBe('Planning')
+    expect(result.assignedName).toBe('Planning-2')
+    expect(result.value.profile.name).toBe('Planning-2')
+  })
+
+  test('createRoomSafe returns original name when no collision', () => {
+    const house = createHouse()
+    const result = house.createRoomSafe({ name: 'Unique', visibility: 'public', createdBy: 'alice' })
+
+    expect(result.requestedName).toBe('Unique')
+    expect(result.assignedName).toBe('Unique')
+  })
+
+  test('createRoomSafe increments suffix on multiple collisions', () => {
+    const house = createHouse()
+    house.createRoom({ name: 'Room', visibility: 'public', createdBy: 'a' })
+    house.createRoomSafe({ name: 'Room', visibility: 'public', createdBy: 'b' }) // Room-2
+
+    const result = house.createRoomSafe({ name: 'Room', visibility: 'public', createdBy: 'c' })
+    expect(result.assignedName).toBe('Room-3')
   })
 
   test('listPublicRooms only returns public rooms', () => {
@@ -85,12 +114,12 @@ describe('House — room collection', () => {
     expect(house.removeRoom('nope')).toBe(false)
   })
 
-  test('removeRoom prevents deleting Introductions room', () => {
+  test('any room can be removed (no protected rooms)', () => {
     const house = createHouse()
-    initIntroductionsRoom(house)
+    const intro = house.createRoom({ name: 'Introductions', visibility: 'public', createdBy: 'system' })
 
-    expect(house.removeRoom(INTRODUCTIONS_ROOM_ID)).toBe(false)
-    expect(house.getRoom(INTRODUCTIONS_ROOM_ID)).toBeDefined()
+    expect(house.removeRoom(intro.profile.id)).toBe(true)
+    expect(house.getRoom(intro.profile.id)).toBeUndefined()
   })
 
   test('preserves room description and roomPrompt', () => {
@@ -113,42 +142,69 @@ describe('House — room collection', () => {
 
     const result = room.post({ senderId: 'alice', content: 'Hello', type: 'chat' })
     expect(result.message.content).toBe('Hello')
-    expect(result.message.roomId).toBe(room.profile.id) // room stamps its own ID
+    expect(result.message.roomId).toBe(room.profile.id)
     expect(room.getMessageCount()).toBe(1)
     expect(room.getRecent(10)).toHaveLength(1)
     expect(room.getParticipantIds()).toContain('alice')
   })
 
-  test('remove then recreate with same ID produces a fresh room', () => {
+  test('removed room name can be reused', () => {
     const house = createHouse()
-    const original = house.createRoom({ id: 'reusable', name: 'Original', visibility: 'public', createdBy: 'alice' })
+    const original = house.createRoom({ name: 'Reusable', visibility: 'public', createdBy: 'alice' })
     original.post({ senderId: 'alice', content: 'Old message', type: 'chat' })
 
-    house.removeRoom('reusable')
-    const fresh = house.createRoom({ id: 'reusable', name: 'Fresh', visibility: 'public', createdBy: 'bob' })
+    house.removeRoom(original.profile.id)
+    const fresh = house.createRoom({ name: 'Reusable', visibility: 'public', createdBy: 'bob' })
 
-    expect(fresh.profile.name).toBe('Fresh')
+    expect(fresh.profile.name).toBe('Reusable')
     expect(fresh.profile.createdBy).toBe('bob')
-    expect(fresh.getMessageCount()).toBe(0) // no old messages
-  })
-})
-
-describe('initIntroductionsRoom', () => {
-  test('creates the Introductions room with correct config', () => {
-    const house = createHouse()
-    const intro = initIntroductionsRoom(house)
-
-    expect(intro.profile.id).toBe(INTRODUCTIONS_ROOM_ID)
-    expect(intro.profile.name).toBe('Introductions')
-    expect(intro.profile.visibility).toBe('public')
-    expect(intro.profile.createdBy).toBe('system')
+    expect(fresh.getMessageCount()).toBe(0)
   })
 
-  test('is idempotent — calling twice returns the same room', () => {
+  test('rejects empty name', () => {
     const house = createHouse()
-    const first = initIntroductionsRoom(house)
-    const second = initIntroductionsRoom(house)
+    expect(() => {
+      house.createRoom({ name: '', visibility: 'public', createdBy: 'alice' })
+    }).toThrow('Room name cannot be empty')
+  })
 
-    expect(second).toBe(first)
+  test('rejects whitespace-only name', () => {
+    const house = createHouse()
+    expect(() => {
+      house.createRoom({ name: '   ', visibility: 'public', createdBy: 'alice' })
+    }).toThrow('Room name cannot be empty')
+  })
+
+  test('rejects name with leading/trailing whitespace', () => {
+    const house = createHouse()
+    expect(() => {
+      house.createRoom({ name: '  General  ', visibility: 'public', createdBy: 'alice' })
+    }).toThrow('Room name cannot have leading or trailing whitespace')
+  })
+
+  test('rejects excessively long name', () => {
+    const house = createHouse()
+    expect(() => {
+      house.createRoom({ name: 'A'.repeat(101), visibility: 'public', createdBy: 'alice' })
+    }).toThrow('Room name cannot exceed 100 characters')
+  })
+
+  test('room tracks members via addMember/hasMember', () => {
+    const house = createHouse()
+    const room = house.createRoom({ name: 'Members Test', visibility: 'private', createdBy: 'alice' })
+
+    expect(room.hasMember('bob')).toBe(false)
+    room.addMember('bob')
+    expect(room.hasMember('bob')).toBe(true)
+    expect(room.getParticipantIds()).toContain('bob')
+  })
+
+  test('posting adds sender as member implicitly', () => {
+    const house = createHouse()
+    const room = house.createRoom({ name: 'Implicit', visibility: 'public', createdBy: 'alice' })
+
+    expect(room.hasMember('alice')).toBe(false)
+    room.post({ senderId: 'alice', content: 'Hi', type: 'chat' })
+    expect(room.hasMember('alice')).toBe(true)
   })
 })

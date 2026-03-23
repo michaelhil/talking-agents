@@ -1,5 +1,10 @@
 // ============================================================================
 // Talking Agents — Core Type Definitions
+//
+// ID Architecture: UUIDs internal, names for LLM interaction.
+// - All entities get auto-generated UUIDs (never caller-specified)
+// - Names are unique per type, case-insensitive, immutable after creation
+// - LLMs see and use names; the system resolves names to UUIDs at boundaries
 // ============================================================================
 
 // === Message — the fundamental unit of communication ===
@@ -39,22 +44,16 @@ export interface AgentProfile {
 }
 
 // === Message Target — where a response should be delivered ===
+// Names at the LLM boundary, resolved to UUIDs by resolveTarget before delivery.
 
 export interface MessageTarget {
-  readonly rooms?: ReadonlyArray<string>    // room IDs
-  readonly agents?: ReadonlyArray<string>   // agent IDs (for DMs)
+  readonly rooms?: ReadonlyArray<string>    // room names (LLM) or IDs (internal)
+  readonly agents?: ReadonlyArray<string>   // agent names (LLM) or IDs (internal)
 }
 
 // === Room Post Parameters — caller provides content, room stamps id/roomId/timestamp ===
 
-export interface PostParams {
-  readonly senderId: string
-  readonly content: string
-  readonly type: MessageType
-  readonly generationMs?: number
-  readonly correlationId?: string
-  readonly metadata?: Record<string, unknown>
-}
+export type PostParams = Omit<Message, 'id' | 'roomId' | 'timestamp' | 'recipientId'>
 
 // === Room — pure data structure returned by createRoom ===
 
@@ -63,6 +62,8 @@ export interface Room {
   readonly post: (params: PostParams) => PostResult
   readonly getRecent: (n: number) => ReadonlyArray<Message>
   readonly getParticipantIds: () => ReadonlyArray<string>
+  readonly addMember: (id: string) => void
+  readonly hasMember: (id: string) => boolean
   readonly getMessageCount: () => number
 }
 
@@ -71,18 +72,27 @@ export interface PostResult {
   readonly recipientIds: ReadonlyArray<string>
 }
 
+// === CreateResult — returned when name uniqueness is enforced ===
+
+export interface CreateResult<T> {
+  readonly value: T
+  readonly requestedName: string
+  readonly assignedName: string
+}
+
 // === House — room collection ===
 
 export interface House {
   readonly createRoom: (config: RoomConfig) => Room
+  readonly createRoomSafe: (config: RoomConfig) => CreateResult<Room>
   readonly getRoom: (id: string) => Room | undefined
+  readonly findByName: (name: string) => Room | undefined
   readonly listPublicRooms: () => ReadonlyArray<RoomProfile>
   readonly listAllRooms: () => ReadonlyArray<RoomProfile>
   readonly removeRoom: (id: string) => boolean
 }
 
 export interface RoomConfig {
-  readonly id?: string
   readonly name: string
   readonly description?: string
   readonly roomPrompt?: string
@@ -106,11 +116,18 @@ export interface Agent {
   readonly getMessagesForPeer: (peerId: string, limit?: number) => ReadonlyArray<Message>
 }
 
+// === AIAgent — extended Agent with async evaluation observability ===
+
+export interface AIAgent extends Agent {
+  readonly whenIdle: (timeoutMs?: number) => Promise<void>
+}
+
 // === Team — agent collection (AI + human) ===
 
 export interface Team {
   readonly add: (agent: Agent) => void
   readonly get: (id: string) => Agent | undefined
+  readonly findByName: (name: string) => Agent | undefined
   readonly remove: (id: string) => boolean
   readonly list: () => ReadonlyArray<Agent>
   readonly listByKind: (kind: 'ai' | 'human') => ReadonlyArray<Agent>
@@ -120,10 +137,10 @@ export interface Team {
 
 export type PostAndDeliver = (target: MessageTarget, params: PostParams) => ReadonlyArray<Message>
 
-// === AI Agent Configuration (internal to createAIAgent factory) ===
+// === AI Agent Configuration ===
+// No ID field — system generates UUID automatically.
 
 export interface AIAgentConfig {
-  readonly participantId: string
   readonly name: string
   readonly description: string
   readonly model: string
@@ -134,6 +151,7 @@ export interface AIAgentConfig {
 }
 
 // === Agent Response (JSON from LLM) ===
+// Target uses names (resolved to UUIDs by resolveTarget before delivery).
 
 export type AgentResponse =
   | {
@@ -149,6 +167,7 @@ export type AgentResponse =
       readonly actions?: ReadonlyArray<AgentAction>
     }
 
+// Agent actions use names, not IDs. Resolved to UUIDs in actions.ts.
 export type AgentAction =
   | {
       readonly type: 'create_room'
@@ -156,13 +175,12 @@ export type AgentAction =
       readonly description?: string
       readonly roomPrompt?: string
       readonly visibility: 'public' | 'private'
-      readonly inviteIds?: ReadonlyArray<string>
+      readonly add?: ReadonlyArray<string>  // agent names to add after creation
     }
-  | { readonly type: 'join_room'; readonly roomId: string }
   | {
-      readonly type: 'invite_to_room'
-      readonly roomId: string
-      readonly participantId: string
+      readonly type: 'add_to_room'
+      readonly roomName: string
+      readonly agentName: string  // self = join, other = invite
     }
 
 // === LLM Provider ===
@@ -195,12 +213,12 @@ export interface LLMProvider {
 // === System Constants ===
 
 export const SYSTEM_SENDER_ID = 'system' as const
-export const INTRODUCTIONS_ROOM_ID = 'introductions' as const
 
 export const DEFAULTS = {
   port: 3000,
   ollamaBaseUrl: 'http://localhost:11434',
   historyLimit: 50,
+  roomMessageLimit: 500,
   cooldownMs: 15000,
   maxAgentActionsPerResponse: 5,
 } as const

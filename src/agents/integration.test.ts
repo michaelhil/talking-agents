@@ -1,11 +1,12 @@
 import { describe, test, expect } from 'bun:test'
-import { createHouse, initIntroductionsRoom } from '../core/house.ts'
+import { createHouse } from '../core/house.ts'
+import { createPostAndDeliver } from '../core/delivery.ts'
 import { createTeam } from './team.ts'
 import { createHumanAgent } from './human-agent.ts'
 import { spawnAIAgent, spawnHumanAgent } from './spawn.ts'
 import { createOllamaProvider } from '../llm/ollama.ts'
-import type { Message, MessageTarget, PostAndDeliver } from '../core/types.ts'
-import { DEFAULTS } from '../core/types.ts'
+import type { Message } from '../core/types.ts'
+import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
 
 const FAST_MODEL = 'llama3.2:latest'
 
@@ -13,54 +14,13 @@ const FAST_MODEL = 'llama3.2:latest'
 const createSystem = () => {
   const house = createHouse()
   const team = createTeam()
-  const intro = initIntroductionsRoom(house)
-
-  const deliver = (id: string, message: Message): void => {
-    try {
-      team.get(id)?.receive(message)
-    } catch (err) {
-      console.error(`[deliver] Failed for ${id}:`, err)
-    }
-  }
-
-  const postAndDeliver: PostAndDeliver = (target: MessageTarget, params) => {
-    const correlationId = crypto.randomUUID()
-    const delivered: Message[] = []
-
-    // Deliver to rooms
-    if (target.rooms) {
-      for (const roomId of target.rooms) {
-        const room = house.getRoom(roomId)
-        if (!room) continue
-        const { message, recipientIds } = room.post({ ...params, correlationId })
-        delivered.push(message)
-        for (const id of recipientIds) deliver(id, message)
-      }
-    }
-
-    // Deliver DMs
-    if (target.agents) {
-      for (const agentId of target.agents) {
-        if (agentId === params.senderId) continue // don't DM yourself
-        const dmMessage: Message = {
-          id: crypto.randomUUID(),
-          recipientId: agentId,
-          senderId: params.senderId,
-          content: params.content,
-          timestamp: Date.now(),
-          type: params.type,
-          correlationId,
-          generationMs: params.generationMs,
-          metadata: params.metadata,
-        }
-        delivered.push(dmMessage)
-        deliver(agentId, dmMessage)
-        deliver(params.senderId, dmMessage) // sender stores own DM
-      }
-    }
-
-    return delivered
-  }
+  const postAndDeliver = createPostAndDeliver(house, team)
+  const intro = house.createRoom({
+    name: 'Introductions',
+    description: 'All participants introduce themselves here',
+    visibility: 'public',
+    createdBy: SYSTEM_SENDER_ID,
+  })
 
   return { house, team, intro, postAndDeliver }
 }
@@ -71,22 +31,22 @@ describe('Integration — Room + Team + postAndDeliver', () => {
 
     const aliceInbox: Message[] = []
     const alice = createHumanAgent(
-      { id: 'alice', name: 'Alice', description: 'A researcher' },
+      { name: 'Alice', description: 'A researcher' },
       (msg) => { aliceInbox.push(msg) },
     )
 
     const bobInbox: Message[] = []
     const bob = createHumanAgent(
-      { id: 'bob', name: 'Bob', description: 'An engineer' },
+      { name: 'Bob', description: 'An engineer' },
       (msg) => { bobInbox.push(msg) },
     )
 
     team.add(alice)
     team.add(bob)
 
-    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: 'alice', content: '[Alice] has joined', type: 'join' })
-    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: 'bob', content: '[Bob] has joined', type: 'join' })
-    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: 'alice', content: 'Hello everyone!', type: 'chat' })
+    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: alice.id, content: '[Alice] has joined', type: 'join' })
+    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: bob.id, content: '[Bob] has joined', type: 'join' })
+    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: alice.id, content: 'Hello everyone!', type: 'chat' })
 
     expect(bobInbox.some(m => m.content === 'Hello everyone!')).toBe(true)
     expect(aliceInbox.some(m => m.content === 'Hello everyone!')).toBe(false)
@@ -94,11 +54,11 @@ describe('Integration — Room + Team + postAndDeliver', () => {
 
   test('postAndDeliver stamps roomId on room messages', () => {
     const { house, postAndDeliver } = createSystem()
-    house.createRoom({ id: 'specific', name: 'Specific', visibility: 'public', createdBy: 'test' })
+    const specific = house.createRoom({ name: 'Specific', visibility: 'public', createdBy: 'test' })
 
-    const msgs = postAndDeliver({ rooms: ['specific'] }, { senderId: 'test', content: 'Hello', type: 'chat' })
+    const msgs = postAndDeliver({ rooms: [specific.profile.id] }, { senderId: 'test', content: 'Hello', type: 'chat' })
     expect(msgs).toHaveLength(1)
-    expect(msgs[0]!.roomId).toBe('specific')
+    expect(msgs[0]!.roomId).toBe(specific.profile.id)
   })
 
   test('DM delivery: recipient and sender both receive', () => {
@@ -107,23 +67,23 @@ describe('Integration — Room + Team + postAndDeliver', () => {
     const aliceInbox: Message[] = []
     const bobInbox: Message[] = []
 
-    const alice = createHumanAgent({ id: 'alice', name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
-    const bob = createHumanAgent({ id: 'bob', name: 'Bob', description: 'Test' }, (msg) => { bobInbox.push(msg) })
+    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
+    const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, (msg) => { bobInbox.push(msg) })
 
     team.add(alice)
     team.add(bob)
 
-    // Alice DMs Bob
-    const msgs = postAndDeliver({ agents: ['bob'] }, { senderId: 'alice', content: 'Private hello', type: 'chat' })
+    const msgs = postAndDeliver({ agents: [bob.id] }, { senderId: alice.id, content: 'Private hello', type: 'chat' })
 
     expect(msgs).toHaveLength(1)
-    expect(msgs[0]!.recipientId).toBe('bob')
-    expect(msgs[0]!.roomId).toBeUndefined() // DM has no roomId
+    expect(msgs[0]!.recipientId).toBe(bob.id)
+    expect(msgs[0]!.roomId).toBeUndefined()
 
-    // Bob receives
+    // Bob receives via transport
     expect(bobInbox.some(m => m.content === 'Private hello')).toBe(true)
-    // Alice also receives (sender stores own DM)
-    expect(aliceInbox.some(m => m.content === 'Private hello')).toBe(true)
+    // Alice stores own DM internally but doesn't echo to transport
+    expect(aliceInbox.some(m => m.content === 'Private hello')).toBe(false)
+    expect(alice.getMessages().some(m => m.content === 'Private hello')).toBe(true)
   })
 
   test('correlationId shared across multi-target delivery', () => {
@@ -132,40 +92,37 @@ describe('Integration — Room + Team + postAndDeliver', () => {
     const aliceInbox: Message[] = []
     const bobInbox: Message[] = []
 
-    const alice = createHumanAgent({ id: 'alice', name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
-    const bob = createHumanAgent({ id: 'bob', name: 'Bob', description: 'Test' }, (msg) => { bobInbox.push(msg) })
+    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
+    const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, (msg) => { bobInbox.push(msg) })
     team.add(alice)
     team.add(bob)
 
-    // Alice joins the room first
-    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: 'alice', content: '[Alice] joined', type: 'join' })
+    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: alice.id, content: '[Alice] joined', type: 'join' })
 
-    // Charlie posts to both the room and DMs Bob
-    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: 'charlie', content: '[Charlie] joined', type: 'join' })
+    const charlie = createHumanAgent({ name: 'Charlie', description: 'Test' }, () => {})
+    team.add(charlie)
+    postAndDeliver({ rooms: [intro.profile.id] }, { senderId: charlie.id, content: '[Charlie] joined', type: 'join' })
+
     const msgs = postAndDeliver(
-      { rooms: [intro.profile.id], agents: ['bob'] },
-      { senderId: 'charlie', content: 'Check this out', type: 'chat' },
+      { rooms: [intro.profile.id], agents: [bob.id] },
+      { senderId: charlie.id, content: 'Check this out', type: 'chat' },
     )
 
-    // Two messages delivered (one room, one DM)
     expect(msgs).toHaveLength(2)
-    // Both share the same correlationId
     expect(msgs[0]!.correlationId).toBeTruthy()
     expect(msgs[0]!.correlationId).toBe(msgs[1]!.correlationId)
-    // Room message has roomId, DM has recipientId
     expect(msgs[0]!.roomId).toBe(intro.profile.id)
-    expect(msgs[1]!.recipientId).toBe('bob')
+    expect(msgs[1]!.recipientId).toBe(bob.id)
   })
 
   test('DM does not go through room — room has no record', () => {
     const { team, intro, postAndDeliver } = createSystem()
 
-    const bob = createHumanAgent({ id: 'bob', name: 'Bob', description: 'Test' }, () => {})
+    const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, () => {})
     team.add(bob)
 
-    postAndDeliver({ agents: ['bob'] }, { senderId: 'alice', content: 'Secret', type: 'chat' })
+    postAndDeliver({ agents: [bob.id] }, { senderId: 'alice-temp', content: 'Secret', type: 'chat' })
 
-    // Room should have no messages (DM bypasses room)
     expect(intro.getMessageCount()).toBe(0)
   })
 
@@ -173,12 +130,11 @@ describe('Integration — Room + Team + postAndDeliver', () => {
     const { team, postAndDeliver } = createSystem()
 
     const aliceInbox: Message[] = []
-    const alice = createHumanAgent({ id: 'alice', name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
+    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
     team.add(alice)
 
-    // Alice tries to DM herself
-    const msgs = postAndDeliver({ agents: ['alice'] }, { senderId: 'alice', content: 'Hello me', type: 'chat' })
-    expect(msgs).toHaveLength(0) // skipped
+    const msgs = postAndDeliver({ agents: [alice.id] }, { senderId: alice.id, content: 'Hello me', type: 'chat' })
+    expect(msgs).toHaveLength(0)
   })
 
   test('multiple rooms operate independently with team delivery', () => {
@@ -188,19 +144,47 @@ describe('Integration — Room + Team + postAndDeliver', () => {
     const room2 = house.createRoom({ name: 'Room 2', visibility: 'public', createdBy: 'test' })
 
     const aliceInbox: Message[] = []
-    const alice = createHumanAgent({ id: 'alice', name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
+    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
     team.add(alice)
 
-    postAndDeliver({ rooms: [room1.profile.id] }, { senderId: 'alice', content: '[Alice] joined', type: 'join' })
-    postAndDeliver({ rooms: [room1.profile.id] }, { senderId: 'bob', content: '[Bob] joined', type: 'join' })
-    postAndDeliver({ rooms: [room2.profile.id] }, { senderId: 'charlie', content: '[Charlie] joined', type: 'join' })
+    const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, () => {})
+    const charlie = createHumanAgent({ name: 'Charlie', description: 'Test' }, () => {})
+    team.add(bob)
+    team.add(charlie)
 
-    postAndDeliver({ rooms: [room1.profile.id] }, { senderId: 'bob', content: 'Room 1 message', type: 'chat' })
+    postAndDeliver({ rooms: [room1.profile.id] }, { senderId: alice.id, content: '[Alice] joined', type: 'join' })
+    postAndDeliver({ rooms: [room1.profile.id] }, { senderId: bob.id, content: '[Bob] joined', type: 'join' })
+    postAndDeliver({ rooms: [room2.profile.id] }, { senderId: charlie.id, content: '[Charlie] joined', type: 'join' })
+
+    postAndDeliver({ rooms: [room1.profile.id] }, { senderId: bob.id, content: 'Room 1 message', type: 'chat' })
     expect(aliceInbox.some(m => m.content === 'Room 1 message')).toBe(true)
 
     const beforeCount = aliceInbox.length
-    postAndDeliver({ rooms: [room2.profile.id] }, { senderId: 'charlie', content: 'Room 2 message', type: 'chat' })
+    postAndDeliver({ rooms: [room2.profile.id] }, { senderId: charlie.id, content: 'Room 2 message', type: 'chat' })
     expect(aliceInbox.length).toBe(beforeCount) // Alice not in room 2
+  })
+
+  test('findByName resolves rooms and agents', () => {
+    const { house, team } = createSystem()
+
+    const room = house.createRoom({ name: 'Planning', visibility: 'public', createdBy: 'test' })
+    expect(house.findByName('Planning')).toBe(room)
+    expect(house.findByName('planning')).toBe(room) // case-insensitive
+
+    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, () => {})
+    team.add(alice)
+    expect(team.findByName('Alice')).toBe(alice)
+    expect(team.findByName('alice')).toBe(alice) // case-insensitive
+  })
+
+  test('team name uniqueness enforced', () => {
+    const { team } = createSystem()
+
+    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, () => {})
+    team.add(alice)
+
+    const alice2 = createHumanAgent({ name: 'Alice', description: 'Test 2' }, () => {})
+    expect(() => team.add(alice2)).toThrow('Agent name "Alice" is already taken')
   })
 })
 
@@ -212,7 +196,6 @@ describe('Integration — AI Agent with real Ollama', () => {
 
     const agent = await spawnAIAgent(
       {
-        participantId: 'analyst-1',
         name: 'Analyst',
         description: 'Analyzes data',
         model: FAST_MODEL,
@@ -222,11 +205,12 @@ describe('Integration — AI Agent with real Ollama', () => {
       ollamaProvider, house, team, postAndDeliver,
     )
 
-    expect(team.get('analyst-1')).toBe(agent)
+    expect(team.get(agent.id)).toBe(agent)
     expect(agent.kind).toBe('ai')
+    expect(agent.id).toHaveLength(36) // UUID
 
     const introMsgs = intro.getRecent(10)
-    const joinMsg = introMsgs.find(m => m.senderId === 'analyst-1' && m.type === 'join')
+    const joinMsg = introMsgs.find(m => m.senderId === agent.id && m.type === 'join')
     expect(joinMsg).toBeDefined()
     expect(joinMsg!.content).toContain('[Analyst]')
     expect(joinMsg!.metadata?.agentName).toBe('Analyst')
@@ -237,14 +221,13 @@ describe('Integration — AI Agent with real Ollama', () => {
 
     const humanInbox: Message[] = []
     const human = createHumanAgent(
-      { id: 'human-1', name: 'Alice', description: 'A curious researcher' },
+      { name: 'Alice', description: 'A curious researcher' },
       (msg) => { humanInbox.push(msg) },
     )
     await spawnHumanAgent(human, house, team, postAndDeliver, [intro])
 
-    await spawnAIAgent(
+    const aiAgent = await spawnAIAgent(
       {
-        participantId: 'responder-1',
         name: 'Responder',
         description: 'Responds to questions',
         model: FAST_MODEL,
@@ -254,17 +237,16 @@ describe('Integration — AI Agent with real Ollama', () => {
       ollamaProvider, house, team, postAndDeliver,
     )
 
-    // Wait for any initial response to complete before human asks
-    await new Promise(resolve => setTimeout(resolve, 5_000))
+    await aiAgent.whenIdle()
 
     postAndDeliver(
       { rooms: [intro.profile.id] },
-      { senderId: 'human-1', content: 'Can you tell me a fun fact about dolphins?', type: 'chat' },
+      { senderId: human.id, content: 'Can you tell me a fun fact about dolphins?', type: 'chat' },
     )
 
-    await new Promise(resolve => setTimeout(resolve, 15_000))
+    await aiAgent.whenIdle(30_000)
 
-    const aiResponse = humanInbox.find(m => m.senderId === 'responder-1' && m.type === 'chat')
+    const aiResponse = humanInbox.find(m => m.senderId === aiAgent.id && m.type === 'chat')
 
     expect(aiResponse).toBeDefined()
     expect(aiResponse!.content.length).toBeGreaterThan(0)

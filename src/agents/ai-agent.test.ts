@@ -8,7 +8,6 @@ import { createRoom } from '../core/room.ts'
 // --- Test helpers ---
 
 const makeConfig = (overrides?: Partial<AIAgentConfig>): AIAgentConfig => ({
-  participantId: 'bot-1',
   name: 'TestBot',
   description: 'A test bot',
   model: 'test-model',
@@ -55,27 +54,21 @@ describe('AI Agent — unit tests', () => {
     expect(agent.getMessages()[0]!.content).toBe('Hello')
   })
 
-  test('receive skips own messages (no self-reply)', () => {
+  test('receive skips own messages (no self-reply)', async () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
-      makeConfig({ participantId: 'bot-1' }),
+      makeConfig(),
       makeLLMProvider('{"action":"respond","content":"Hi"}'),
       (d) => { decisions.push(d) },
     )
 
-    // Message from self — should not trigger evaluation
-    agent.receive(makeMessage({ senderId: 'bot-1' }))
+    agent.receive(makeMessage({ senderId: agent.id }))
+    await agent.whenIdle()
 
-    // Give async time to settle
-    return new Promise<void>(resolve => {
-      setTimeout(() => {
-        expect(decisions).toHaveLength(0)
-        resolve()
-      }, 50)
-    })
+    expect(decisions).toHaveLength(0)
   })
 
-  test('receive skips system messages', () => {
+  test('receive skips system messages', async () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig(),
@@ -84,16 +77,12 @@ describe('AI Agent — unit tests', () => {
     )
 
     agent.receive(makeMessage({ senderId: SYSTEM_SENDER_ID, type: 'system' }))
+    await agent.whenIdle()
 
-    return new Promise<void>(resolve => {
-      setTimeout(() => {
-        expect(decisions).toHaveLength(0)
-        resolve()
-      }, 50)
-    })
+    expect(decisions).toHaveLength(0)
   })
 
-  test('receive triggers evaluation and calls onDecision', () => {
+  test('receive triggers evaluation and calls onDecision', async () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig(),
@@ -102,21 +91,17 @@ describe('AI Agent — unit tests', () => {
     )
 
     agent.receive(makeMessage({ senderId: 'alice' }))
+    await agent.whenIdle()
 
-    return new Promise<void>(resolve => {
-      setTimeout(() => {
-        expect(decisions).toHaveLength(1)
-        expect(decisions[0]!.response.action).toBe('respond')
-        if (decisions[0]!.response.action === 'respond') {
-          expect(decisions[0]!.response.content).toBe('Hi there')
-        }
-        expect(decisions[0]!.generationMs).toBe(42)
-        resolve()
-      }, 200)
-    })
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.response.action).toBe('respond')
+    if (decisions[0]!.response.action === 'respond') {
+      expect(decisions[0]!.response.content).toBe('Hi there')
+    }
+    expect(decisions[0]!.generationMs).toBe(42)
   })
 
-  test('cooldown prevents rapid re-evaluation', () => {
+  test('cooldown prevents rapid re-evaluation', async () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig({ cooldownMs: 500 }),
@@ -126,29 +111,24 @@ describe('AI Agent — unit tests', () => {
 
     // First message triggers evaluation
     agent.receive(makeMessage({ senderId: 'alice', content: 'msg-1' }))
+    await agent.whenIdle()
 
-    return new Promise<void>(resolve => {
-      setTimeout(() => {
-        // Second message during cooldown — should be skipped
-        agent.receive(makeMessage({ senderId: 'bob', content: 'msg-2' }))
+    // Second message during cooldown — should be skipped
+    agent.receive(makeMessage({ senderId: 'bob', content: 'msg-2' }))
+    await agent.whenIdle()
 
-        setTimeout(() => {
-          expect(decisions).toHaveLength(1) // only first triggered
-          resolve()
-        }, 100)
-      }, 200) // wait for first evaluation to complete
-    })
+    expect(decisions).toHaveLength(1) // only first triggered
   })
 
-  test('per-room generation: same room queues, different rooms run concurrently', () => {
+  test('per-room generation: same room queues, different rooms run concurrently', async () => {
     let callCount = 0
     const slowProvider: LLMProvider = {
       chat: async () => {
         callCount++
-        await new Promise(resolve => setTimeout(resolve, 200))
+        await new Promise(resolve => setTimeout(resolve, 50))
         return {
           content: '{"action":"pass","reason":"slow"}',
-          generationMs: 200,
+          generationMs: 50,
           tokensUsed: { prompt: 10, completion: 5 },
         }
       },
@@ -168,18 +148,15 @@ describe('AI Agent — unit tests', () => {
     // Message in different room — should start concurrently
     agent.receive(makeMessage({ senderId: 'charlie', roomId: 'room-2', content: 'msg-3' }))
 
-    return new Promise<void>(resolve => {
-      setTimeout(() => {
-        // room-1: first eval + pending re-eval = 2 calls
-        // room-2: concurrent eval = 1 call
-        // Total: 3 calls (but room-1 re-eval may still be pending due to cooldown=0 timing)
-        expect(callCount).toBeGreaterThanOrEqual(2) // at minimum room-1 + room-2
-        resolve()
-      }, 800)
-    })
+    await agent.whenIdle()
+
+    // room-1: first eval + pending re-eval = 2 calls
+    // room-2: concurrent eval = 1 call
+    // Total: 3
+    expect(callCount).toBeGreaterThanOrEqual(2) // at minimum room-1 + room-2
   })
 
-  test('JSON fallback — invalid JSON treated as respond', () => {
+  test('JSON fallback — invalid JSON treated as respond', async () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig(),
@@ -188,17 +165,13 @@ describe('AI Agent — unit tests', () => {
     )
 
     agent.receive(makeMessage({ senderId: 'alice' }))
+    await agent.whenIdle()
 
-    return new Promise<void>(resolve => {
-      setTimeout(() => {
-        expect(decisions).toHaveLength(1)
-        expect(decisions[0]!.response.action).toBe('respond')
-        if (decisions[0]!.response.action === 'respond') {
-          expect(decisions[0]!.response.content).toBe('This is not JSON at all')
-        }
-        resolve()
-      }, 200)
-    })
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.response.action).toBe('respond')
+    if (decisions[0]!.response.action === 'respond') {
+      expect(decisions[0]!.response.content).toBe('This is not JSON at all')
+    }
   })
 
   test('eviction keeps messages within historyLimit per room', () => {
@@ -208,10 +181,10 @@ describe('AI Agent — unit tests', () => {
       () => {},
     )
 
-    // Add 10 messages to room-1
+    // Add 10 messages to room-1 (own messages — won't trigger eval)
     for (let i = 0; i < 10; i++) {
       agent.receive(makeMessage({
-        senderId: 'bot-1', // own messages — won't trigger eval
+        senderId: agent.id,
         roomId: 'room-1',
         content: `msg-${i}`,
       }))
@@ -219,15 +192,14 @@ describe('AI Agent — unit tests', () => {
 
     const roomMsgs = agent.getMessagesForRoom('room-1')
     expect(roomMsgs.length).toBeLessThanOrEqual(5)
-    // Most recent messages should be kept
     expect(roomMsgs[roomMsgs.length - 1]!.content).toBe('msg-9')
   })
 
   test('getMessagesForRoom filters by roomId', () => {
     const agent = createAIAgent(makeConfig(), makeLLMProvider(), () => {})
 
-    agent.receive(makeMessage({ senderId: 'bot-1', roomId: 'room-1', content: 'r1-msg' }))
-    agent.receive(makeMessage({ senderId: 'bot-1', roomId: 'room-2', content: 'r2-msg' }))
+    agent.receive(makeMessage({ senderId: agent.id, roomId: 'room-1', content: 'r1-msg' }))
+    agent.receive(makeMessage({ senderId: agent.id, roomId: 'room-2', content: 'r2-msg' }))
 
     expect(agent.getMessagesForRoom('room-1')).toHaveLength(1)
     expect(agent.getMessagesForRoom('room-2')).toHaveLength(1)
@@ -237,9 +209,9 @@ describe('AI Agent — unit tests', () => {
   test('getRoomIds returns unique room IDs from messages', () => {
     const agent = createAIAgent(makeConfig(), makeLLMProvider(), () => {})
 
-    agent.receive(makeMessage({ senderId: 'bot-1', roomId: 'room-1' }))
-    agent.receive(makeMessage({ senderId: 'bot-1', roomId: 'room-2' }))
-    agent.receive(makeMessage({ senderId: 'bot-1', roomId: 'room-1' }))
+    agent.receive(makeMessage({ senderId: agent.id, roomId: 'room-1' }))
+    agent.receive(makeMessage({ senderId: agent.id, roomId: 'room-2' }))
+    agent.receive(makeMessage({ senderId: agent.id, roomId: 'room-1' }))
 
     const roomIds = agent.getRoomIds()
     expect(roomIds).toHaveLength(2)
@@ -253,8 +225,6 @@ describe('AI Agent — unit tests', () => {
 
     await agent.join(room)
 
-    // After join, agent should have room profile snapshot
-    // (verified indirectly — the join doesn't fail, metadata is used in context building)
     expect(agent.getRoomIds()).toHaveLength(0) // no messages yet from this room
   })
 
@@ -271,7 +241,6 @@ describe('AI Agent — unit tests', () => {
 
     await agent.join(room)
 
-    // Agent should have a room_summary message stored
     const msgs = agent.getMessages()
     expect(msgs).toHaveLength(1)
     expect(msgs[0]!.type).toBe('room_summary')
@@ -297,7 +266,7 @@ describe('AI Agent — unit tests', () => {
     expect(agent.getMessages()).toHaveLength(0)
   })
 
-  test('LLM error is caught — agent does not crash', () => {
+  test('LLM error is caught — agent does not crash', async () => {
     const errorProvider: LLMProvider = {
       chat: async () => { throw new Error('LLM is down') },
       models: async () => [],
@@ -307,12 +276,71 @@ describe('AI Agent — unit tests', () => {
     const agent = createAIAgent(makeConfig(), errorProvider, (d) => { decisions.push(d) })
 
     agent.receive(makeMessage({ senderId: 'alice' }))
+    await agent.whenIdle()
 
-    return new Promise<void>(resolve => {
-      setTimeout(() => {
-        expect(decisions).toHaveLength(0) // no decision made
-        resolve()
-      }, 200)
-    })
+    expect(decisions).toHaveLength(0) // no decision made
+  })
+
+  test('whenIdle resolves immediately when no work pending', async () => {
+    const agent = createAIAgent(makeConfig(), makeLLMProvider(), () => {})
+    await agent.whenIdle() // should not hang
+  })
+
+  test('whenIdle waits for evaluation to complete', async () => {
+    let resolveChat: (() => void) | null = null
+    const blockingProvider: LLMProvider = {
+      chat: () => new Promise(resolve => {
+        resolveChat = () => resolve({
+          content: '{"action":"pass","reason":"done"}',
+          generationMs: 100,
+          tokensUsed: { prompt: 10, completion: 5 },
+        })
+      }),
+      models: async () => [],
+    }
+
+    const agent = createAIAgent(makeConfig(), blockingProvider, () => {})
+    agent.receive(makeMessage({ senderId: 'alice' }))
+
+    // Start waiting for idle — should not resolve yet
+    let idleResolved = false
+    const idlePromise = agent.whenIdle().then(() => { idleResolved = true })
+
+    // Give microtasks a chance to run
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(idleResolved).toBe(false)
+
+    // Now unblock the LLM
+    resolveChat!()
+    await idlePromise
+
+    expect(idleResolved).toBe(true)
+  })
+
+  test('whenIdle with pending re-evaluation waits for all rounds', async () => {
+    let callCount = 0
+    const provider: LLMProvider = {
+      chat: async () => {
+        callCount++
+        await new Promise(resolve => setTimeout(resolve, 20))
+        return {
+          content: '{"action":"pass","reason":"done"}',
+          generationMs: 20,
+          tokensUsed: { prompt: 10, completion: 5 },
+        }
+      },
+      models: async () => [],
+    }
+
+    const agent = createAIAgent(makeConfig({ cooldownMs: 0 }), provider, () => {})
+
+    // Two messages to same room — second becomes pending
+    agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1', content: 'msg-1' }))
+    agent.receive(makeMessage({ senderId: 'bob', roomId: 'room-1', content: 'msg-2' }))
+
+    await agent.whenIdle()
+
+    // Both evaluations should have completed
+    expect(callCount).toBe(2)
   })
 })

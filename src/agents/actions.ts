@@ -1,7 +1,13 @@
 // ============================================================================
 // Action Executor — Runs self-management actions from agent responses.
 // Each action is validated before execution. Failures are logged, not thrown.
-// All joins are awaited to ensure room profiles are ready before messages flow.
+//
+// Two action types:
+//   create_room — creates a room, adds creator, optionally adds other agents
+//   add_to_room — adds an agent to a room (self = join, other = invite)
+//
+// Authorization: private rooms require the requester to already be a member.
+// Uses createRoomSafe for auto-rename on name collision.
 // ============================================================================
 
 import type {
@@ -10,7 +16,7 @@ import type {
   PostAndDeliver,
   Team,
 } from '../core/types.ts'
-import { DEFAULTS } from '../core/types.ts'
+import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
 import { makeJoinMetadata } from './shared.ts'
 
 export const executeActions = async (
@@ -33,6 +39,36 @@ export const executeActions = async (
   }
 }
 
+// Add an agent to a room: addMember, join, post join message.
+// Shared by create_room (for creator + invitees) and add_to_room.
+const addAgentToRoom = async (
+  targetId: string,
+  targetName: string,
+  roomId: string,
+  invitedBy: string | undefined,
+  team: Team,
+  postAndDeliver: PostAndDeliver,
+  house: House,
+): Promise<void> => {
+  const target = team.get(targetId)
+  if (!target) return
+
+  const room = house.getRoom(roomId)
+  if (!room) return
+
+  room.addMember(targetId)
+  await target.join(room)
+
+  const content = invitedBy
+    ? `[${targetName}] has joined (added by [${invitedBy}])`
+    : `[${targetName}] has joined`
+
+  postAndDeliver(
+    { rooms: [roomId] },
+    { senderId: targetId, content, type: 'join', metadata: makeJoinMetadata(target) },
+  )
+}
+
 const executeAction = async (
   action: AgentAction,
   agentId: string,
@@ -43,7 +79,7 @@ const executeAction = async (
 ): Promise<void> => {
   switch (action.type) {
     case 'create_room': {
-      const room = house.createRoom({
+      const result = house.createRoomSafe({
         name: action.name,
         description: action.description,
         roomPrompt: action.roomPrompt,
@@ -51,79 +87,61 @@ const executeAction = async (
         createdBy: agentId,
       })
 
-      const agent = team.get(agentId)
-      if (agent) {
-        await agent.join(room)
-        postAndDeliver(
-          { rooms: [room.profile.id] },
-          { senderId: agentId, content: `[${agentName}] created this room`, type: 'join', metadata: makeJoinMetadata(agent) },
-        )
+      const room = result.value
+
+      // Inform agent if name was auto-renamed
+      if (result.assignedName !== result.requestedName) {
+        const agent = team.get(agentId)
+        if (agent) {
+          agent.receive({
+            id: crypto.randomUUID(),
+            senderId: SYSTEM_SENDER_ID,
+            content: `Room created as "${result.assignedName}" because "${result.requestedName}" was already taken.`,
+            timestamp: Date.now(),
+            type: 'system',
+            roomId: room.profile.id,
+          })
+        }
       }
 
-      if (action.inviteIds) {
-        for (const inviteId of action.inviteIds) {
-          const invitee = team.get(inviteId)
-          if (invitee) {
-            await invitee.join(room)
-            postAndDeliver(
-              { rooms: [room.profile.id] },
-              { senderId: inviteId, content: `[${invitee.name}] has joined (invited by [${agentName}])`, type: 'join', metadata: makeJoinMetadata(invitee) },
-            )
-          }
+      // Add creator
+      await addAgentToRoom(agentId, agentName, room.profile.id, undefined, team, postAndDeliver, house)
+
+      // Add invited agents
+      for (const inviteeName of action.add ?? []) {
+        const invitee = team.findByName(inviteeName)
+        if (invitee) {
+          await addAgentToRoom(invitee.id, invitee.name, room.profile.id, agentName, team, postAndDeliver, house)
+        } else {
+          console.error(`[${agentName}] Cannot add "${inviteeName}" to room: not found`)
         }
       }
       break
     }
 
-    case 'join_room': {
-      const room = house.getRoom(action.roomId)
+    case 'add_to_room': {
+      const room = house.findByName(action.roomName)
       if (!room) {
-        console.error(`[${agentName}] Cannot join room ${action.roomId}: not found`)
-        return
-      }
-      if (room.profile.visibility === 'private') {
-        const participants = room.getParticipantIds()
-        if (!participants.includes(agentId)) {
-          console.error(`[${agentName}] Cannot join private room ${room.profile.name}: not invited`)
-          return
-        }
-      }
-
-      const agent = team.get(agentId)
-      if (agent) {
-        await agent.join(room)
-        postAndDeliver(
-          { rooms: [room.profile.id] },
-          { senderId: agentId, content: `[${agentName}] has joined`, type: 'join', metadata: makeJoinMetadata(agent) },
-        )
-      }
-      break
-    }
-
-    case 'invite_to_room': {
-      const room = house.getRoom(action.roomId)
-      if (!room) {
-        console.error(`[${agentName}] Cannot invite to room ${action.roomId}: not found`)
+        console.error(`[${agentName}] Cannot add to room "${action.roomName}": room not found`)
         return
       }
 
-      const participants = room.getParticipantIds()
-      if (!participants.includes(agentId)) {
-        console.error(`[${agentName}] Cannot invite to room ${room.profile.name}: not a participant`)
+      const target = team.findByName(action.agentName)
+      if (!target) {
+        console.error(`[${agentName}] Cannot add "${action.agentName}" to room: agent not found`)
         return
       }
 
-      const invitee = team.get(action.participantId)
-      if (!invitee) {
-        console.error(`[${agentName}] Cannot invite ${action.participantId}: not found`)
+      // Authorization: private rooms require requester to be a member
+      if (room.profile.visibility === 'private' && !room.hasMember(agentId)) {
+        console.error(`[${agentName}] Cannot add to private room "${action.roomName}": not a member`)
         return
       }
 
-      await invitee.join(room)
-      postAndDeliver(
-        { rooms: [room.profile.id] },
-        { senderId: action.participantId, content: `[${invitee.name}] has joined (invited by [${agentName}])`, type: 'join', metadata: makeJoinMetadata(invitee) },
-      )
+      const isSelf = target.id === agentId
+      const invitedBy = isSelf ? undefined : agentName
+
+      await addAgentToRoom(target.id, target.name, room.profile.id, invitedBy, team, postAndDeliver, house)
       break
     }
   }

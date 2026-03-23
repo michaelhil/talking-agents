@@ -2,10 +2,13 @@
 // Spawn — Wiring functions that create agents and connect them to the system.
 // Creates agent → adds to team → joins rooms → posts join messages.
 // Wires the onDecision callback to bridge agent decisions to postAndDeliver.
+//
+// resolveTarget translates LLM names → internal UUIDs using findByName.
 // ============================================================================
 
 import type {
   Agent,
+  AIAgent,
   AIAgentConfig,
   House,
   LLMProvider,
@@ -25,32 +28,21 @@ export const spawnAIAgent = async (
   house: House,
   team: Team,
   postAndDeliver: PostAndDeliver,
-): Promise<Agent> => {
+): Promise<AIAgent> => {
 
-  // Resolve LLM target to valid IDs. LLMs sometimes use names instead of IDs.
+  // Resolve LLM names to internal UUIDs via findByName.
   const resolveTarget = (decision: Decision): MessageTarget => {
     if (decision.response.action !== 'respond') return {}
 
     const target = decision.response.target
     if (target && ((target.rooms && target.rooms.length > 0) || (target.agents && target.agents.length > 0))) {
-      // Resolve room names to IDs if needed
-      const resolvedRooms = target.rooms?.map(idOrName => {
-        if (house.getRoom(idOrName)) return idOrName
-        const allRooms = house.listAllRooms()
-        const byName = allRooms.find(r => r.name.toLowerCase() === idOrName.toLowerCase())
-        if (byName) return byName.id
-        console.error(`[${config.name}] Cannot resolve room target: "${idOrName}"`)
-        return idOrName
-      })
+      const resolvedRooms = target.rooms
+        ?.map(name => house.findByName(name)?.profile.id)
+        .filter((id): id is string => id !== undefined)
 
-      const resolvedAgents = target.agents?.map(idOrName => {
-        if (team.get(idOrName)) return idOrName
-        const allAgents = team.list()
-        const byName = allAgents.find(a => a.name.toLowerCase() === idOrName.toLowerCase())
-        if (byName) return byName.id
-        console.error(`[${config.name}] Cannot resolve agent target: "${idOrName}"`)
-        return idOrName
-      })
+      const resolvedAgents = target.agents
+        ?.map(name => team.findByName(name)?.id)
+        .filter((id): id is string => id !== undefined)
 
       return { rooms: resolvedRooms, agents: resolvedAgents }
     }
@@ -65,7 +57,7 @@ export const spawnAIAgent = async (
     if (decision.response.action === 'respond') {
       const target = resolveTarget(decision)
       postAndDeliver(target, {
-        senderId: config.participantId,
+        senderId: agent.id,
         content: decision.response.content,
         type: 'chat',
         generationMs: decision.generationMs,
@@ -74,7 +66,7 @@ export const spawnAIAgent = async (
 
     const actions = decision.response.actions
     if (actions && actions.length > 0) {
-      executeActions(actions, config.participantId, config.name, house, team, postAndDeliver)
+      executeActions(actions, agent.id, agent.name, house, team, postAndDeliver)
         .catch(err => console.error(`[${config.name}] Action execution failed:`, err))
     }
   }
@@ -87,6 +79,7 @@ export const spawnAIAgent = async (
     const room = house.getRoom(roomProfile.id)
     if (!room) continue
 
+    room.addMember(agent.id)
     await agent.join(room)
 
     postAndDeliver(
@@ -112,6 +105,7 @@ export const spawnHumanAgent = async (
   ).filter((r): r is Room => r !== undefined)
 
   for (const room of rooms) {
+    room.addMember(agent.id)
     await agent.join(room)
     postAndDeliver(
       { rooms: [room.profile.id] },
