@@ -50,7 +50,7 @@ const addAgentToRoom = async (
   postAndDeliver: PostAndDeliver,
   house: House,
 ): Promise<void> => {
-  const target = team.get(targetId)
+  const target = team.getAgent(targetId)
   if (!target) return
 
   const room = house.getRoom(roomId)
@@ -91,7 +91,7 @@ const executeAction = async (
 
       // Inform agent if name was auto-renamed
       if (result.assignedName !== result.requestedName) {
-        const agent = team.get(agentId)
+        const agent = team.getAgent(agentId)
         if (agent) {
           agent.receive({
             id: crypto.randomUUID(),
@@ -109,7 +109,7 @@ const executeAction = async (
 
       // Add invited agents
       for (const inviteeName of action.add ?? []) {
-        const invitee = team.findByName(inviteeName)
+        const invitee = team.getAgent(inviteeName)
         if (invitee) {
           await addAgentToRoom(invitee.id, invitee.name, room.profile.id, agentName, team, postAndDeliver, house)
         } else {
@@ -120,13 +120,13 @@ const executeAction = async (
     }
 
     case 'add_to_room': {
-      const room = house.findByName(action.roomName)
+      const room = house.getRoom(action.roomName)
       if (!room) {
         console.error(`[${agentName}] Cannot add to room "${action.roomName}": room not found`)
         return
       }
 
-      const target = team.findByName(action.agentName)
+      const target = team.getAgent(action.agentName)
       if (!target) {
         console.error(`[${agentName}] Cannot add "${action.agentName}" to room: agent not found`)
         return

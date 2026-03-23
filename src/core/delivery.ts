@@ -9,7 +9,7 @@ import type { House, Message, MessageTarget, PostAndDeliver, Team } from './type
 export const createPostAndDeliver = (house: House, team: Team): PostAndDeliver => {
   const deliver = (id: string, message: Message): void => {
     try {
-      team.get(id)?.receive(message)
+      team.getAgent(id)?.receive(message)
     } catch (err) {
       console.error(`[deliver] Failed for ${id}:`, err)
     }
@@ -30,11 +30,12 @@ export const createPostAndDeliver = (house: House, team: Team): PostAndDeliver =
     }
 
     if (target.agents) {
-      for (const agentId of target.agents) {
-        if (agentId === params.senderId) continue
+      for (const agentRef of target.agents) {
+        const recipient = team.getAgent(agentRef)
+        if (!recipient || recipient.id === params.senderId) continue
         const dmMessage: Message = {
           id: crypto.randomUUID(),
-          recipientId: agentId,
+          recipientId: recipient.id,
           senderId: params.senderId,
           content: params.content,
           timestamp: Date.now(),
@@ -44,7 +45,7 @@ export const createPostAndDeliver = (house: House, team: Team): PostAndDeliver =
           metadata: params.metadata,
         }
         delivered.push(dmMessage)
-        deliver(agentId, dmMessage)
+        deliver(recipient.id, dmMessage)
         deliver(params.senderId, dmMessage)
       }
     }

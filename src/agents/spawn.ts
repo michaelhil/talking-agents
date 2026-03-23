@@ -87,24 +87,13 @@ export const spawnAIAgent = async (
   toolRegistry?: ToolRegistry,
 ): Promise<AIAgent> => {
 
-  // Resolve LLM names to internal UUIDs via findByName.
+  // Get target from decision, falling back to trigger source if LLM omits target.
   const resolveTarget = (decision: Decision): MessageTarget => {
     if (decision.response.action !== 'respond') return {}
 
     const target = decision.response.target
-    if (target && ((target.rooms && target.rooms.length > 0) || (target.agents && target.agents.length > 0))) {
-      const resolvedRooms = target.rooms
-        ?.map(name => house.findByName(name)?.profile.id)
-        .filter((id): id is string => id !== undefined)
-
-      const resolvedAgents = target.agents
-        ?.map(name => team.findByName(name)?.id)
-        .filter((id): id is string => id !== undefined)
-
-      // If all names failed resolution, fall back to trigger source
-      const hasResolved = (resolvedRooms && resolvedRooms.length > 0) || (resolvedAgents && resolvedAgents.length > 0)
-      if (hasResolved) return { rooms: resolvedRooms, agents: resolvedAgents }
-    }
+    const hasTarget = (target?.rooms && target.rooms.length > 0) || (target?.agents && target.agents.length > 0)
+    if (hasTarget) return target!
 
     // Fallback: respond where the trigger came from
     if (decision.triggerRoomId) return { rooms: [decision.triggerRoomId] }
@@ -152,7 +141,7 @@ export const spawnAIAgent = async (
   }
 
   const agent = createAIAgent(config, llmProvider, onDecision, { toolExecutor, toolDescriptions })
-  team.add(agent)
+  team.addAgent(agent)
 
   const publicRooms = house.listPublicRooms()
   for (const roomProfile of publicRooms) {
@@ -178,7 +167,7 @@ export const spawnHumanAgent = async (
   postAndDeliver: PostAndDeliver,
   roomsToJoin?: ReadonlyArray<Room>,
 ): Promise<Agent> => {
-  team.add(agent)
+  team.addAgent(agent)
 
   const rooms = roomsToJoin ?? house.listPublicRooms().map(
     profile => house.getRoom(profile.id),

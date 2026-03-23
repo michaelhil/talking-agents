@@ -35,10 +35,10 @@ describe('House — room collection', () => {
     const house = createHouse()
     const room = house.createRoom({ name: 'General', visibility: 'public', createdBy: 'alice' })
 
-    expect(house.findByName('General')).toBe(room)
-    expect(house.findByName('general')).toBe(room)
-    expect(house.findByName('GENERAL')).toBe(room)
-    expect(house.findByName('nonexistent')).toBeUndefined()
+    expect(house.getRoom('General')).toBe(room)
+    expect(house.getRoom('general')).toBe(room)
+    expect(house.getRoom('GENERAL')).toBe(room)
+    expect(house.getRoom('nonexistent')).toBeUndefined()
   })
 
   test('name uniqueness enforced (case-insensitive)', () => {

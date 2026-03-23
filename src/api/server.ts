@@ -104,7 +104,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
   const stateUnsubs = new Map<string, () => void>()  // agentId → unsubscribe
 
   const subscribeAgentState = (agentId: string, agentName: string): void => {
-    const agent = system.team.get(agentId)
+    const agent = system.team.getAgent(agentId)
     if (!agent || agent.kind !== 'ai') return
     const unsub = agent.state.subscribe((state: StateValue, _agentId: string, context?: string) => {
       broadcast({ type: 'agent_state', agentName, state, context })
@@ -121,7 +121,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
   }
 
   // Subscribe to all existing AI agents at startup
-  for (const agent of system.team.list()) {
+  for (const agent of system.team.listAgents()) {
     if (agent.kind === 'ai') subscribeAgentState(agent.id, agent.name)
   }
 
@@ -130,7 +130,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
   const buildSnapshot = (agentId: string, sessionToken?: string): Record<string, unknown> => ({
     type: 'snapshot',
     rooms: system.house.listAllRooms(),
-    agents: system.team.list().map(a => ({
+    agents: system.team.listAgents().map(a => ({
       id: a.id, name: a.name, description: a.description, kind: a.kind,
     })),
     agentId,
@@ -149,7 +149,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
       return json({
         status: 'ok', ollama: ollamaOk,
         rooms: system.house.listAllRooms().length,
-        agents: system.team.list().length,
+        agents: system.team.listAgents().length,
       })
     }
 
@@ -163,7 +163,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
     if (method === 'GET') {
       const name = extractParam(pathname, '/api/rooms/:name')
       if (name) {
-        const room = system.house.findByName(name)
+        const room = system.house.getRoom(name)
         if (!room) return notFound(`Room "${name}"`)
         const limit = parseInt(new URL(req.url).searchParams.get('limit') ?? '50', 10)
         return json({ profile: room.profile, messages: room.getRecent(limit) })
@@ -193,7 +193,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
     if (method === 'DELETE') {
       const name = extractParam(pathname, '/api/rooms/:name')
       if (name) {
-        const room = system.house.findByName(name)
+        const room = system.house.getRoom(name)
         if (!room) return notFound(`Room "${name}"`)
         system.house.removeRoom(room.profile.id)
         return json({ removed: true })
@@ -204,12 +204,12 @@ export const createServer = (system: System, config?: ServerConfig) => {
     if (method === 'POST') {
       const name = extractParam(pathname, '/api/rooms/:name/members')
       if (name) {
-        const room = system.house.findByName(name)
+        const room = system.house.getRoom(name)
         if (!room) return notFound(`Room "${name}"`)
         const body = await parseBody(req)
         const agentName = body.agentName as string | undefined
         if (!agentName) return errorResponse('agentName is required')
-        const agent = system.team.findByName(agentName)
+        const agent = system.team.getAgent(agentName)
         if (!agent) return notFound(`Agent "${agentName}"`)
         room.addMember(agent.id)
         await agent.join(room)
@@ -219,7 +219,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
     // GET /api/agents
     if (method === 'GET' && pathname === '/api/agents') {
-      return json(system.team.list().map(a => ({
+      return json(system.team.listAgents().map(a => ({
         id: a.id, name: a.name, description: a.description, kind: a.kind, state: a.state.get(),
       })))
     }
@@ -228,14 +228,14 @@ export const createServer = (system: System, config?: ServerConfig) => {
     if (method === 'GET') {
       const agentForRooms = extractParam(pathname, '/api/agents/:name/rooms')
       if (agentForRooms) {
-        const agent = system.team.findByName(agentForRooms)
+        const agent = system.team.getAgent(agentForRooms)
         if (!agent) return notFound(`Agent "${agentForRooms}"`)
         return json(agent.getRoomIds().map(id => system.house.getRoom(id)?.profile).filter(Boolean))
       }
 
       const agentName = extractParam(pathname, '/api/agents/:name')
       if (agentName) {
-        const agent = system.team.findByName(agentName)
+        const agent = system.team.getAgent(agentName)
         if (!agent) return notFound(`Agent "${agentName}"`)
         return json({
           id: agent.id, name: agent.name, description: agent.description,
@@ -261,7 +261,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
           historyLimit: body.historyLimit as number | undefined,
         })
         subscribeAgentState(agent.id, agent.name)
-        broadcast({ type: 'agent_joined', agentName: agent.name, roomName: '' })
+        broadcast({ type: 'agent_joined', agent: { id: agent.id, name: agent.name, description: agent.description, kind: agent.kind } })
         return json({ id: agent.id, name: agent.name }, 201)
       } catch (err) {
         return errorResponse(err instanceof Error ? err.message : 'Failed to create agent')
@@ -272,11 +272,11 @@ export const createServer = (system: System, config?: ServerConfig) => {
     if (method === 'DELETE') {
       const name = extractParam(pathname, '/api/agents/:name')
       if (name) {
-        const agent = system.team.findByName(name)
+        const agent = system.team.getAgent(name)
         if (!agent) return notFound(`Agent "${name}"`)
         unsubscribeAgentState(agent.id)
         system.removeAgent(agent.id)
-        broadcast({ type: 'agent_state', agentName: name, state: 'idle' })
+        broadcast({ type: 'agent_removed', agentName: name })
         return json({ removed: true })
       }
     }
@@ -346,7 +346,8 @@ export const createServer = (system: System, config?: ServerConfig) => {
     try {
       switch (msg.type) {
         case 'post_message': {
-          system.postAndDeliver(msg.target ?? {}, {
+          const resolved = msg.target ?? {}
+          system.postAndDeliver(resolved, {
             senderId: session.agent.id,
             content: msg.content,
             type: 'chat',
@@ -367,8 +368,8 @@ export const createServer = (system: System, config?: ServerConfig) => {
           break
         }
         case 'add_to_room': {
-          const room = system.house.findByName(msg.roomName)
-          const agent = system.team.findByName(msg.agentName)
+          const room = system.house.getRoom(msg.roomName)
+          const agent = system.team.getAgent(msg.agentName)
           if (room && agent) {
             room.addMember(agent.id)
             await agent.join(room)
@@ -378,15 +379,15 @@ export const createServer = (system: System, config?: ServerConfig) => {
         case 'create_agent': {
           const agent = await system.spawnAIAgent(msg.config)
           subscribeAgentState(agent.id, agent.name)
-          broadcast({ type: 'agent_joined', agentName: agent.name, roomName: '' })
+          broadcast({ type: 'agent_joined', agent: { id: agent.id, name: agent.name, description: agent.description, kind: agent.kind } })
           break
         }
         case 'remove_agent': {
-          const agent = system.team.findByName(msg.name)
+          const agent = system.team.getAgent(msg.name)
           if (agent) {
             unsubscribeAgentState(agent.id)
             system.removeAgent(agent.id)
-            broadcast({ type: 'agent_state', agentName: msg.name, state: 'idle' })
+            broadcast({ type: 'agent_removed', agentName: msg.name })
           }
           break
         }
@@ -427,8 +428,8 @@ export const createServer = (system: System, config?: ServerConfig) => {
         }
 
         // Ensure unique name
-        const existingNames = [...system.team.list().map(a => a.name)]
-        const assignedName = system.team.findByName(name) ? ensureUniqueName(name, existingNames) : name
+        const existingNames = [...system.team.listAgents().map(a => a.name)]
+        const assignedName = system.team.getAgent(name) ? ensureUniqueName(name, existingNames) : name
 
         const upgraded = server.upgrade(req, { data: { sessionToken, name: assignedName } })
         return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 500 })

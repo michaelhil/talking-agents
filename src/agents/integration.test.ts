@@ -41,8 +41,8 @@ describe('Integration — Room + Team + postAndDeliver', () => {
       (msg) => { bobInbox.push(msg) },
     )
 
-    team.add(alice)
-    team.add(bob)
+    team.addAgent(alice)
+    team.addAgent(bob)
 
     postAndDeliver({ rooms: [intro.profile.id] }, { senderId: alice.id, content: '[Alice] has joined', type: 'join' })
     postAndDeliver({ rooms: [intro.profile.id] }, { senderId: bob.id, content: '[Bob] has joined', type: 'join' })
@@ -70,8 +70,8 @@ describe('Integration — Room + Team + postAndDeliver', () => {
     const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
     const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, (msg) => { bobInbox.push(msg) })
 
-    team.add(alice)
-    team.add(bob)
+    team.addAgent(alice)
+    team.addAgent(bob)
 
     const msgs = postAndDeliver({ agents: [bob.id] }, { senderId: alice.id, content: 'Private hello', type: 'chat' })
 
@@ -94,13 +94,13 @@ describe('Integration — Room + Team + postAndDeliver', () => {
 
     const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
     const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, (msg) => { bobInbox.push(msg) })
-    team.add(alice)
-    team.add(bob)
+    team.addAgent(alice)
+    team.addAgent(bob)
 
     postAndDeliver({ rooms: [intro.profile.id] }, { senderId: alice.id, content: '[Alice] joined', type: 'join' })
 
     const charlie = createHumanAgent({ name: 'Charlie', description: 'Test' }, () => {})
-    team.add(charlie)
+    team.addAgent(charlie)
     postAndDeliver({ rooms: [intro.profile.id] }, { senderId: charlie.id, content: '[Charlie] joined', type: 'join' })
 
     const msgs = postAndDeliver(
@@ -119,7 +119,7 @@ describe('Integration — Room + Team + postAndDeliver', () => {
     const { team, intro, postAndDeliver } = createSystem()
 
     const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, () => {})
-    team.add(bob)
+    team.addAgent(bob)
 
     postAndDeliver({ agents: [bob.id] }, { senderId: 'alice-temp', content: 'Secret', type: 'chat' })
 
@@ -131,7 +131,7 @@ describe('Integration — Room + Team + postAndDeliver', () => {
 
     const aliceInbox: Message[] = []
     const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
-    team.add(alice)
+    team.addAgent(alice)
 
     const msgs = postAndDeliver({ agents: [alice.id] }, { senderId: alice.id, content: 'Hello me', type: 'chat' })
     expect(msgs).toHaveLength(0)
@@ -145,12 +145,12 @@ describe('Integration — Room + Team + postAndDeliver', () => {
 
     const aliceInbox: Message[] = []
     const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
-    team.add(alice)
+    team.addAgent(alice)
 
     const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, () => {})
     const charlie = createHumanAgent({ name: 'Charlie', description: 'Test' }, () => {})
-    team.add(bob)
-    team.add(charlie)
+    team.addAgent(bob)
+    team.addAgent(charlie)
 
     postAndDeliver({ rooms: [room1.profile.id] }, { senderId: alice.id, content: '[Alice] joined', type: 'join' })
     postAndDeliver({ rooms: [room1.profile.id] }, { senderId: bob.id, content: '[Bob] joined', type: 'join' })
@@ -168,23 +168,23 @@ describe('Integration — Room + Team + postAndDeliver', () => {
     const { house, team } = createSystem()
 
     const room = house.createRoom({ name: 'Planning', visibility: 'public', createdBy: 'test' })
-    expect(house.findByName('Planning')).toBe(room)
-    expect(house.findByName('planning')).toBe(room) // case-insensitive
+    expect(house.getRoom('Planning')).toBe(room)
+    expect(house.getRoom('planning')).toBe(room) // case-insensitive
 
     const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, () => {})
-    team.add(alice)
-    expect(team.findByName('Alice')).toBe(alice)
-    expect(team.findByName('alice')).toBe(alice) // case-insensitive
+    team.addAgent(alice)
+    expect(team.getAgent('Alice')).toBe(alice)
+    expect(team.getAgent('alice')).toBe(alice) // case-insensitive
   })
 
   test('team name uniqueness enforced', () => {
     const { team } = createSystem()
 
     const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, () => {})
-    team.add(alice)
+    team.addAgent(alice)
 
     const alice2 = createHumanAgent({ name: 'Alice', description: 'Test 2' }, () => {})
-    expect(() => team.add(alice2)).toThrow('Agent name "Alice" is already taken')
+    expect(() => team.addAgent(alice2)).toThrow('Agent name "Alice" is already taken')
   })
 })
 
@@ -205,7 +205,7 @@ describe('Integration — AI Agent with real Ollama', () => {
       ollamaProvider, house, team, postAndDeliver,
     )
 
-    expect(team.get(agent.id)).toBe(agent)
+    expect(team.getAgent(agent.id)).toBe(agent)
     expect(agent.kind).toBe('ai')
     expect(agent.id).toHaveLength(36) // UUID
 

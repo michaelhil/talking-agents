@@ -39,7 +39,7 @@ export const createQueryAgentTool = (team: Team): Tool => ({
       return { success: false, error: 'Both "agent" and "question" are required' }
     }
 
-    const target = team.findByName(agentName)
+    const target = team.getAgent(agentName)
     if (!target) return { success: false, error: `Agent "${agentName}" not found` }
     if (target.kind !== 'ai') return { success: false, error: `Agent "${agentName}" is not an AI agent` }
     if (target.id === context.callerId) return { success: false, error: 'Cannot query yourself' }

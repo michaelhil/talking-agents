@@ -86,8 +86,7 @@ export interface CreateResult<T> {
 export interface House {
   readonly createRoom: (config: RoomConfig) => Room
   readonly createRoomSafe: (config: RoomConfig) => CreateResult<Room>
-  readonly getRoom: (id: string) => Room | undefined
-  readonly findByName: (name: string) => Room | undefined
+  readonly getRoom: (idOrName: string) => Room | undefined
   readonly listPublicRooms: () => ReadonlyArray<RoomProfile>
   readonly listAllRooms: () => ReadonlyArray<RoomProfile>
   readonly removeRoom: (id: string) => boolean
@@ -139,11 +138,10 @@ export interface AIAgent extends Agent {
 // === Team — agent collection (AI + human) ===
 
 export interface Team {
-  readonly add: (agent: Agent) => void
-  readonly get: (id: string) => Agent | undefined
-  readonly findByName: (name: string) => Agent | undefined
-  readonly remove: (id: string) => boolean
-  readonly list: () => ReadonlyArray<Agent>
+  readonly addAgent: (agent: Agent) => void
+  readonly getAgent: (idOrName: string) => Agent | undefined
+  readonly removeAgent: (id: string) => boolean
+  readonly listAgents: () => ReadonlyArray<Agent>
   readonly listByKind: (kind: 'ai' | 'human') => ReadonlyArray<Agent>
 }
 
@@ -272,7 +270,8 @@ export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
   | { readonly type: 'agent_state'; readonly agentName: string; readonly state: StateValue; readonly context?: string }
   | { readonly type: 'room_created'; readonly profile: RoomProfile }
-  | { readonly type: 'agent_joined'; readonly agentName: string; readonly roomName: string }
+  | { readonly type: 'agent_joined'; readonly agent: AgentProfile }
+  | { readonly type: 'agent_removed'; readonly agentName: string }
   | { readonly type: 'snapshot'; readonly rooms: ReadonlyArray<RoomProfile>; readonly agents: ReadonlyArray<AgentProfile>; readonly agentId: string; readonly sessionToken?: string }
   | { readonly type: 'error'; readonly message: string }
 

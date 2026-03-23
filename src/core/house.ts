@@ -50,10 +50,10 @@ export const createHouse = (): House => {
     return { value: room, requestedName: config.name, assignedName }
   }
 
-  const getRoom = (id: string): Room | undefined => rooms.get(id)
-
-  const findByName = (name: string): Room | undefined => {
-    const lower = name.toLowerCase()
+  const getRoom = (idOrName: string): Room | undefined => {
+    const byId = rooms.get(idOrName)
+    if (byId) return byId
+    const lower = idOrName.toLowerCase()
     for (const room of rooms.values()) {
       if (room.profile.name.toLowerCase() === lower) return room
     }
@@ -74,7 +74,6 @@ export const createHouse = (): House => {
     createRoom: createRoomInHouse,
     createRoomSafe,
     getRoom,
-    findByName,
     listPublicRooms,
     listAllRooms,
     removeRoom,

@@ -51,7 +51,7 @@ export const createSystem = (ollamaUrl?: string): System => {
 
   // Remove agent from team AND all rooms (prevents ghost member delivery)
   const removeAgent = (id: string): boolean => {
-    const removed = team.remove(id)
+    const removed = team.removeAgent(id)
     if (removed) {
       for (const profile of house.listAllRooms()) {
         house.getRoom(profile.id)?.removeMember(id)

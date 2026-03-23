@@ -24,14 +24,14 @@ describe('executeActions — create_room', () => {
   test('creates a public room and adds creator', async () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent } = makeAgent('Creator')
-    team.add(agent)
+    team.addAgent(agent)
 
     await executeActions(
       [{ type: 'create_room', name: 'New Room', visibility: 'public' }],
       agent.id, agent.name, house, team, postAndDeliver,
     )
 
-    const room = house.findByName('New Room')
+    const room = house.getRoom('New Room')
     expect(room).toBeDefined()
     expect(room!.profile.visibility).toBe('public')
     expect(room!.hasMember(agent.id)).toBe(true)
@@ -40,7 +40,7 @@ describe('executeActions — create_room', () => {
   test('auto-renames on collision and notifies agent', async () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent } = makeAgent('Creator')
-    team.add(agent)
+    team.addAgent(agent)
 
     house.createRoom({ name: 'Planning', visibility: 'public', createdBy: 'test' })
 
@@ -49,7 +49,7 @@ describe('executeActions — create_room', () => {
       agent.id, agent.name, house, team, postAndDeliver,
     )
 
-    expect(house.findByName('Planning-2')).toBeDefined()
+    expect(house.getRoom('Planning-2')).toBeDefined()
 
     const systemMsg = agent.getMessages().find(
       m => m.senderId === SYSTEM_SENDER_ID && m.content.includes('Planning-2'),
@@ -61,15 +61,15 @@ describe('executeActions — create_room', () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent: creator } = makeAgent('Creator')
     const { agent: invitee } = makeAgent('Invitee')
-    team.add(creator)
-    team.add(invitee)
+    team.addAgent(creator)
+    team.addAgent(invitee)
 
     await executeActions(
       [{ type: 'create_room', name: 'Private Room', visibility: 'private', add: ['Invitee'] }],
       creator.id, creator.name, house, team, postAndDeliver,
     )
 
-    const room = house.findByName('Private Room')
+    const room = house.getRoom('Private Room')
     expect(room).toBeDefined()
     expect(room!.hasMember(creator.id)).toBe(true)
     expect(room!.hasMember(invitee.id)).toBe(true)
@@ -81,7 +81,7 @@ describe('executeActions — create_room', () => {
   test('handles nonexistent invite name gracefully', async () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent } = makeAgent('Creator')
-    team.add(agent)
+    team.addAgent(agent)
 
     await executeActions(
       [{ type: 'create_room', name: 'WithGhost', visibility: 'public', add: ['Ghost'] }],
@@ -89,7 +89,7 @@ describe('executeActions — create_room', () => {
     )
 
     // Room created, ghost silently skipped
-    expect(house.findByName('WithGhost')).toBeDefined()
+    expect(house.getRoom('WithGhost')).toBeDefined()
   })
 })
 
@@ -97,7 +97,7 @@ describe('executeActions — add_to_room', () => {
   test('agent adds itself to a public room (= join)', async () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent } = makeAgent('Joiner')
-    team.add(agent)
+    team.addAgent(agent)
 
     house.createRoom({ name: 'Open Room', visibility: 'public', createdBy: 'test' })
 
@@ -106,7 +106,7 @@ describe('executeActions — add_to_room', () => {
       agent.id, agent.name, house, team, postAndDeliver,
     )
 
-    const room = house.findByName('Open Room')
+    const room = house.getRoom('Open Room')
     expect(room!.hasMember(agent.id)).toBe(true)
     expect(room!.getParticipantIds()).toContain(agent.id)
   })
@@ -115,8 +115,8 @@ describe('executeActions — add_to_room', () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent: host } = makeAgent('Host')
     const { agent: guest } = makeAgent('Guest')
-    team.add(host)
-    team.add(guest)
+    team.addAgent(host)
+    team.addAgent(guest)
 
     const room = house.createRoom({ name: 'Club', visibility: 'private', createdBy: 'test' })
     room.addMember(host.id)
@@ -136,8 +136,8 @@ describe('executeActions — add_to_room', () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent: outsider } = makeAgent('Outsider')
     const { agent: target } = makeAgent('Target')
-    team.add(outsider)
-    team.add(target)
+    team.addAgent(outsider)
+    team.addAgent(target)
 
     house.createRoom({ name: 'Secret', visibility: 'private', createdBy: 'test' })
 
@@ -146,14 +146,14 @@ describe('executeActions — add_to_room', () => {
       outsider.id, outsider.name, house, team, postAndDeliver,
     )
 
-    const room = house.findByName('Secret')
+    const room = house.getRoom('Secret')
     expect(room!.hasMember(target.id)).toBe(false)
   })
 
   test('allows invited member to add themselves to private room', async () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent } = makeAgent('Invited')
-    team.add(agent)
+    team.addAgent(agent)
 
     const room = house.createRoom({ name: 'Private', visibility: 'private', createdBy: 'test' })
     room.addMember(agent.id)
@@ -169,7 +169,7 @@ describe('executeActions — add_to_room', () => {
   test('handles nonexistent room gracefully', async () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent } = makeAgent('Confused')
-    team.add(agent)
+    team.addAgent(agent)
 
     await executeActions(
       [{ type: 'add_to_room', roomName: 'Nonexistent', agentName: 'Confused' }],
@@ -181,7 +181,7 @@ describe('executeActions — add_to_room', () => {
   test('handles nonexistent agent gracefully', async () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent } = makeAgent('Inviter')
-    team.add(agent)
+    team.addAgent(agent)
 
     const room = house.createRoom({ name: 'MyRoom', visibility: 'public', createdBy: 'test' })
     room.addMember(agent.id)
@@ -198,7 +198,7 @@ describe('executeActions — limits', () => {
   test('actions limited to maxAgentActionsPerResponse', async () => {
     const { house, team, postAndDeliver } = createTestSystem()
     const { agent } = makeAgent('Spammer')
-    team.add(agent)
+    team.addAgent(agent)
 
     const actions: AgentAction[] = Array.from({ length: 10 }, (_, i) => ({
       type: 'create_room' as const,

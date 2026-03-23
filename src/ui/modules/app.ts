@@ -37,6 +37,8 @@ type WSOutbound =
   | { type: 'message'; message: Message }
   | { type: 'agent_state'; agentName: string; state: string; context?: string }
   | { type: 'room_created'; profile: RoomProfile }
+  | { type: 'agent_joined'; agent: AgentInfo }
+  | { type: 'agent_removed'; agentName: string }
   | { type: 'error'; message: string }
 
 // === State ===
@@ -150,6 +152,20 @@ const handleMessage = (msg: WSOutbound & { sessionToken?: string }) => {
     case 'room_created': {
       rooms.set(msg.profile.id, msg.profile)
       renderRooms()
+      break
+    }
+    case 'agent_joined': {
+      agents.set(msg.agent.id, msg.agent)
+      renderAgents()
+      break
+    }
+    case 'agent_removed': {
+      for (const [id, agent] of agents) {
+        if (agent.name === msg.agentName) { agents.delete(id); break }
+      }
+      agentStates.delete(msg.agentName)
+      renderAgents()
+      renderTypingIndicators()
       break
     }
     case 'error': {
