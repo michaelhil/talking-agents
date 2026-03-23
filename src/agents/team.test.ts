@@ -9,6 +9,7 @@ const makeAgent = (overrides?: Partial<Agent>): Agent => ({
   description: 'A test agent',
   kind: 'ai',
   metadata: {},
+  state: { get: () => 'idle' as const, subscribe: () => () => {} },
   getMessages: () => [],
   receive: () => {},
   join: async () => {},

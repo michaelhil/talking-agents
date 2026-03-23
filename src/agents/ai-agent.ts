@@ -19,6 +19,7 @@
 import type {
   AIAgent,
   AgentProfile,
+  AgentState,
   AIAgentConfig,
   AgentResponse,
   ChatRequest,
@@ -27,6 +28,8 @@ import type {
   MessageTarget,
   Room,
   RoomProfile,
+  StateSubscriber,
+  StateValue,
 } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
 import {
@@ -69,8 +72,23 @@ export const createAIAgent = (
   const generatingContexts = new Set<string>()
   const pendingContexts = new Set<string>()
   let idleResolvers: Array<() => void> = []
+  const stateSubscribers = new Set<StateSubscriber>()
 
   const historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
+
+  // --- State observability ---
+
+  const notifyState = (value: StateValue, context?: string): void => {
+    for (const fn of stateSubscribers) fn(value, agentId, context)
+  }
+
+  const state: AgentState = {
+    get: () => generatingContexts.size > 0 ? 'generating' : 'idle',
+    subscribe: (fn: StateSubscriber) => {
+      stateSubscribers.add(fn)
+      return () => { stateSubscribers.delete(fn) }
+    },
+  }
 
   // --- Profile extraction from join messages ---
 
@@ -114,7 +132,12 @@ export const createAIAgent = (
   const isOnCooldown = (key: string): boolean => {
     const lastTime = cooldowns.get(key)
     if (lastTime === undefined) return false
-    return Date.now() - lastTime < config.cooldownMs
+    const now = Date.now()
+    if (now - lastTime >= config.cooldownMs) {
+      cooldowns.delete(key)  // lazy prune expired entries
+      return false
+    }
+    return true
   }
 
   const setCooldown = (key: string): void => {
@@ -283,6 +306,7 @@ Only respond when you have substantive input. Do not respond just to acknowledge
     if (isOnCooldown(key)) return
 
     generatingContexts.add(key)
+    notifyState('generating', key)
 
     evaluate(triggerRoomId, triggerPeerId)
       .then(decision => {
@@ -301,6 +325,7 @@ Only respond when you have substantive input. Do not respond just to acknowledge
           pendingContexts.delete(key)
           tryEvaluate(triggerRoomId, triggerPeerId)
         } else {
+          notifyState('idle', key)
           checkIdle()
         }
       })
@@ -377,6 +402,7 @@ Only respond when you have substantive input. Do not respond just to acknowledge
     description: config.description,
     kind: 'ai',
     metadata: { model: config.model },
+    state,
     getMessages,
     receive,
     join,

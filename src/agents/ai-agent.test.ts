@@ -344,3 +344,72 @@ describe('AI Agent — unit tests', () => {
     expect(callCount).toBe(2)
   })
 })
+
+describe('Agent state', () => {
+  test('initial state is idle', () => {
+    const agent = createAIAgent(makeConfig(), makeLLMProvider(), () => {})
+    expect(agent.state.get()).toBe('idle')
+  })
+
+  test('state transitions to generating during LLM call', async () => {
+    const states: Array<{ state: string; context?: string }> = []
+    let resolveChat: (() => void) | null = null
+    const blockingProvider: LLMProvider = {
+      chat: () => new Promise(resolve => {
+        resolveChat = () => resolve({
+          content: '{"action":"pass","reason":"done"}',
+          generationMs: 100,
+          tokensUsed: { prompt: 10, completion: 5 },
+        })
+      }),
+      models: async () => [],
+    }
+
+    const agent = createAIAgent(makeConfig(), blockingProvider, () => {})
+    agent.state.subscribe((state, _agentId, context) => {
+      states.push({ state, context })
+    })
+
+    agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1' }))
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    expect(agent.state.get()).toBe('generating')
+    expect(states).toHaveLength(1)
+    expect(states[0]).toEqual({ state: 'generating', context: 'room:room-1' })
+
+    resolveChat!()
+    await agent.whenIdle()
+
+    expect(agent.state.get()).toBe('idle')
+    expect(states).toHaveLength(2)
+    expect(states[1]).toEqual({ state: 'idle', context: 'room:room-1' })
+  })
+
+  test('unsubscribe stops notifications', async () => {
+    const states: string[] = []
+    const agent = createAIAgent(makeConfig(), makeLLMProvider(), () => {})
+    const unsub = agent.state.subscribe((state) => { states.push(state) })
+
+    agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1' }))
+    await agent.whenIdle()
+
+    const countBefore = states.length
+    unsub()
+
+    agent.receive(makeMessage({ senderId: 'bob', roomId: 'room-1' }))
+    await agent.whenIdle()
+
+    expect(states.length).toBe(countBefore)
+  })
+
+  test('human agent state is always idle', () => {
+    const { createHumanAgent } = require('./human-agent.ts')
+    const human = createHumanAgent({ name: 'Human', description: 'Test' }, () => {})
+    expect(human.state.get()).toBe('idle')
+
+    const states: string[] = []
+    const unsub = human.state.subscribe((s: string) => states.push(s))
+    expect(states).toHaveLength(0)
+    unsub()
+  })
+})

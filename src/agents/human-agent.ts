@@ -3,12 +3,12 @@
 //
 // Same Agent interface as AI agents. The difference:
 // - receive() pushes message over transport instead of LLM evaluation
-// - join() snapshots profiles and sends recent history (no LLM summary)
+// - join() sends recent history over transport (no LLM summary)
 //
 // ID is auto-generated UUID, same as AI agents.
 // ============================================================================
 
-import type { Agent, AgentProfile, Message, Room, RoomProfile } from '../core/types.ts'
+import type { Agent, AgentState, Message, Room } from '../core/types.ts'
 import { DEFAULTS } from '../core/types.ts'
 import {
   addMessageWithEviction,
@@ -17,7 +17,6 @@ import {
   getMessagesForRoom as getMessagesForRoomHelper,
   getRoomIdsFromMessages,
 } from '../core/messages.ts'
-import { extractAgentProfile as extractProfile } from './shared.ts'
 
 export interface HumanAgentConfig {
   readonly name: string
@@ -27,18 +26,23 @@ export interface HumanAgentConfig {
 
 export type TransportSend = (message: Message) => void
 
+export interface HumanAgent extends Agent {
+  readonly setTransport: (newSend: TransportSend) => void
+}
+
 export const createHumanAgent = (
   config: HumanAgentConfig,
-  send: TransportSend,
-): Agent => {
+  initialSend: TransportSend,
+): HumanAgent => {
   const agentId = crypto.randomUUID()
+  let send = initialSend
   const messages: Message[] = []
-  const roomProfiles = new Map<string, RoomProfile>()
-  const agentProfiles = new Map<string, AgentProfile>()
   const historyLimit = DEFAULTS.historyLimit
 
-  const extractAgentProfileFromMessage = (message: Message): void => {
-    extractProfile(message, agentId, agentProfiles)
+  // Human agents are always 'idle' — state changes come from UI interaction, not LLM
+  const state: AgentState = {
+    get: () => 'idle',
+    subscribe: () => () => {},
   }
 
   const addMessage = (message: Message): void => {
@@ -54,7 +58,6 @@ export const createHumanAgent = (
 
   const receive = (message: Message): void => {
     addMessage(message)
-    extractAgentProfileFromMessage(message)
 
     // Don't echo own messages back over transport
     if (message.senderId === agentId) return
@@ -67,12 +70,9 @@ export const createHumanAgent = (
   }
 
   const join = async (room: Room): Promise<void> => {
-    roomProfiles.set(room.profile.id, room.profile)
-
     const recent = room.getRecent(historyLimit)
     const existingIds = new Set(messages.map(m => m.id))
     for (const msg of recent) {
-      extractAgentProfileFromMessage(msg)
       if (existingIds.has(msg.id)) continue
 
       addMessage(msg)
@@ -91,11 +91,13 @@ export const createHumanAgent = (
     description: config.description,
     kind: 'human',
     metadata: config.metadata ?? {},
+    state,
     getMessages,
     receive,
     join,
     getRoomIds,
     getMessagesForRoom,
     getMessagesForPeer,
+    setTransport: (newSend: TransportSend) => { send = newSend },
   }
 }

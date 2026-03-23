@@ -166,4 +166,97 @@ describe('Room — pure data structure', () => {
     expect(msgs).toHaveLength(1)
     expect(participants).toEqual(['alice'])
   })
+
+  // === Message eviction ===
+
+  test('evicts oldest messages when exceeding maxMessages', () => {
+    const room = createRoom(makeProfile(), 5)
+
+    for (let i = 0; i < 8; i++) {
+      room.post({ senderId: 'alice', content: `msg-${i}`, type: 'chat' })
+    }
+
+    expect(room.getMessageCount()).toBe(5)
+    const recent = room.getRecent(10)
+    expect(recent[0]!.content).toBe('msg-3')
+    expect(recent[4]!.content).toBe('msg-7')
+  })
+
+  test('eviction does not affect member tracking', () => {
+    const room = createRoom(makeProfile(), 3)
+
+    room.post({ senderId: 'alice', content: 'a', type: 'chat' })
+    room.post({ senderId: 'bob', content: 'b', type: 'chat' })
+    room.post({ senderId: 'charlie', content: 'c', type: 'chat' })
+    // All 3 messages evicted after next 3 posts
+    room.post({ senderId: 'dave', content: 'd', type: 'chat' })
+    room.post({ senderId: 'dave', content: 'e', type: 'chat' })
+    room.post({ senderId: 'dave', content: 'f', type: 'chat' })
+
+    // Alice/bob/charlie messages are gone but they're still members
+    expect(room.hasMember('alice')).toBe(true)
+    expect(room.hasMember('bob')).toBe(true)
+    expect(room.hasMember('charlie')).toBe(true)
+    expect(room.hasMember('dave')).toBe(true)
+    expect(room.getParticipantIds()).toHaveLength(4)
+  })
+
+  // === Member management ===
+
+  test('addMember adds without requiring a post', () => {
+    const room = createRoom(makeProfile())
+
+    room.addMember('invited-agent')
+    expect(room.hasMember('invited-agent')).toBe(true)
+    expect(room.getParticipantIds()).toContain('invited-agent')
+  })
+
+  test('addMember is idempotent', () => {
+    const room = createRoom(makeProfile())
+
+    room.addMember('alice')
+    room.addMember('alice')
+    room.addMember('alice')
+    expect(room.getParticipantIds().filter(id => id === 'alice')).toHaveLength(1)
+  })
+
+  test('removeMember removes agent from members and future recipients', () => {
+    const room = createRoom(makeProfile())
+
+    room.post({ senderId: 'alice', content: 'Hi', type: 'chat' })
+    room.post({ senderId: 'bob', content: 'Hey', type: 'chat' })
+    expect(room.hasMember('alice')).toBe(true)
+
+    room.removeMember('alice')
+    expect(room.hasMember('alice')).toBe(false)
+    expect(room.getParticipantIds()).not.toContain('alice')
+
+    // Alice no longer receives messages
+    const result = room.post({ senderId: 'bob', content: 'Still here?', type: 'chat' })
+    expect(result.recipientIds).not.toContain('alice')
+  })
+
+  test('removeMember is safe for non-existent members', () => {
+    const room = createRoom(makeProfile())
+    room.removeMember('nonexistent') // should not throw
+    expect(room.hasMember('nonexistent')).toBe(false)
+  })
+
+  test('hasMember returns false for system sender', () => {
+    const room = createRoom(makeProfile())
+    room.post({ senderId: SYSTEM_SENDER_ID, content: 'System msg', type: 'system' })
+    expect(room.hasMember(SYSTEM_SENDER_ID)).toBe(false)
+  })
+
+  // === Input validation ===
+
+  test('post throws on empty senderId', () => {
+    const room = createRoom(makeProfile())
+    expect(() => room.post({ senderId: '', content: 'Hi', type: 'chat' })).toThrow()
+  })
+
+  test('post throws on whitespace-only senderId', () => {
+    const room = createRoom(makeProfile())
+    expect(() => room.post({ senderId: '   ', content: 'Hi', type: 'chat' })).toThrow()
+  })
 })

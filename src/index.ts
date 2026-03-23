@@ -22,6 +22,11 @@ export type {
   AIAgentConfig,
   AgentResponse,
   AgentAction,
+  AgentState,
+  StateValue,
+  StateSubscriber,
+  WSInbound,
+  WSOutbound,
   ChatRequest,
   ChatResponse,
   LLMProvider,
@@ -39,7 +44,7 @@ export { createTeam } from './agents/team.ts'
 export { createAIAgent } from './agents/ai-agent.ts'
 export type { Decision, OnDecision } from './agents/ai-agent.ts'
 export { createHumanAgent } from './agents/human-agent.ts'
-export type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
+export type { HumanAgent, HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 
 // Agent wiring
 export { spawnAIAgent, spawnHumanAgent } from './agents/spawn.ts'
@@ -50,6 +55,7 @@ export { validateName, ensureUniqueName } from './core/names.ts'
 // LLM providers
 export { createOllamaProvider } from './llm/ollama.ts'
 
-// System factory
+// System + Server
 export { createSystem } from './main.ts'
 export type { System } from './main.ts'
+export { createServer } from './api/server.ts'

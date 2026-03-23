@@ -1,6 +1,6 @@
 {
   "name": "talking-agents",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Multi-agent room communication system — AI and human agents converse and cooperate through rooms",
   "module": "src/index.ts",
   "type": "module",

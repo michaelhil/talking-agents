@@ -63,6 +63,7 @@ export interface Room {
   readonly getRecent: (n: number) => ReadonlyArray<Message>
   readonly getParticipantIds: () => ReadonlyArray<string>
   readonly addMember: (id: string) => void
+  readonly removeMember: (id: string) => void
   readonly hasMember: (id: string) => boolean
   readonly getMessageCount: () => number
 }
@@ -100,6 +101,17 @@ export interface RoomConfig {
   readonly createdBy: string
 }
 
+// === Agent State — subscribe/get pattern for observability ===
+
+export type StateValue = 'idle' | 'generating'
+
+export interface AgentState {
+  readonly get: () => StateValue
+  readonly subscribe: (fn: StateSubscriber) => () => void
+}
+
+export type StateSubscriber = (state: StateValue, agentId: string, context?: string) => void
+
 // === Agent — unified interface for AI agents and humans ===
 
 export interface Agent {
@@ -108,6 +120,7 @@ export interface Agent {
   readonly description: string
   readonly kind: 'ai' | 'human'
   readonly metadata: Record<string, unknown>
+  readonly state: AgentState
   readonly getMessages: () => ReadonlyArray<Message>
   readonly receive: (message: Message) => void
   readonly join: (room: Room) => Promise<void>
@@ -209,6 +222,23 @@ export interface LLMProvider {
   readonly chat: (request: ChatRequest) => Promise<ChatResponse>
   readonly models: () => Promise<string[]>
 }
+
+// === WebSocket Protocol — typed inbound/outbound messages ===
+
+export type WSInbound =
+  | { readonly type: 'post_message'; readonly target: MessageTarget; readonly content: string }
+  | { readonly type: 'create_room'; readonly name: string; readonly description?: string; readonly roomPrompt?: string; readonly visibility: 'public' | 'private' }
+  | { readonly type: 'add_to_room'; readonly roomName: string; readonly agentName: string }
+  | { readonly type: 'create_agent'; readonly config: AIAgentConfig }
+  | { readonly type: 'remove_agent'; readonly name: string }
+
+export type WSOutbound =
+  | { readonly type: 'message'; readonly message: Message }
+  | { readonly type: 'agent_state'; readonly agentName: string; readonly state: StateValue; readonly context?: string }
+  | { readonly type: 'room_created'; readonly profile: RoomProfile }
+  | { readonly type: 'agent_joined'; readonly agentName: string; readonly roomName: string }
+  | { readonly type: 'snapshot'; readonly rooms: ReadonlyArray<RoomProfile>; readonly agents: ReadonlyArray<AgentProfile>; readonly agentId: string; readonly sessionToken?: string }
+  | { readonly type: 'error'; readonly message: string }
 
 // === System Constants ===
 

@@ -4,7 +4,7 @@
 // post() appends and returns recipient IDs. Caller handles delivery.
 // Room stamps its own roomId on messages — caller never passes roomId.
 //
-// Members are tracked via addMember/hasMember for access control.
+// Members are tracked via addMember/removeMember/hasMember for access control.
 // post() implicitly adds the sender as a member.
 // Messages are capped at maxMessages to prevent unbounded growth.
 // ============================================================================
@@ -18,6 +18,11 @@ export const createRoom = (profile: RoomProfile, maxMessages?: number): Room => 
   const messageLimit = maxMessages ?? DEFAULTS.roomMessageLimit
 
   const post = (params: PostParams): PostResult => {
+    // Validate sender
+    if (!params.senderId || params.senderId.trim() === '') {
+      throw new Error('post() requires a non-empty senderId')
+    }
+
     const message: Message = {
       id: crypto.randomUUID(),
       roomId: profile.id,
@@ -41,7 +46,11 @@ export const createRoom = (profile: RoomProfile, maxMessages?: number): Room => 
       messages.splice(0, messages.length - messageLimit)
     }
 
-    const recipientIds = [...members].filter(id => id !== message.senderId)
+    // Build recipient list directly from Set (no intermediate array)
+    const recipientIds: string[] = []
+    for (const id of members) {
+      if (id !== message.senderId) recipientIds.push(id)
+    }
     return { message, recipientIds }
   }
 
@@ -57,6 +66,10 @@ export const createRoom = (profile: RoomProfile, maxMessages?: number): Room => 
     members.add(id)
   }
 
+  const removeMember = (id: string): void => {
+    members.delete(id)
+  }
+
   const hasMember = (id: string): boolean => members.has(id)
 
   const getMessageCount = (): number => messages.length
@@ -67,6 +80,7 @@ export const createRoom = (profile: RoomProfile, maxMessages?: number): Room => 
     getRecent,
     getParticipantIds,
     addMember,
+    removeMember,
     hasMember,
     getMessageCount,
   }
