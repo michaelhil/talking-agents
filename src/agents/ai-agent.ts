@@ -30,6 +30,8 @@ import type {
   RoomProfile,
   StateSubscriber,
   StateValue,
+  ToolCall,
+  ToolExecutor,
 } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
 import {
@@ -52,6 +54,12 @@ export interface Decision {
 
 export type OnDecision = (decision: Decision) => void
 
+// === Internal response type — includes tool_call (never leaves evaluate) ===
+
+type InternalResponse =
+  | AgentResponse
+  | { readonly action: 'tool_call'; readonly toolCalls: ReadonlyArray<ToolCall> }
+
 // === Trigger key — unified identifier for rooms and DM peers ===
 
 const triggerKey = (roomId?: string, peerId?: string): string =>
@@ -59,10 +67,16 @@ const triggerKey = (roomId?: string, peerId?: string): string =>
 
 // === Factory ===
 
+export interface AIAgentOptions {
+  readonly toolExecutor?: ToolExecutor
+  readonly toolDescriptions?: string  // pre-formatted tool descriptions for LLM
+}
+
 export const createAIAgent = (
   config: AIAgentConfig,
   llmProvider: LLMProvider,
   onDecision: OnDecision,
+  options?: AIAgentOptions,
 ): AIAgent => {
   const agentId = crypto.randomUUID()
   const messages: Message[] = []
@@ -75,6 +89,9 @@ export const createAIAgent = (
   const stateSubscribers = new Set<StateSubscriber>()
 
   const historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
+  const maxToolIterations = config.maxToolIterations ?? 5
+  const toolExecutor = options?.toolExecutor
+  const toolDescriptions = options?.toolDescriptions
 
   // --- State observability ---
 
@@ -211,14 +228,23 @@ export const createAIAgent = (
       systemContent += `\nKnown agents: ${agentNames.join(', ')}`
     }
 
-    // Response format — target uses names
-    systemContent += `\n\nRespond with JSON. You MUST include a "target" with room or agent names.
-To reply in a room: {"action": "respond", "content": "...", "target": {"rooms": ["Room Name"]}}
-To message an agent directly: {"action": "respond", "content": "...", "target": {"agents": ["Agent Name"]}}
-To do both: {"action": "respond", "content": "...", "target": {"rooms": ["Room Name"], "agents": ["Agent Name"]}}
-To stay silent: {"action": "pass", "reason": "..."}
+    // Tool descriptions (only if agent has tools)
+    if (toolDescriptions) {
+      systemContent += `\n\n${toolDescriptions}`
+    }
 
-Only respond when you have substantive input. Do not respond just to acknowledge.`
+    // Response format — target is optional (defaults to replying where the message came from)
+    systemContent += `\n\nRespond with JSON.
+To reply: {"action": "respond", "content": "..."}
+To redirect to a specific room or agent: {"action": "respond", "content": "...", "target": {"rooms": ["Room Name"]}} or {"target": {"agents": ["Agent Name"]}}
+To stay silent: {"action": "pass", "reason": "..."}`
+
+    if (toolDescriptions) {
+      systemContent += `\nTo call a tool: {"action": "tool_call", "toolCalls": [{"tool": "tool_name", "arguments": {...}}]}
+Tool results will be provided, then you respond normally.`
+    }
+
+    systemContent += `\n\nOnly respond when you have substantive input. Do not respond just to acknowledge.`
 
     // Build message array
     const chatMessages: ChatRequest['messages'][number][] = [
@@ -247,7 +273,7 @@ Only respond when you have substantive input. Do not respond just to acknowledge
 
   // --- JSON parsing with fallback ---
 
-  const parseResponse = (raw: string): AgentResponse => {
+  const parseResponse = (raw: string): InternalResponse => {
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>
       if (parsed.action === 'respond' && typeof parsed.content === 'string' && (parsed.content as string).length > 0) {
@@ -260,6 +286,14 @@ Only respond when you have substantive input. Do not respond just to acknowledge
       if (parsed.action === 'pass') {
         return { action: 'pass', reason: parsed.reason as string | undefined }
       }
+      if (parsed.action === 'tool_call' && Array.isArray(parsed.toolCalls) && parsed.toolCalls.length > 0) {
+        const validCalls = (parsed.toolCalls as ReadonlyArray<Record<string, unknown>>)
+          .filter(c => typeof c.tool === 'string')
+          .map(c => ({ tool: c.tool as string, arguments: (c.arguments ?? {}) as Record<string, unknown> }))
+        if (validCalls.length > 0) {
+          return { action: 'tool_call', toolCalls: validCalls }
+        }
+      }
       return { action: 'pass', reason: 'Invalid response structure' }
     } catch {
       return { action: 'respond', content: raw, target: {} }
@@ -269,21 +303,61 @@ Only respond when you have substantive input. Do not respond just to acknowledge
   // --- Evaluate ---
 
   const evaluate = async (triggerRoomId?: string, triggerPeerId?: string): Promise<Decision | null> => {
-    const context = buildContext(triggerRoomId, triggerPeerId)
+    const context = [...buildContext(triggerRoomId, triggerPeerId)]
+    let totalGenerationMs = 0
 
     try {
-      const chatResponse = await llmProvider.chat({
-        model: config.model,
-        messages: context,
-        temperature: config.temperature,
-        jsonMode: true,
-      })
+      // Loop: 1 initial call + up to maxToolIterations tool rounds
+      for (let toolRound = 0; toolRound <= maxToolIterations; toolRound++) {
+        const chatResponse = await llmProvider.chat({
+          model: config.model,
+          messages: context,
+          temperature: config.temperature,
+          jsonMode: true,
+        })
 
-      const agentResponse = parseResponse(chatResponse.content)
+        totalGenerationMs += chatResponse.generationMs
+        const parsed = parseResponse(chatResponse.content)
 
+        // Tool call — execute and continue loop
+        if (parsed.action === 'tool_call' && toolExecutor) {
+          const results = await toolExecutor(parsed.toolCalls)
+
+          // Add assistant's tool call as context
+          context.push({ role: 'assistant' as const, content: chatResponse.content })
+
+          // Add tool results as user message
+          const resultText = results
+            .map((r, i) => `Tool "${parsed.toolCalls[i]?.tool}": ${r.success ? JSON.stringify(r.data) : `Error: ${r.error}`}`)
+            .join('\n')
+          context.push({ role: 'user' as const, content: `Tool results:\n${resultText}\n\nNow respond based on the tool results.` })
+
+          continue
+        }
+
+        // tool_call without executor — fall back to pass
+        if (parsed.action === 'tool_call') {
+          return {
+            response: { action: 'pass', reason: 'Tool calls not available' },
+            generationMs: totalGenerationMs,
+            triggerRoomId,
+            triggerPeerId,
+          }
+        }
+
+        // respond or pass — return decision
+        return {
+          response: parsed,
+          generationMs: totalGenerationMs,
+          triggerRoomId,
+          triggerPeerId,
+        }
+      }
+
+      // Max iterations reached
       return {
-        response: agentResponse,
-        generationMs: chatResponse.generationMs,
+        response: { action: 'pass', reason: `Tool call loop exceeded ${maxToolIterations} iterations` },
+        generationMs: totalGenerationMs,
         triggerRoomId,
         triggerPeerId,
       }
@@ -396,6 +470,32 @@ Only respond when you have substantive input. Do not respond just to acknowledge
     }
   }
 
+  // --- Query — synchronous side-channel for tool-based inter-agent communication ---
+  // Same LLM, same personality, no message history involvement, no onDecision.
+  // Returns the response text directly to the caller.
+
+  let queryActive = false
+
+  const query = async (question: string, askerId: string, askerName?: string): Promise<string> => {
+    if (queryActive) throw new Error(`${config.name} is already processing a query`)
+    queryActive = true
+
+    try {
+      const name = askerName ?? agentProfiles.get(askerId)?.name ?? askerId
+      const response = await llmProvider.chat({
+        model: config.model,
+        messages: [
+          { role: 'system', content: config.systemPrompt },
+          { role: 'user', content: `[${name}] asks: ${question}` },
+        ],
+        temperature: config.temperature,
+      })
+      return response.content
+    } finally {
+      queryActive = false
+    }
+  }
+
   return {
     id: agentId,
     name: config.name,
@@ -410,5 +510,6 @@ Only respond when you have substantive input. Do not respond just to acknowledge
     getMessagesForRoom,
     getMessagesForPeer,
     whenIdle,
+    query,
   }
 }

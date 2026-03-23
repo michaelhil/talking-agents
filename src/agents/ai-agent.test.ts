@@ -413,3 +413,191 @@ describe('Agent state', () => {
     unsub()
   })
 })
+
+describe('Tool use (ReAct loop)', () => {
+  test('tool_call triggers executor and feeds result back to LLM', async () => {
+    let callCount = 0
+    const provider: LLMProvider = {
+      chat: async () => {
+        callCount++
+        if (callCount === 1) {
+          // First call: agent wants to use a tool
+          return {
+            content: '{"action":"tool_call","toolCalls":[{"tool":"get_time","arguments":{}}]}',
+            generationMs: 50,
+            tokensUsed: { prompt: 10, completion: 5 },
+          }
+        }
+        // Second call: agent responds after seeing tool result
+        return {
+          content: '{"action":"respond","content":"The time is now.","target":{"rooms":["Test Room"]}}',
+          generationMs: 50,
+          tokensUsed: { prompt: 20, completion: 10 },
+        }
+      },
+      models: async () => [],
+    }
+
+    const toolExecutor = async (calls: ReadonlyArray<{ tool: string; arguments: Record<string, unknown> }>) => {
+      return calls.map(() => ({ success: true as const, data: { time: '2026-03-23T12:00:00Z' } }))
+    }
+
+    const decisions: Decision[] = []
+    const agent = createAIAgent(
+      makeConfig({ cooldownMs: 0 }),
+      provider,
+      (d) => decisions.push(d),
+      { toolExecutor, toolDescriptions: 'Available tools:\n- get_time: Returns the current time.' },
+    )
+
+    agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1', content: 'What time is it?' }))
+    await agent.whenIdle()
+
+    expect(callCount).toBe(2)
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.response.action).toBe('respond')
+    expect(decisions[0]!.generationMs).toBe(100) // 50 + 50 from both calls
+  })
+
+  test('tool_call without executor falls back to pass', async () => {
+    const provider: LLMProvider = {
+      chat: async () => ({
+        content: '{"action":"tool_call","toolCalls":[{"tool":"get_time","arguments":{}}]}',
+        generationMs: 50,
+        tokensUsed: { prompt: 10, completion: 5 },
+      }),
+      models: async () => [],
+    }
+
+    const decisions: Decision[] = []
+    const agent = createAIAgent(makeConfig({ cooldownMs: 0 }), provider, (d) => decisions.push(d))
+
+    agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1' }))
+    await agent.whenIdle()
+
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.response.action).toBe('pass')
+    if (decisions[0]!.response.action === 'pass') {
+      expect(decisions[0]!.response.reason).toBe('Tool calls not available')
+    }
+  })
+
+  test('max tool iterations prevents infinite loop', async () => {
+    let callCount = 0
+    const provider: LLMProvider = {
+      chat: async () => {
+        callCount++
+        return {
+          content: '{"action":"tool_call","toolCalls":[{"tool":"loop","arguments":{}}]}',
+          generationMs: 10,
+          tokensUsed: { prompt: 10, completion: 5 },
+        }
+      },
+      models: async () => [],
+    }
+
+    const toolExecutor = async () => [{ success: true as const, data: 'looping' }]
+
+    const decisions: Decision[] = []
+    const agent = createAIAgent(
+      makeConfig({ cooldownMs: 0, maxToolIterations: 3 }),
+      provider,
+      (d) => decisions.push(d),
+      { toolExecutor, toolDescriptions: 'Available tools:\n- loop: Test tool.' },
+    )
+
+    agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1' }))
+    await agent.whenIdle()
+
+    // 1 initial + 3 tool rounds = 4 LLM calls, then capped at max iterations
+    expect(callCount).toBe(4)
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.response.action).toBe('pass')
+  })
+
+  test('tool descriptions appear in context when configured', async () => {
+    let capturedMessages: ReadonlyArray<{ role: string; content: string }> = []
+    const provider: LLMProvider = {
+      chat: async (req) => {
+        capturedMessages = req.messages
+        return {
+          content: '{"action":"pass","reason":"done"}',
+          generationMs: 10,
+          tokensUsed: { prompt: 10, completion: 5 },
+        }
+      },
+      models: async () => [],
+    }
+
+    const agent = createAIAgent(
+      makeConfig({ cooldownMs: 0 }),
+      provider,
+      () => {},
+      { toolDescriptions: 'Available tools:\n- get_time: Returns the current time.' },
+    )
+
+    agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1' }))
+    await agent.whenIdle()
+
+    const systemMsg = capturedMessages.find(m => m.role === 'system')
+    expect(systemMsg?.content).toContain('Available tools:')
+    expect(systemMsg?.content).toContain('get_time')
+    expect(systemMsg?.content).toContain('tool_call')
+  })
+})
+
+describe('Query (synchronous inter-agent)', () => {
+  test('query returns LLM response directly', async () => {
+    const agent = createAIAgent(
+      makeConfig(),
+      makeLLMProvider('The answer is 42'),
+      () => {},
+    )
+
+    const result = await agent.query('What is the meaning of life?', 'alice-1')
+    expect(result).toBe('The answer is 42')
+  })
+
+  test('query includes asker identity in prompt', async () => {
+    let capturedMessages: ReadonlyArray<{ role: string; content: string }> = []
+    const provider: LLMProvider = {
+      chat: async (req) => {
+        capturedMessages = req.messages
+        return { content: 'response', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+      },
+      models: async () => [],
+    }
+
+    const agent = createAIAgent(makeConfig(), provider, () => {})
+    await agent.query('Hello?', 'some-id')
+
+    const userMsg = capturedMessages.find(m => m.role === 'user')
+    expect(userMsg?.content).toContain('asks: Hello?')
+  })
+
+  test('query rejects concurrent calls', async () => {
+    let resolveChat: (() => void) | null = null
+    const provider: LLMProvider = {
+      chat: () => new Promise(resolve => {
+        resolveChat = () => resolve({ content: 'done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } })
+      }),
+      models: async () => [],
+    }
+
+    const agent = createAIAgent(makeConfig(), provider, () => {})
+    const first = agent.query('Q1', 'a')
+
+    // Second concurrent query should fail
+    await expect(agent.query('Q2', 'b')).rejects.toThrow('already processing a query')
+
+    resolveChat!()
+    await first
+  })
+
+  test('query does not affect message history', async () => {
+    const agent = createAIAgent(makeConfig(), makeLLMProvider('Answer'), () => {})
+    await agent.query('Question?', 'alice-1')
+
+    expect(agent.getMessages()).toHaveLength(0)
+  })
+})

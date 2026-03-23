@@ -129,10 +129,11 @@ export interface Agent {
   readonly getMessagesForPeer: (peerId: string, limit?: number) => ReadonlyArray<Message>
 }
 
-// === AIAgent — extended Agent with async evaluation observability ===
+// === AIAgent — extended Agent with query + observability ===
 
 export interface AIAgent extends Agent {
   readonly whenIdle: (timeoutMs?: number) => Promise<void>
+  readonly query: (question: string, askerId: string, askerName?: string) => Promise<string>
 }
 
 // === Team — agent collection (AI + human) ===
@@ -150,6 +151,39 @@ export interface Team {
 
 export type PostAndDeliver = (target: MessageTarget, params: PostParams) => ReadonlyArray<Message>
 
+// === Tool Use Framework ===
+
+export interface ToolCall {
+  readonly tool: string
+  readonly arguments: Record<string, unknown>
+}
+
+export interface ToolResult {
+  readonly success: boolean
+  readonly data?: unknown
+  readonly error?: string
+}
+
+export interface ToolContext {
+  readonly callerId: string
+  readonly callerName: string
+}
+
+export interface Tool {
+  readonly name: string
+  readonly description: string
+  readonly parameters: Record<string, unknown>  // JSON Schema for LLM
+  readonly execute: (params: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>
+}
+
+export interface ToolRegistry {
+  readonly register: (tool: Tool) => void
+  readonly get: (name: string) => Tool | undefined
+  readonly list: () => ReadonlyArray<Tool>
+}
+
+export type ToolExecutor = (calls: ReadonlyArray<ToolCall>) => Promise<ReadonlyArray<ToolResult>>
+
 // === AI Agent Configuration ===
 // No ID field — system generates UUID automatically.
 
@@ -161,6 +195,8 @@ export interface AIAgentConfig {
   readonly temperature?: number
   readonly cooldownMs: number
   readonly historyLimit?: number
+  readonly tools?: ReadonlyArray<string>        // tool names this agent can use
+  readonly maxToolIterations?: number           // default 5
 }
 
 // === Agent Response (JSON from LLM) ===

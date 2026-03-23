@@ -4,6 +4,7 @@
 // Wires the onDecision callback to bridge agent decisions to postAndDeliver.
 //
 // resolveTarget translates LLM names → internal UUIDs using findByName.
+// toolExecutor bridges agent tool calls to the global tool registry.
 // ============================================================================
 
 import type {
@@ -16,11 +17,66 @@ import type {
   PostAndDeliver,
   Room,
   Team,
+  Tool,
+  ToolCall,
+  ToolContext,
+  ToolExecutor,
+  ToolRegistry,
+  ToolResult,
 } from '../core/types.ts'
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import { executeActions } from './actions.ts'
 import { makeJoinMetadata } from './shared.ts'
+
+// --- Tool support ---
+
+const formatToolDescriptions = (tools: ReadonlyArray<Tool>): string => {
+  if (tools.length === 0) return ''
+  const lines = tools.map(t => {
+    const params = Object.keys(t.parameters).length > 0
+      ? ` Parameters: ${JSON.stringify(t.parameters)}`
+      : ' No parameters.'
+    return `- ${t.name}: ${t.description}${params}`
+  })
+  return `Available tools:\n${lines.join('\n')}`
+}
+
+const createToolExecutor = (
+  registry: ToolRegistry,
+  allowedTools: ReadonlyArray<string>,
+  context: ToolContext,
+): ToolExecutor => {
+  const allowed = new Set(allowedTools)
+
+  return async (calls: ReadonlyArray<ToolCall>): Promise<ReadonlyArray<ToolResult>> => {
+    const results: ToolResult[] = []
+
+    for (const call of calls) {
+      if (!allowed.has(call.tool)) {
+        results.push({ success: false, error: `Tool "${call.tool}" is not available` })
+        continue
+      }
+
+      const tool = registry.get(call.tool)
+      if (!tool) {
+        results.push({ success: false, error: `Tool "${call.tool}" not found` })
+        continue
+      }
+
+      try {
+        const result = await tool.execute(call.arguments, context)
+        results.push(result)
+      } catch (err) {
+        results.push({ success: false, error: err instanceof Error ? err.message : 'Tool execution failed' })
+      }
+    }
+
+    return results
+  }
+}
+
+// --- Spawn AI Agent ---
 
 export const spawnAIAgent = async (
   config: AIAgentConfig,
@@ -28,6 +84,7 @@ export const spawnAIAgent = async (
   house: House,
   team: Team,
   postAndDeliver: PostAndDeliver,
+  toolRegistry?: ToolRegistry,
 ): Promise<AIAgent> => {
 
   // Resolve LLM names to internal UUIDs via findByName.
@@ -44,7 +101,9 @@ export const spawnAIAgent = async (
         ?.map(name => team.findByName(name)?.id)
         .filter((id): id is string => id !== undefined)
 
-      return { rooms: resolvedRooms, agents: resolvedAgents }
+      // If all names failed resolution, fall back to trigger source
+      const hasResolved = (resolvedRooms && resolvedRooms.length > 0) || (resolvedAgents && resolvedAgents.length > 0)
+      if (hasResolved) return { rooms: resolvedRooms, agents: resolvedAgents }
     }
 
     // Fallback: respond where the trigger came from
@@ -71,7 +130,28 @@ export const spawnAIAgent = async (
     }
   }
 
-  const agent = createAIAgent(config, llmProvider, onDecision)
+  // Build tool support if agent has tools configured
+  const agentTools = config.tools ?? []
+  let toolExecutor: ToolExecutor | undefined
+  let toolDescriptions: string | undefined
+
+  if (toolRegistry && agentTools.length > 0) {
+    const availableTools = agentTools
+      .map(name => toolRegistry.get(name))
+      .filter((t): t is Tool => t !== undefined)
+
+    if (availableTools.length > 0) {
+      // Late-binding context: agent is created after this, but executor is called later
+      const lazyContext: ToolContext = {
+        get callerId() { return agent.id },
+        get callerName() { return agent.name },
+      }
+      toolExecutor = createToolExecutor(toolRegistry, agentTools, lazyContext)
+      toolDescriptions = formatToolDescriptions(availableTools)
+    }
+  }
+
+  const agent = createAIAgent(config, llmProvider, onDecision, { toolExecutor, toolDescriptions })
   team.add(agent)
 
   const publicRooms = house.listPublicRooms()

@@ -5,22 +5,25 @@
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
 // ============================================================================
 
-import type { Agent, AIAgentConfig, House, LLMProvider, PostAndDeliver, Room, Team } from './core/types.ts'
+import type { Agent, AIAgentConfig, House, LLMProvider, PostAndDeliver, Room, Team, ToolRegistry } from './core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './core/types.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
 import { createPostAndDeliver } from './core/delivery.ts'
 import { createOllamaProvider } from './llm/ollama.ts'
+import { createToolRegistry } from './core/tool-registry.ts'
 import { spawnAIAgent, spawnHumanAgent } from './agents/spawn.ts'
 import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
+import { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from './tools/built-in.ts'
 
 export interface System {
   readonly house: House
   readonly team: Team
   readonly postAndDeliver: PostAndDeliver
   readonly ollama: LLMProvider
+  readonly toolRegistry: ToolRegistry
   readonly introRoom: Room
   readonly removeAgent: (id: string) => boolean
   readonly spawnAIAgent: (config: AIAgentConfig) => Promise<Agent>
@@ -32,6 +35,12 @@ export const createSystem = (ollamaUrl?: string): System => {
   const team = createTeam()
   const postAndDeliver = createPostAndDeliver(house, team)
   const ollama = createOllamaProvider(ollamaUrl ?? DEFAULTS.ollamaBaseUrl)
+  const toolRegistry = createToolRegistry()
+
+  // Register built-in tools
+  toolRegistry.register(createListRoomsTool(house))
+  toolRegistry.register(createGetTimeTool())
+  toolRegistry.register(createQueryAgentTool(team))
 
   const introRoom = house.createRoom({
     name: 'Introductions',
@@ -53,7 +62,7 @@ export const createSystem = (ollamaUrl?: string): System => {
 
   // Bound spawn methods — close over system dependencies
   const boundSpawnAIAgent = (config: AIAgentConfig) =>
-    spawnAIAgent(config, ollama, house, team, postAndDeliver)
+    spawnAIAgent(config, ollama, house, team, postAndDeliver, toolRegistry)
 
   const boundSpawnHumanAgent = async (config: HumanAgentConfig, send: TransportSend): Promise<HumanAgent> => {
     const agent = createHumanAgent(config, send)
@@ -62,7 +71,7 @@ export const createSystem = (ollamaUrl?: string): System => {
   }
 
   return {
-    house, team, postAndDeliver, ollama, introRoom, removeAgent,
+    house, team, postAndDeliver, ollama, toolRegistry, introRoom, removeAgent,
     spawnAIAgent: boundSpawnAIAgent,
     spawnHumanAgent: boundSpawnHumanAgent,
   }
@@ -79,6 +88,7 @@ if (import.meta.main) {
   const pkg = await Bun.file(`${import.meta.dir}/../package.json`).json() as { version: string }
   console.log(`Talking Agents v${pkg.version}`)
   console.log(`Ollama: ${ollamaUrl}`)
+  console.log(`Tools: ${system.toolRegistry.list().map(t => t.name).join(', ')}`)
 
   try {
     const models = await system.ollama.models()

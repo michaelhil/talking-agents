@@ -27,6 +27,12 @@ export type {
   StateSubscriber,
   WSInbound,
   WSOutbound,
+  Tool,
+  ToolCall,
+  ToolResult,
+  ToolContext,
+  ToolRegistry,
+  ToolExecutor,
   ChatRequest,
   ChatResponse,
   LLMProvider,
@@ -42,7 +48,7 @@ export { createPostAndDeliver } from './core/delivery.ts'
 // Agent factories
 export { createTeam } from './agents/team.ts'
 export { createAIAgent } from './agents/ai-agent.ts'
-export type { Decision, OnDecision } from './agents/ai-agent.ts'
+export type { AIAgentOptions, Decision, OnDecision } from './agents/ai-agent.ts'
 export { createHumanAgent } from './agents/human-agent.ts'
 export type { HumanAgent, HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 
@@ -51,6 +57,10 @@ export { spawnAIAgent, spawnHumanAgent } from './agents/spawn.ts'
 export { executeActions } from './agents/actions.ts'
 export { extractAgentProfile, makeJoinMetadata } from './agents/shared.ts'
 export { validateName, ensureUniqueName } from './core/names.ts'
+export { createToolRegistry } from './core/tool-registry.ts'
+
+// Built-in tools
+export { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from './tools/built-in.ts'
 
 // LLM providers
 export { createOllamaProvider } from './llm/ollama.ts'
