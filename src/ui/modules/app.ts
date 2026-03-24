@@ -1,64 +1,42 @@
 // ============================================================================
 // Talking Agents — UI Application
 //
-// Single-file UI logic. Connects via WebSocket, renders rooms/messages/agents.
+// Orchestrator: connects WS client, delegates rendering, handles events.
 // No framework, no build step. Served as transpiled JS by the server.
 // ============================================================================
 
-// === Types (mirror of server-side, minimal) ===
+import { createWSClient, type WSClient } from './ws-client.ts'
+import {
+  renderRooms,
+  renderAgents,
+  renderMessage,
+  renderTypingIndicators,
+  openPromptEditor,
+  type UIMessage,
+  type RoomProfile,
+  type AgentInfo,
+} from './ui-renderer.ts'
 
-interface Message {
-  id: string
-  senderId: string
-  content: string
-  timestamp: number
-  type: string
-  roomId?: string
-  recipientId?: string
-  generationMs?: number
-}
-
-interface RoomProfile {
-  id: string
-  name: string
-  description?: string
-  visibility: string
-}
-
-interface AgentInfo {
-  id: string
-  name: string
-  description: string
-  kind: string
-  state?: string
-}
+// === WS Protocol Types ===
 
 type WSOutbound =
   | { type: 'snapshot'; rooms: RoomProfile[]; agents: AgentInfo[]; agentId: string; sessionToken?: string }
-  | { type: 'message'; message: Message }
+  | { type: 'message'; message: UIMessage }
   | { type: 'agent_state'; agentName: string; state: string; context?: string }
   | { type: 'room_created'; profile: RoomProfile }
   | { type: 'agent_joined'; agent: AgentInfo }
   | { type: 'agent_removed'; agentName: string }
   | { type: 'error'; message: string }
 
-type WSInbound =
-  | { type: 'post_message'; target: { rooms?: string[]; agents?: string[] }; content: string }
-  | { type: 'create_room'; name: string; description?: string; visibility: string }
-  | { type: 'add_to_room'; roomName: string; agentName: string }
-  | { type: 'create_agent'; config: Record<string, unknown> }
-  | { type: 'remove_agent'; name: string }
-  | { type: 'update_agent'; name: string; systemPrompt: string }
-
 // === State ===
 
-let ws: WebSocket | null = null
+let client: WSClient | null = null
 let myAgentId = ''
 let sessionToken = localStorage.getItem('ta_session') ?? ''
 let selectedRoomId = ''
 const rooms = new Map<string, RoomProfile>()
-const agents = new Map<string, AgentInfo & { state?: string }>()
-const roomMessages = new Map<string, Message[]>()
+const agents = new Map<string, AgentInfo>()
+const roomMessages = new Map<string, UIMessage[]>()
 const agentStates = new Map<string, { state: string; context?: string }>()
 
 // === DOM refs ===
@@ -80,235 +58,21 @@ const roomForm = $('#room-form') as HTMLFormElement
 const agentModal = $('#agent-modal') as HTMLDialogElement
 const agentForm = $('#agent-form') as HTMLFormElement
 
-// === WebSocket ===
+// === Render helpers (delegate to ui-renderer) ===
 
-const connect = (name: string) => {
-  const params = new URLSearchParams({ name })
-  if (sessionToken) params.set('session', sessionToken)
+const send = (data: unknown) => client?.send(data)
 
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  ws = new WebSocket(`${protocol}//${location.host}/ws?${params}`)
+const refreshRooms = () => renderRooms(roomList, rooms, selectedRoomId, selectRoom)
 
-  ws.onopen = () => {
-    connectionStatus.textContent = `Connected as ${name}`
-    connectionStatus.className = 'text-sm text-green-600'
-    chatInput.disabled = false
-    chatForm.querySelector('button')!.removeAttribute('disabled')
-  }
+const refreshAgents = () => renderAgents(
+  agentList, agents, agentStates,
+  (name) => openPromptEditor(name, send),
+  (id, name) => { send({ type: 'remove_agent', name }); agents.delete(id); refreshAgents() },
+)
 
-  ws.onclose = () => {
-    connectionStatus.textContent = 'Disconnected — reconnecting...'
-    connectionStatus.className = 'text-sm text-red-500'
-    chatInput.disabled = true
-    setTimeout(() => connect(name), 2000)
-  }
+const refreshTyping = () => renderTypingIndicators(typingIndicators, agentStates, selectedRoomId)
 
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data) as WSOutbound & { sessionToken?: string }
-    handleMessage(msg)
-  }
-}
-
-const send = (data: unknown) => {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(data))
-  }
-}
-
-// === Message handling ===
-
-const handleMessage = (msg: WSOutbound & { sessionToken?: string }) => {
-  switch (msg.type) {
-    case 'snapshot': {
-      if (msg.sessionToken) {
-        sessionToken = msg.sessionToken
-        localStorage.setItem('ta_session', sessionToken)
-      }
-      myAgentId = msg.agentId
-      rooms.clear()
-      agents.clear()
-      agentStates.clear()
-      for (const r of msg.rooms) rooms.set(r.id, r)
-      for (const a of msg.agents) {
-        agents.set(a.id, a)
-        if (a.state === 'generating') agentStates.set(a.name, { state: 'generating' })
-      }
-      renderRooms()
-      renderAgents()
-      renderTypingIndicators()
-      // Auto-select first room
-      if (!selectedRoomId && rooms.size > 0) {
-        selectRoom(rooms.values().next().value!.id)
-      }
-      break
-    }
-    case 'message': {
-      const m = msg.message
-      const roomId = m.roomId ?? `dm:${m.senderId === myAgentId ? m.recipientId : m.senderId}`
-      if (!roomMessages.has(roomId)) roomMessages.set(roomId, [])
-      const msgs = roomMessages.get(roomId)!
-      // Dedup by correlationId or id
-      if (!msgs.some(existing => existing.id === m.id)) {
-        msgs.push(m)
-        if (roomId === selectedRoomId) {
-          renderMessage(m)
-          messagesDiv.scrollTop = messagesDiv.scrollHeight
-        }
-      }
-      break
-    }
-    case 'agent_state': {
-      agentStates.set(msg.agentName, { state: msg.state, context: msg.context })
-      renderAgents()
-      renderTypingIndicators()
-      break
-    }
-    case 'room_created': {
-      rooms.set(msg.profile.id, msg.profile)
-      renderRooms()
-      break
-    }
-    case 'agent_joined': {
-      agents.set(msg.agent.id, msg.agent)
-      renderAgents()
-      break
-    }
-    case 'agent_removed': {
-      for (const [id, agent] of agents) {
-        if (agent.name === msg.agentName) { agents.delete(id); break }
-      }
-      agentStates.delete(msg.agentName)
-      renderAgents()
-      renderTypingIndicators()
-      break
-    }
-    case 'error': {
-      console.error('Server error:', msg.message)
-      break
-    }
-  }
-}
-
-// === Rendering ===
-
-const renderRooms = () => {
-  roomList.innerHTML = ''
-  for (const room of rooms.values()) {
-    const div = document.createElement('div')
-    div.className = `px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 ${room.id === selectedRoomId ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'}`
-    div.textContent = `${room.visibility === 'private' ? '🔒 ' : ''}${room.name}`
-    div.onclick = () => selectRoom(room.id)
-    roomList.appendChild(div)
-  }
-}
-
-const renderAgents = () => {
-  agentList.innerHTML = ''
-  for (const agent of agents.values()) {
-    const stateInfo = agentStates.get(agent.name)
-    const isGenerating = stateInfo?.state === 'generating'
-
-    const div = document.createElement('div')
-    div.className = 'px-3 py-2 border-b border-gray-100'
-
-    const nameSpan = document.createElement('div')
-    nameSpan.className = 'text-sm font-medium text-gray-800 flex items-center gap-1'
-    const dot = document.createElement('span')
-    dot.className = `inline-block w-2 h-2 rounded-full ${isGenerating ? 'bg-yellow-400 typing-indicator' : 'bg-green-400'}`
-    nameSpan.appendChild(dot)
-    nameSpan.appendChild(document.createTextNode(` ${agent.name}`))
-
-    const descSpan = document.createElement('div')
-    descSpan.className = 'text-xs text-gray-500 truncate'
-    descSpan.textContent = agent.description
-
-    const kindSpan = document.createElement('div')
-    kindSpan.className = 'text-xs text-gray-400'
-    kindSpan.textContent = `${agent.kind}${isGenerating ? ' — thinking...' : ''}`
-
-    div.appendChild(nameSpan)
-    div.appendChild(descSpan)
-    div.appendChild(kindSpan)
-
-    if (agent.kind === 'ai') {
-      const btnRow = document.createElement('div')
-      btnRow.className = 'flex gap-2 mt-1'
-
-      const editBtn = document.createElement('button')
-      editBtn.className = 'text-xs text-blue-400 hover:text-blue-600'
-      editBtn.textContent = 'Edit Prompt'
-      editBtn.onclick = (e) => {
-        e.stopPropagation()
-        openPromptEditor(agent.name)
-      }
-      btnRow.appendChild(editBtn)
-
-      const removeBtn = document.createElement('button')
-      removeBtn.className = 'text-xs text-red-400 hover:text-red-600'
-      removeBtn.textContent = 'Remove'
-      removeBtn.onclick = (e) => {
-        e.stopPropagation()
-        send({ type: 'remove_agent', name: agent.name })
-        agents.delete(agent.id)
-        renderAgents()
-      }
-      btnRow.appendChild(removeBtn)
-
-      div.appendChild(btnRow)
-    }
-
-    agentList.appendChild(div)
-  }
-}
-
-const openPromptEditor = async (agentName: string) => {
-  // Fetch current prompt from API
-  const res = await fetch(`/api/agents/${encodeURIComponent(agentName)}`)
-  if (!res.ok) return
-  const data = await res.json()
-  const currentPrompt = data.systemPrompt ?? ''
-
-  // Create modal overlay
-  const overlay = document.createElement('div')
-  overlay.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
-
-  const modal = document.createElement('div')
-  modal.className = 'bg-white rounded-lg shadow-xl p-6 w-full max-w-lg mx-4'
-
-  const title = document.createElement('h3')
-  title.className = 'text-lg font-semibold mb-3'
-  title.textContent = `System Prompt — ${agentName}`
-
-  const textarea = document.createElement('textarea')
-  textarea.className = 'w-full h-48 border rounded p-3 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-300'
-  textarea.value = currentPrompt
-
-  const btnRow = document.createElement('div')
-  btnRow.className = 'flex justify-end gap-2 mt-3'
-
-  const cancelBtn = document.createElement('button')
-  cancelBtn.className = 'px-4 py-2 text-sm text-gray-600 hover:text-gray-800'
-  cancelBtn.textContent = 'Cancel'
-  cancelBtn.onclick = () => overlay.remove()
-
-  const saveBtn = document.createElement('button')
-  saveBtn.className = 'px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600'
-  saveBtn.textContent = 'Save'
-  saveBtn.onclick = () => {
-    send({ type: 'update_agent', name: agentName, systemPrompt: textarea.value } as WSInbound)
-    overlay.remove()
-  }
-
-  btnRow.appendChild(cancelBtn)
-  btnRow.appendChild(saveBtn)
-  modal.appendChild(title)
-  modal.appendChild(textarea)
-  modal.appendChild(btnRow)
-  overlay.appendChild(modal)
-  document.body.appendChild(overlay)
-  textarea.focus()
-}
+// === Room selection ===
 
 const selectRoom = (roomId: string) => {
   selectedRoomId = roomId
@@ -317,13 +81,12 @@ const selectRoom = (roomId: string) => {
 
   roomName.textContent = room.name
   roomDescription.textContent = room.description ?? ''
-  renderRooms()
+  refreshRooms()
 
-  // Load messages from cache or fetch from API
   messagesDiv.innerHTML = ''
   const cached = roomMessages.get(roomId)
   if (cached) {
-    for (const m of cached) renderMessage(m)
+    for (const m of cached) renderMessage(messagesDiv, m, myAgentId, agents)
   } else {
     fetchRoomMessages(room.name)
   }
@@ -334,74 +97,92 @@ const fetchRoomMessages = async (name: string) => {
   try {
     const res = await fetch(`/api/rooms/${encodeURIComponent(name)}?limit=50`)
     if (!res.ok) return
-    const data = await res.json() as { profile: RoomProfile; messages: Message[] }
+    const data = await res.json() as { profile: RoomProfile; messages: UIMessage[] }
     roomMessages.set(data.profile.id, data.messages)
     if (selectedRoomId === data.profile.id) {
       messagesDiv.innerHTML = ''
-      for (const m of data.messages) renderMessage(m)
+      for (const m of data.messages) renderMessage(messagesDiv, m, myAgentId, agents)
       messagesDiv.scrollTop = messagesDiv.scrollHeight
     }
   } catch { /* ignore */ }
 }
 
-const renderMessage = (msg: Message) => {
-  const div = document.createElement('div')
-  const isSystem = msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.senderId === 'system'
-  const isSelf = msg.senderId === myAgentId
-  const isRoomSummary = msg.type === 'room_summary'
+// === WS message handling ===
 
-  if (isSystem || isRoomSummary) {
-    div.className = 'msg-system text-xs py-1 px-2'
-    div.textContent = msg.content
-  } else {
-    div.className = `rounded px-3 py-2 text-sm ${isSelf ? 'msg-self' : 'msg-agent'}`
-
-    const header = document.createElement('div')
-    header.className = 'flex items-center gap-2 mb-1'
-
-    const nameEl = document.createElement('span')
-    nameEl.className = 'font-medium text-gray-800 text-xs'
-    const sender = agents.get(msg.senderId)
-    nameEl.textContent = sender?.name ?? msg.senderId
-
-    const timeEl = document.createElement('span')
-    timeEl.className = 'text-xs text-gray-400'
-    timeEl.textContent = new Date(msg.timestamp).toLocaleTimeString()
-
-    header.appendChild(nameEl)
-    header.appendChild(timeEl)
-
-    if (msg.generationMs) {
-      const genEl = document.createElement('span')
-      genEl.className = 'text-xs text-blue-400'
-      genEl.textContent = `${(msg.generationMs / 1000).toFixed(1)}s`
-      header.appendChild(genEl)
+const handleMessage = (raw: unknown) => {
+  const msg = raw as WSOutbound
+  switch (msg.type) {
+    case 'snapshot': {
+      if (msg.sessionToken) {
+        sessionToken = msg.sessionToken
+        localStorage.setItem('ta_session', sessionToken)
+      }
+      myAgentId = msg.agentId
+      rooms.clear(); agents.clear(); agentStates.clear()
+      for (const r of msg.rooms) rooms.set(r.id, r)
+      for (const a of msg.agents) {
+        agents.set(a.id, a)
+        if (a.state === 'generating') agentStates.set(a.name, { state: 'generating' })
+      }
+      refreshRooms(); refreshAgents(); refreshTyping()
+      if (!selectedRoomId && rooms.size > 0) {
+        selectRoom(rooms.values().next().value!.id)
+      }
+      break
     }
-
-    const content = document.createElement('div')
-    content.className = 'text-gray-700'
-    content.textContent = msg.content
-
-    div.appendChild(header)
-    div.appendChild(content)
+    case 'message': {
+      const m = msg.message
+      const roomId = m.roomId ?? `dm:${m.senderId === myAgentId ? m.recipientId : m.senderId}`
+      if (!roomMessages.has(roomId)) roomMessages.set(roomId, [])
+      const msgs = roomMessages.get(roomId)!
+      if (!msgs.some(existing => existing.id === m.id)) {
+        msgs.push(m)
+        if (roomId === selectedRoomId) {
+          renderMessage(messagesDiv, m, myAgentId, agents)
+          messagesDiv.scrollTop = messagesDiv.scrollHeight
+        }
+      }
+      break
+    }
+    case 'agent_state': {
+      agentStates.set(msg.agentName, { state: msg.state, context: msg.context })
+      refreshAgents(); refreshTyping()
+      break
+    }
+    case 'room_created': {
+      rooms.set(msg.profile.id, msg.profile)
+      refreshRooms()
+      break
+    }
+    case 'agent_joined': {
+      agents.set(msg.agent.id, msg.agent)
+      refreshAgents()
+      break
+    }
+    case 'agent_removed': {
+      for (const [id, agent] of agents) {
+        if (agent.name === msg.agentName) { agents.delete(id); break }
+      }
+      agentStates.delete(msg.agentName)
+      refreshAgents(); refreshTyping()
+      break
+    }
+    case 'error': {
+      console.error('Server error:', msg.message)
+      break
+    }
   }
-
-  messagesDiv.appendChild(div)
 }
 
-const renderTypingIndicators = () => {
-  const currentRoomKey = `room:${selectedRoomId}`
-  const typing: string[] = []
+// === Connect ===
 
-  for (const [agentName, info] of agentStates) {
-    if (info.state === 'generating' && info.context === currentRoomKey) {
-      typing.push(agentName)
-    }
-  }
-
-  typingIndicators.textContent = typing.length > 0
-    ? `${typing.join(', ')} ${typing.length === 1 ? 'is' : 'are'} thinking...`
-    : ''
+const connect = (name: string) => {
+  client = createWSClient(name, sessionToken, handleMessage, (connected) => {
+    connectionStatus.textContent = connected ? `Connected as ${name}` : 'Disconnected — reconnecting...'
+    connectionStatus.className = `text-sm ${connected ? 'text-green-600' : 'text-red-500'}`
+    chatInput.disabled = !connected
+    if (connected) chatForm.querySelector('button')!.removeAttribute('disabled')
+  })
 }
 
 // === Event handlers ===
@@ -410,15 +191,9 @@ chatForm.onsubmit = (e) => {
   e.preventDefault()
   const content = chatInput.value.trim()
   if (!content || !selectedRoomId) return
-
   const room = rooms.get(selectedRoomId)
   if (!room) return
-
-  send({
-    type: 'post_message',
-    target: { rooms: [room.name] },
-    content,
-  })
+  send({ type: 'post_message', target: { rooms: [room.name] }, content })
   chatInput.value = ''
 }
 
@@ -445,7 +220,7 @@ agentForm.onsubmit = (e) => {
     type: 'create_agent',
     config: {
       name: data.get('name') as string,
-      description: data.get('description') as string || '',
+      description: 'AI agent',
       model: data.get('model') as string,
       systemPrompt: data.get('systemPrompt') as string,
     },

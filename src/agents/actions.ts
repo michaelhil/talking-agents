@@ -13,7 +13,7 @@
 import type {
   AgentAction,
   House,
-  PostAndDeliver,
+  RouteMessage,
   Team,
 } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
@@ -25,14 +25,14 @@ export const executeActions = async (
   agentName: string,
   house: House,
   team: Team,
-  postAndDeliver: PostAndDeliver,
+  routeMessage: RouteMessage,
 ): Promise<void> => {
   const limit = DEFAULTS.maxAgentActionsPerResponse
   const toExecute = actions.slice(0, limit)
 
   for (const action of toExecute) {
     try {
-      await executeAction(action, agentId, agentName, house, team, postAndDeliver)
+      await executeAction(action, agentId, agentName, house, team, routeMessage)
     } catch (err) {
       console.error(`[${agentName}] Action ${action.type} failed:`, err)
     }
@@ -47,7 +47,7 @@ export const addAgentToRoom = async (
   roomId: string,
   invitedBy: string | undefined,
   team: Team,
-  postAndDeliver: PostAndDeliver,
+  routeMessage: RouteMessage,
   house: House,
 ): Promise<void> => {
   const target = team.getAgent(targetId)
@@ -63,7 +63,7 @@ export const addAgentToRoom = async (
     ? `[${targetName}] has joined (added by [${invitedBy}])`
     : `[${targetName}] has joined`
 
-  postAndDeliver(
+  routeMessage(
     { rooms: [roomId] },
     { senderId: targetId, content, type: 'join', metadata: makeJoinMetadata(target) },
   )
@@ -75,7 +75,7 @@ const executeAction = async (
   agentName: string,
   house: House,
   team: Team,
-  postAndDeliver: PostAndDeliver,
+  routeMessage: RouteMessage,
 ): Promise<void> => {
   switch (action.type) {
     case 'create_room': {
@@ -105,13 +105,13 @@ const executeAction = async (
       }
 
       // Add creator
-      await addAgentToRoom(agentId, agentName, room.profile.id, undefined, team, postAndDeliver, house)
+      await addAgentToRoom(agentId, agentName, room.profile.id, undefined, team, routeMessage, house)
 
       // Add invited agents
       for (const inviteeName of action.add ?? []) {
         const invitee = team.getAgent(inviteeName)
         if (invitee) {
-          await addAgentToRoom(invitee.id, invitee.name, room.profile.id, agentName, team, postAndDeliver, house)
+          await addAgentToRoom(invitee.id, invitee.name, room.profile.id, agentName, team, routeMessage, house)
         } else {
           console.error(`[${agentName}] Cannot add "${inviteeName}" to room: not found`)
         }
@@ -141,7 +141,7 @@ const executeAction = async (
       const isSelf = target.id === agentId
       const invitedBy = isSelf ? undefined : agentName
 
-      await addAgentToRoom(target.id, target.name, room.profile.id, invitedBy, team, postAndDeliver, house)
+      await addAgentToRoom(target.id, target.name, room.profile.id, invitedBy, team, routeMessage, house)
       break
     }
   }

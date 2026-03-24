@@ -16,7 +16,7 @@ const makeConfig = (overrides?: Partial<AIAgentConfig>): AIAgentConfig => ({
   ...overrides,
 })
 
-const makeLLMProvider = (responseContent: string = '{"action":"pass","reason":"test"}'): LLMProvider => ({
+const makeLLMProvider = (responseContent: string = '::PASS:: test'): LLMProvider => ({
   chat: async () => ({
     content: responseContent,
     generationMs: 42,
@@ -50,7 +50,7 @@ describe('AI Agent — unit tests', () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig(),
-      makeLLMProvider('{"action":"respond","content":"Hi"}'),
+      makeLLMProvider('Hi'),
       (d) => { decisions.push(d) },
     )
 
@@ -64,7 +64,7 @@ describe('AI Agent — unit tests', () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig(),
-      makeLLMProvider('{"action":"respond","content":"Hi"}'),
+      makeLLMProvider('Hi'),
       (d) => { decisions.push(d) },
     )
 
@@ -78,7 +78,7 @@ describe('AI Agent — unit tests', () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig(),
-      makeLLMProvider('{"action":"respond","content":"Hi there"}'),
+      makeLLMProvider('Hi there'),
       (d) => { decisions.push(d) },
     )
 
@@ -100,7 +100,7 @@ describe('AI Agent — unit tests', () => {
         callCount++
         await new Promise(resolve => setTimeout(resolve, 50))
         return {
-          content: '{"action":"pass","reason":"slow"}',
+          content: '::PASS:: slow',
           generationMs: 50,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -129,11 +129,11 @@ describe('AI Agent — unit tests', () => {
     expect(callCount).toBeGreaterThanOrEqual(2) // at minimum room-1 + room-2
   })
 
-  test('JSON fallback — invalid JSON treated as respond', async () => {
+  test('plain text is treated as respond', async () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig(),
-      makeLLMProvider('This is not JSON at all'),
+      makeLLMProvider('This is a plain text response'),
       (d) => { decisions.push(d) },
     )
 
@@ -143,18 +143,51 @@ describe('AI Agent — unit tests', () => {
     expect(decisions).toHaveLength(1)
     expect(decisions[0]!.response.action).toBe('respond')
     if (decisions[0]!.response.action === 'respond') {
-      expect(decisions[0]!.response.content).toBe('This is not JSON at all')
+      expect(decisions[0]!.response.content).toBe('This is a plain text response')
     }
   })
 
-  test('getRoomIds tracks rooms from join()', async () => {
+  test('::PASS:: prefix is parsed as pass', async () => {
+    const decisions: Decision[] = []
+    const agent = createAIAgent(
+      makeConfig(),
+      makeLLMProvider('::PASS:: not relevant to me'),
+      (d) => { decisions.push(d) },
+    )
+
+    agent.receive(makeMessage({ senderId: 'alice' }))
+    await agent.whenIdle()
+
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.response.action).toBe('pass')
+    if (decisions[0]!.response.action === 'pass') {
+      expect(decisions[0]!.response.reason).toBe('not relevant to me')
+    }
+  })
+
+  test('receive skips pass messages (no re-trigger)', async () => {
+    const decisions: Decision[] = []
+    const agent = createAIAgent(
+      makeConfig(),
+      makeLLMProvider('Hi'),
+      (d) => { decisions.push(d) },
+    )
+
+    agent.receive(makeMessage({ senderId: 'other-agent', type: 'pass', content: '[pass] nothing to add' }))
+    await agent.whenIdle()
+
+    expect(decisions).toHaveLength(0)
+  })
+
+  test('join registers room for context building', async () => {
     const agent = createAIAgent(makeConfig(), makeLLMProvider(), () => {})
     const room = makeRoom('room-1', 'Test Room')
 
     await agent.join(room)
 
-    const roomIds = agent.getRoomIds()
-    expect(roomIds).toContain('room-1')
+    // Room membership is tracked by Room.hasMember (via addMember in actions.ts),
+    // agent just caches room profiles for context building
+    expect(room.hasMember(agent.id)).toBe(false) // join() doesn't call addMember itself
   })
 
   test('join generates summary for rooms with history', async () => {
@@ -228,7 +261,7 @@ describe('AI Agent — unit tests', () => {
     const blockingProvider: LLMProvider = {
       chat: () => new Promise(resolve => {
         resolveChat = () => resolve({
-          content: '{"action":"pass","reason":"done"}',
+          content: '::PASS:: done',
           generationMs: 100,
           tokensUsed: { prompt: 10, completion: 5 },
         })
@@ -261,7 +294,7 @@ describe('AI Agent — unit tests', () => {
         callCount++
         await new Promise(resolve => setTimeout(resolve, 20))
         return {
-          content: '{"action":"pass","reason":"done"}',
+          content: '::PASS:: done',
           generationMs: 20,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -289,7 +322,7 @@ describe('[NEW] message tagging', () => {
       chat: async (req) => {
         capturedMessages = req.messages
         return {
-          content: '{"action":"pass","reason":"done"}',
+          content: '::PASS:: done',
           generationMs: 10,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -313,7 +346,7 @@ describe('[NEW] message tagging', () => {
       chat: async (req) => {
         capturedMessages = req.messages
         return {
-          content: '{"action":"pass","reason":"done"}',
+          content: '::PASS:: done',
           generationMs: 10,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -352,7 +385,7 @@ describe('[NEW] message tagging', () => {
       chat: async (req) => {
         capturedMessages = req.messages
         return {
-          content: '{"action":"pass","reason":"done"}',
+          content: '::PASS:: done',
           generationMs: 10,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -380,7 +413,7 @@ describe('[NEW] message tagging', () => {
           await new Promise(resolve => setTimeout(resolve, 50))
         }
         return {
-          content: '{"action":"pass","reason":"done"}',
+          content: '::PASS:: done',
           generationMs: 10,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -420,7 +453,7 @@ describe('Agent state', () => {
     const blockingProvider: LLMProvider = {
       chat: () => new Promise(resolve => {
         resolveChat = () => resolve({
-          content: '{"action":"pass","reason":"done"}',
+          content: '::PASS:: done',
           generationMs: 100,
           tokensUsed: { prompt: 10, completion: 5 },
         })
@@ -478,7 +511,7 @@ describe('Agent state', () => {
 })
 
 describe('Tool use (ReAct loop)', () => {
-  test('tool_call triggers executor and feeds result back to LLM', async () => {
+  test('::TOOL:: triggers executor and feeds result back to LLM', async () => {
     let callCount = 0
     const provider: LLMProvider = {
       chat: async () => {
@@ -486,14 +519,14 @@ describe('Tool use (ReAct loop)', () => {
         if (callCount === 1) {
           // First call: agent wants to use a tool
           return {
-            content: '{"action":"tool_call","toolCalls":[{"tool":"get_time","arguments":{}}]}',
+            content: '::TOOL:: get_time',
             generationMs: 50,
             tokensUsed: { prompt: 10, completion: 5 },
           }
         }
         // Second call: agent responds after seeing tool result
         return {
-          content: '{"action":"respond","content":"The time is now.","target":{"rooms":["Test Room"]}}',
+          content: 'The time is now.',
           generationMs: 50,
           tokensUsed: { prompt: 20, completion: 10 },
         }
@@ -522,10 +555,10 @@ describe('Tool use (ReAct loop)', () => {
     expect(decisions[0]!.generationMs).toBe(100) // 50 + 50 from both calls
   })
 
-  test('tool_call without executor falls back to pass', async () => {
+  test('::TOOL:: without executor falls back to pass', async () => {
     const provider: LLMProvider = {
       chat: async () => ({
-        content: '{"action":"tool_call","toolCalls":[{"tool":"get_time","arguments":{}}]}',
+        content: '::TOOL:: get_time',
         generationMs: 50,
         tokensUsed: { prompt: 10, completion: 5 },
       }),
@@ -551,7 +584,7 @@ describe('Tool use (ReAct loop)', () => {
       chat: async () => {
         callCount++
         return {
-          content: '{"action":"tool_call","toolCalls":[{"tool":"loop","arguments":{}}]}',
+          content: '::TOOL:: loop',
           generationMs: 10,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -578,13 +611,56 @@ describe('Tool use (ReAct loop)', () => {
     expect(decisions[0]!.response.action).toBe('pass')
   })
 
+  test('::TOOL:: with JSON arguments parses correctly', async () => {
+    let callCount = 0
+    let executedCalls: ReadonlyArray<{ tool: string; arguments: Record<string, unknown> }> = []
+    const provider: LLMProvider = {
+      chat: async () => {
+        callCount++
+        if (callCount === 1) {
+          return {
+            content: '::TOOL:: query_agent {"target": "Alice", "question": "status?"}',
+            generationMs: 50,
+            tokensUsed: { prompt: 10, completion: 5 },
+          }
+        }
+        return {
+          content: 'Alice says she is busy.',
+          generationMs: 50,
+          tokensUsed: { prompt: 20, completion: 10 },
+        }
+      },
+      models: async () => [],
+    }
+
+    const toolExecutor = async (calls: ReadonlyArray<{ tool: string; arguments: Record<string, unknown> }>) => {
+      executedCalls = calls
+      return calls.map(() => ({ success: true as const, data: 'Alice is busy' }))
+    }
+
+    const decisions: Decision[] = []
+    const agent = createAIAgent(
+      makeConfig(),
+      provider,
+      (d) => decisions.push(d),
+      { toolExecutor, toolDescriptions: 'Available tools:\n- query_agent: Query another agent.' },
+    )
+
+    agent.receive(makeMessage({ senderId: 'bob', roomId: 'room-1' }))
+    await agent.whenIdle()
+
+    expect(executedCalls).toHaveLength(1)
+    expect(executedCalls[0]!.tool).toBe('query_agent')
+    expect(executedCalls[0]!.arguments).toEqual({ target: 'Alice', question: 'status?' })
+  })
+
   test('tool descriptions appear in context when configured', async () => {
     let capturedMessages: ReadonlyArray<{ role: string; content: string }> = []
     const provider: LLMProvider = {
       chat: async (req) => {
         capturedMessages = req.messages
         return {
-          content: '{"action":"pass","reason":"done"}',
+          content: '::PASS:: done',
           generationMs: 10,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -605,7 +681,7 @@ describe('Tool use (ReAct loop)', () => {
     const systemMsg = capturedMessages.find(m => m.role === 'system')
     expect(systemMsg?.content).toContain('Available tools:')
     expect(systemMsg?.content).toContain('get_time')
-    expect(systemMsg?.content).toContain('tool_call')
+    expect(systemMsg?.content).toContain('::TOOL::')
   })
 })
 

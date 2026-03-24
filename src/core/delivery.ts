@@ -1,20 +1,16 @@
 // ============================================================================
-// Delivery — Creates the postAndDeliver function.
-// Room messages: Room handles delivery internally via its DeliverFn.
-// DMs: Delivered explicitly to both sender and recipient.
+// Message Router — Routes messages to rooms or agents.
+//
+// Room messages: Room.post() handles storage and member delivery internally.
+// DMs: Constructed here, delivered via the shared DeliverFn to both parties.
+//
+// Uses the same DeliverFn that House injects into rooms — single delivery path.
+// Team is used only for DM recipient resolution (name → ID) and self-DM prevention.
 // ============================================================================
 
-import type { House, Message, MessageTarget, PostAndDeliver, Team } from './types.ts'
+import type { DeliverFn, House, Message, MessageTarget, RouteMessage, Team } from './types.ts'
 
-export const createPostAndDeliver = (house: House, team: Team): PostAndDeliver => {
-  const deliver = (id: string, message: Message): void => {
-    try {
-      team.getAgent(id)?.receive(message)
-    } catch (err) {
-      console.error(`[deliver] Failed for ${id}:`, err)
-    }
-  }
-
+export const createMessageRouter = (house: House, team: Team, deliver: DeliverFn): RouteMessage => {
   return (target: MessageTarget, params) => {
     const correlationId = crypto.randomUUID()
     const delivered: Message[] = []
@@ -29,11 +25,12 @@ export const createPostAndDeliver = (house: House, team: Team): PostAndDeliver =
       }
     }
 
-    // DMs — no Room involved, deliver explicitly to both parties
+    // DMs — no Room involved, deliver via shared DeliverFn to both parties
     if (target.agents) {
       for (const agentRef of target.agents) {
         const recipient = team.getAgent(agentRef)
         if (!recipient || recipient.id === params.senderId) continue
+
         const dmMessage: Message = {
           id: crypto.randomUUID(),
           recipientId: recipient.id,
@@ -46,8 +43,8 @@ export const createPostAndDeliver = (house: House, team: Team): PostAndDeliver =
           metadata: params.metadata,
         }
         delivered.push(dmMessage)
-        deliver(recipient.id, dmMessage)
-        deliver(params.senderId, dmMessage)
+        deliver(recipient.id, dmMessage, [])
+        deliver(params.senderId, dmMessage, [])
       }
     }
 

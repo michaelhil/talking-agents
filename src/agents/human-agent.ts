@@ -6,7 +6,7 @@
 // - join() sends recent history over transport (no LLM summary)
 //
 // No message storage — Room is the source of truth for room messages.
-// Room membership tracked via roomIds Set.
+// Room membership tracked by Room.hasMember (House.getRoomsForAgent for lookup).
 // ID is auto-generated UUID, same as AI agents.
 // ============================================================================
 
@@ -31,7 +31,6 @@ export const createHumanAgent = (
 ): HumanAgent => {
   const agentId = crypto.randomUUID()
   let send = initialSend
-  const roomIds = new Set<string>()
   const historyLimit = DEFAULTS.historyLimit
 
   // Human agents are always 'idle' — state changes come from UI interaction, not LLM
@@ -52,7 +51,6 @@ export const createHumanAgent = (
   }
 
   const join = async (room: Room): Promise<void> => {
-    roomIds.add(room.profile.id)
     const recent = room.getRecent(historyLimit)
     for (const msg of recent) {
       try {
@@ -73,7 +71,6 @@ export const createHumanAgent = (
     state,
     receive,
     join,
-    getRoomIds: () => [...roomIds],
     setTransport: (newSend: TransportSend) => { send = newSend },
   }
 }

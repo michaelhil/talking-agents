@@ -68,12 +68,16 @@ export const createHouse = (deliver?: DeliverFn): House => {
   const listAllRooms = (): ReadonlyArray<RoomProfile> =>
     [...rooms.values()].map(r => r.profile)
 
+  const getRoomsForAgent = (agentId: string): ReadonlyArray<Room> =>
+    [...rooms.values()].filter(r => r.hasMember(agentId))
+
   const removeRoom = (id: string): boolean => rooms.delete(id)
 
   return {
     createRoom: createRoomInHouse,
     createRoomSafe,
     getRoom,
+    getRoomsForAgent,
     listPublicRooms,
     listAllRooms,
     removeRoom,

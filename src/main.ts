@@ -5,11 +5,11 @@
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
 // ============================================================================
 
-import type { Agent, AIAgentConfig, House, LLMProvider, PostAndDeliver, Room, Team, ToolRegistry } from './core/types.ts'
+import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './core/types.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
-import { createPostAndDeliver } from './core/delivery.ts'
+import { createMessageRouter } from './core/delivery.ts'
 import { createOllamaProvider } from './llm/ollama.ts'
 import { createToolRegistry } from './core/tool-registry.ts'
 import { spawnAIAgent, spawnHumanAgent } from './agents/spawn.ts'
@@ -21,7 +21,7 @@ import { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from './
 export interface System {
   readonly house: House
   readonly team: Team
-  readonly postAndDeliver: PostAndDeliver
+  readonly routeMessage: RouteMessage
   readonly ollama: LLMProvider
   readonly toolRegistry: ToolRegistry
   readonly introRoom: Room
@@ -32,10 +32,14 @@ export interface System {
 
 export const createSystem = (ollamaUrl?: string): System => {
   const team = createTeam()
-  const house = createHouse((agentId, message, history) => {
+
+  // Single deliver function — used by both Room (via House) and DMs (via message router)
+  const deliver: DeliverFn = (agentId, message, history) => {
     team.getAgent(agentId)?.receive(message, history)
-  })
-  const postAndDeliver = createPostAndDeliver(house, team)
+  }
+
+  const house = createHouse(deliver)
+  const routeMessage = createMessageRouter(house, team, deliver)
   const ollama = createOllamaProvider(ollamaUrl ?? DEFAULTS.ollamaBaseUrl)
   const toolRegistry = createToolRegistry()
 
@@ -64,16 +68,16 @@ export const createSystem = (ollamaUrl?: string): System => {
 
   // Bound spawn methods — close over system dependencies
   const boundSpawnAIAgent = (config: AIAgentConfig) =>
-    spawnAIAgent(config, ollama, house, team, postAndDeliver, toolRegistry)
+    spawnAIAgent(config, ollama, house, team, routeMessage, toolRegistry)
 
   const boundSpawnHumanAgent = async (config: HumanAgentConfig, send: TransportSend): Promise<HumanAgent> => {
     const agent = createHumanAgent(config, send)
-    await spawnHumanAgent(agent, house, team, postAndDeliver)
+    await spawnHumanAgent(agent, house, team, routeMessage)
     return agent
   }
 
   return {
-    house, team, postAndDeliver, ollama, toolRegistry, introRoom, removeAgent,
+    house, team, routeMessage, ollama, toolRegistry, introRoom, removeAgent,
     spawnAIAgent: boundSpawnAIAgent,
     spawnHumanAgent: boundSpawnHumanAgent,
   }

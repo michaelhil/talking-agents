@@ -199,6 +199,26 @@ describe('House — room collection', () => {
     expect(room.getParticipantIds()).toContain('bob')
   })
 
+  test('getRoomsForAgent returns rooms where agent is a member', () => {
+    const house = createHouse()
+    const room1 = house.createRoom({ name: 'A', visibility: 'public', createdBy: 'alice' })
+    const room2 = house.createRoom({ name: 'B', visibility: 'public', createdBy: 'alice' })
+    house.createRoom({ name: 'C', visibility: 'public', createdBy: 'alice' })
+
+    room1.addMember('agent-1')
+    room2.addMember('agent-1')
+
+    const rooms = house.getRoomsForAgent('agent-1')
+    expect(rooms).toHaveLength(2)
+    expect(rooms.map(r => r.profile.name).sort()).toEqual(['A', 'B'])
+  })
+
+  test('getRoomsForAgent returns empty for unknown agent', () => {
+    const house = createHouse()
+    house.createRoom({ name: 'A', visibility: 'public', createdBy: 'alice' })
+    expect(house.getRoomsForAgent('nobody')).toEqual([])
+  })
+
   test('posting adds sender as member implicitly', () => {
     const house = createHouse()
     const room = house.createRoom({ name: 'Implicit', visibility: 'public', createdBy: 'alice' })

@@ -9,7 +9,7 @@
 
 // === Message — the fundamental unit of communication ===
 
-export type MessageType = 'chat' | 'join' | 'leave' | 'system' | 'room_summary'
+export type MessageType = 'chat' | 'join' | 'leave' | 'system' | 'room_summary' | 'pass'
 
 export interface Message {
   readonly id: string
@@ -86,6 +86,7 @@ export interface House {
   readonly createRoom: (config: RoomConfig) => Room
   readonly createRoomSafe: (config: RoomConfig) => CreateResult<Room>
   readonly getRoom: (idOrName: string) => Room | undefined
+  readonly getRoomsForAgent: (agentId: string) => ReadonlyArray<Room>
   readonly listPublicRooms: () => ReadonlyArray<RoomProfile>
   readonly listAllRooms: () => ReadonlyArray<RoomProfile>
   readonly removeRoom: (id: string) => boolean
@@ -121,7 +122,6 @@ export interface Agent {
   readonly state: AgentState
   readonly receive: (message: Message, history?: ReadonlyArray<Message>) => void
   readonly join: (room: Room) => Promise<void>
-  readonly getRoomIds: () => ReadonlyArray<string>
 }
 
 // === AIAgent — extended Agent with query + observability ===
@@ -143,9 +143,9 @@ export interface Team {
   readonly listByKind: (kind: 'ai' | 'human') => ReadonlyArray<Agent>
 }
 
-// === PostAndDeliver — the single coordination function ===
+// === RouteMessage — the single coordination function ===
 
-export type PostAndDeliver = (target: MessageTarget, params: PostParams) => ReadonlyArray<Message>
+export type RouteMessage = (target: MessageTarget, params: PostParams) => ReadonlyArray<Message>
 
 // === Tool Use Framework ===
 
@@ -194,21 +194,16 @@ export interface AIAgentConfig {
   readonly maxToolIterations?: number           // default 5
 }
 
-// === Agent Response (JSON from LLM) ===
-// Target uses names (resolved to UUIDs by resolveTarget before delivery).
+// === Agent Response (parsed from LLM plain text output) ===
 
 export type AgentResponse =
   | {
       readonly action: 'respond'
       readonly content: string
-      readonly target: MessageTarget
-      readonly reason?: string
-      readonly actions?: ReadonlyArray<AgentAction>
     }
   | {
       readonly action: 'pass'
       readonly reason?: string
-      readonly actions?: ReadonlyArray<AgentAction>
     }
 
 // Agent actions use names, not IDs. Resolved to UUIDs in actions.ts.

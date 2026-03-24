@@ -1,7 +1,7 @@
 // ============================================================================
 // Spawn — Wiring functions that create agents and connect them to the system.
 // Creates agent → adds to team → joins rooms → posts join messages.
-// Wires the onDecision callback to bridge agent decisions to postAndDeliver.
+// Wires the onDecision callback to bridge agent decisions to routeMessage.
 //
 // resolveTarget translates LLM names → internal UUIDs using findByName.
 // toolExecutor bridges agent tool calls to the global tool registry.
@@ -14,7 +14,7 @@ import type {
   House,
   LLMProvider,
   MessageTarget,
-  PostAndDeliver,
+  RouteMessage,
   Room,
   Team,
   Tool,
@@ -26,7 +26,7 @@ import type {
 } from '../core/types.ts'
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
-import { addAgentToRoom, executeActions } from './actions.ts'
+import { addAgentToRoom } from './actions.ts'
 
 // --- Tool support ---
 
@@ -82,44 +82,41 @@ export const spawnAIAgent = async (
   llmProvider: LLMProvider,
   house: House,
   team: Team,
-  postAndDeliver: PostAndDeliver,
+  routeMessage: RouteMessage,
   toolRegistry?: ToolRegistry,
 ): Promise<AIAgent> => {
 
-  // Get target from decision, falling back to trigger source if LLM omits target.
+  // Resolve target: respond where the trigger came from
   const resolveTarget = (decision: Decision): MessageTarget => {
-    if (decision.response.action !== 'respond') return {}
-
-    const target = decision.response.target
-    const hasTarget = (target?.rooms && target.rooms.length > 0) || (target?.agents && target.agents.length > 0)
-    if (hasTarget) return target!
-
-    // Fallback: respond where the trigger came from
     if (decision.triggerRoomId) return { rooms: [decision.triggerRoomId] }
     if (decision.triggerPeerId) return { agents: [decision.triggerPeerId] }
     return {}
   }
 
   const onDecision = (decision: Decision): void => {
+    const target = resolveTarget(decision)
+
     if (decision.response.action === 'respond') {
-      const target = resolveTarget(decision)
-      postAndDeliver(target, {
+      routeMessage(target, {
         senderId: agent.id,
         content: decision.response.content,
         type: 'chat',
         generationMs: decision.generationMs,
       })
-    }
-
-    const actions = decision.response.actions
-    if (actions && actions.length > 0) {
-      executeActions(actions, agent.id, agent.name, house, team, postAndDeliver)
-        .catch(err => console.error(`[${config.name}] Action execution failed:`, err))
+    } else if (decision.response.action === 'pass' && decision.triggerRoomId) {
+      // Post pass as a visible message so humans can see agent decisions
+      const reason = decision.response.reason ?? 'nothing to add'
+      routeMessage(target, {
+        senderId: agent.id,
+        content: `[pass] ${reason}`,
+        type: 'pass',
+        generationMs: decision.generationMs,
+      })
     }
   }
 
-  // Build tool support if agent has tools configured
-  const agentTools = config.tools ?? []
+  // Build tool support — auto-assign all registered tools when none specified
+  const agentTools = config.tools ?? toolRegistry?.list().map(t => t.name) ?? []
   let toolExecutor: ToolExecutor | undefined
   let toolDescriptions: string | undefined
 
@@ -144,7 +141,7 @@ export const spawnAIAgent = async (
 
   const publicRooms = house.listPublicRooms()
   for (const roomProfile of publicRooms) {
-    await addAgentToRoom(agent.id, agent.name, roomProfile.id, undefined, team, postAndDeliver, house)
+    await addAgentToRoom(agent.id, agent.name, roomProfile.id, undefined, team, routeMessage, house)
   }
 
   return agent
@@ -154,7 +151,7 @@ export const spawnHumanAgent = async (
   agent: Agent,
   house: House,
   team: Team,
-  postAndDeliver: PostAndDeliver,
+  routeMessage: RouteMessage,
   roomsToJoin?: ReadonlyArray<Room>,
 ): Promise<Agent> => {
   team.addAgent(agent)
@@ -164,7 +161,7 @@ export const spawnHumanAgent = async (
   ).filter((r): r is Room => r !== undefined)
 
   for (const room of rooms) {
-    await addAgentToRoom(agent.id, agent.name, room.profile.id, undefined, team, postAndDeliver, house)
+    await addAgentToRoom(agent.id, agent.name, room.profile.id, undefined, team, routeMessage, house)
   }
 
   return agent

@@ -18,7 +18,7 @@ export type {
   Agent,
   AIAgent,
   Team,
-  PostAndDeliver,
+  RouteMessage,
   AIAgentConfig,
   AgentResponse,
   AgentAction,
@@ -43,7 +43,7 @@ export { SYSTEM_SENDER_ID, DEFAULTS } from './core/types.ts'
 // Core factories
 export { createRoom } from './core/room.ts'
 export { createHouse } from './core/house.ts'
-export { createPostAndDeliver } from './core/delivery.ts'
+export { createMessageRouter } from './core/delivery.ts'
 
 // Agent factories
 export { createTeam } from './agents/team.ts'
@@ -51,6 +51,12 @@ export { createAIAgent } from './agents/ai-agent.ts'
 export type { AIAgentOptions, Decision, OnDecision } from './agents/ai-agent.ts'
 export { createHumanAgent } from './agents/human-agent.ts'
 export type { HumanAgent, HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
+
+// Agent internals (for advanced use)
+export { buildContext, flushIncoming, triggerKey, formatMessage } from './agents/context-builder.ts'
+export type { FlushInfo, ContextResult, BuildContextDeps } from './agents/context-builder.ts'
+export { evaluate, parseResponse } from './agents/evaluation.ts'
+export type { EvalResult } from './agents/evaluation.ts'
 
 // Agent wiring
 export { spawnAIAgent, spawnHumanAgent } from './agents/spawn.ts'

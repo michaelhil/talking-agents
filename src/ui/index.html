@@ -7,6 +7,11 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .msg-system { color: #6b7280; font-style: italic; }
+    .msg-pass { color: #9ca3af; font-style: italic; font-size: 0.75rem; }
+    .prompt-icon { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: #e5e7eb; color: #6b7280; font-size: 10px; font-weight: bold; }
+    .prompt-icon:hover { background: #3b82f6; color: white; }
+    .prompt-tooltip { display: none; position: absolute; z-index: 40; background: #1f2937; color: white; padding: 6px 10px; border-radius: 6px; font-size: 11px; max-width: 280px; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+    .prompt-icon:hover + .prompt-tooltip { display: block; }
     .msg-self { background: #eff6ff; }
     .msg-agent { background: #f0fdf4; }
     .typing-indicator { animation: pulse 1.5s infinite; }
@@ -85,9 +90,8 @@
     <form id="agent-form" class="p-4 space-y-3">
       <h3 class="font-medium text-gray-800">Create AI Agent</h3>
       <input name="name" placeholder="Agent name" required class="w-full px-3 py-2 border rounded text-sm">
-      <input name="description" placeholder="Description" class="w-full px-3 py-2 border rounded text-sm">
       <input name="model" placeholder="Model (e.g., llama3.2)" value="llama3.2" required class="w-full px-3 py-2 border rounded text-sm">
-      <textarea name="systemPrompt" placeholder="System prompt..." required rows="3" class="w-full px-3 py-2 border rounded text-sm"></textarea>
+      <textarea name="systemPrompt" placeholder="System prompt..." required rows="4" class="w-full px-3 py-2 border rounded text-sm"></textarea>
       <div class="flex justify-end gap-2">
         <button type="button" onclick="this.closest('dialog').close()" class="px-3 py-1 text-sm text-gray-600">Cancel</button>
         <button type="submit" class="px-3 py-1 text-sm bg-green-500 text-white rounded">Create</button>
