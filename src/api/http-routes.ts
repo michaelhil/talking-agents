@@ -240,13 +240,66 @@ export const handleAPI = async (
     const body = await parseBody(req)
     if (!body.content || !body.senderId) return errorResponse('content and senderId are required')
     const target = (body.target as MessageTarget) ?? {}
+    const senderId = body.senderId as string
+    const senderAgent = system.team.getAgent(senderId)
     const messages = system.routeMessage(target, {
-      senderId: body.senderId as string,
+      senderId,
+      senderName: (body.senderName as string | undefined) ?? senderAgent?.name,
       content: body.content as string,
       type: (body.messageType as 'chat') ?? 'chat',
       metadata: body.metadata as Record<string, unknown> | undefined,
     })
     return json(messages, 201)
+  }
+
+  // PUT /api/rooms/:name/turn-taking
+  const ttRoomName = extractParam(pathname, '/api/rooms/:name/turn-taking')
+  if (method === 'PUT' && ttRoomName) {
+    const room = system.house.getRoom(ttRoomName)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    room.setTurnTaking(body.enabled as boolean)
+    broadcast({
+      type: 'turn_taking_changed',
+      roomName: room.profile.name,
+      enabled: room.turnTaking.enabled,
+      paused: room.turnTaking.paused,
+    })
+    return json({ enabled: room.turnTaking.enabled, paused: room.turnTaking.paused })
+  }
+
+  // PUT /api/rooms/:name/turn-taking/pause
+  const ttPauseRoom = extractParam(pathname, '/api/rooms/:name/turn-taking/pause')
+  if (method === 'PUT' && ttPauseRoom) {
+    const room = system.house.getRoom(ttPauseRoom)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    room.setTurnTakingPaused(body.paused as boolean)
+    broadcast({
+      type: 'turn_taking_changed',
+      roomName: room.profile.name,
+      enabled: room.turnTaking.enabled,
+      paused: room.turnTaking.paused,
+    })
+    return json({ enabled: room.turnTaking.enabled, paused: room.turnTaking.paused })
+  }
+
+  // PUT /api/rooms/:name/turn-taking/participating
+  const ttPartRoom = extractParam(pathname, '/api/rooms/:name/turn-taking/participating')
+  if (method === 'PUT' && ttPartRoom) {
+    const room = system.house.getRoom(ttPartRoom)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    const agent = system.team.getAgent(body.agentName as string)
+    if (!agent) return notFound('Agent')
+    room.setParticipating(agent.id, body.participating as boolean)
+    broadcast({
+      type: 'turn_taking_changed',
+      roomName: room.profile.name,
+      enabled: room.turnTaking.enabled,
+      paused: room.turnTaking.paused,
+    })
+    return json({ enabled: room.turnTaking.enabled, paused: room.turnTaking.paused })
   }
 
   return null

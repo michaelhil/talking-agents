@@ -35,6 +35,7 @@ export const createMessageRouter = (house: House, team: Team, deliver: DeliverFn
           id: crypto.randomUUID(),
           recipientId: recipient.id,
           senderId: params.senderId,
+          senderName: params.senderName,
           content: params.content,
           timestamp: Date.now(),
           type: params.type,

@@ -14,6 +14,7 @@ export type MessageType = 'chat' | 'join' | 'leave' | 'system' | 'room_summary' 
 export interface Message {
   readonly id: string
   readonly senderId: string
+  readonly senderName?: string        // human-readable sender name, set at post time
   readonly content: string
   readonly timestamp: number
   readonly type: MessageType
@@ -59,6 +60,17 @@ export type PostParams = Omit<Message, 'id' | 'roomId' | 'timestamp' | 'recipien
 
 export type DeliverFn = (agentId: string, message: Message, history: ReadonlyArray<Message>) => void
 
+// === Turn-Taking — room-controlled sequential delivery ===
+
+export interface TurnTakingState {
+  readonly enabled: boolean
+  readonly paused: boolean
+  readonly participating: ReadonlySet<string>  // agent IDs in rotation
+  readonly currentTurn?: string                // agent ID with the floor
+}
+
+export type OnTurnChanged = (roomId: string, agentId?: string, waitingForHuman?: boolean) => void
+
 // === Room — self-contained component: stores messages and delivers to members ===
 
 export interface Room {
@@ -71,6 +83,10 @@ export interface Room {
   readonly hasMember: (id: string) => boolean
   readonly getMessageCount: () => number
   readonly setRoomPrompt: (prompt: string) => void
+  readonly turnTaking: TurnTakingState
+  readonly setTurnTaking: (enabled: boolean) => void
+  readonly setTurnTakingPaused: (paused: boolean) => void
+  readonly setParticipating: (agentId: string, participating: boolean) => void
 }
 
 // === CreateResult — returned when name uniqueness is enforced ===
@@ -265,6 +281,9 @@ export type WSInbound =
   | { readonly type: 'create_agent'; readonly config: AIAgentConfig }
   | { readonly type: 'remove_agent'; readonly name: string }
   | { readonly type: 'update_agent'; readonly name: string; readonly systemPrompt: string }
+  | { readonly type: 'set_turn_taking'; readonly roomName: string; readonly enabled: boolean }
+  | { readonly type: 'set_turn_taking_paused'; readonly roomName: string; readonly paused: boolean }
+  | { readonly type: 'set_participating'; readonly roomName: string; readonly agentName: string; readonly participating: boolean }
 
 export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
@@ -274,6 +293,8 @@ export type WSOutbound =
   | { readonly type: 'agent_removed'; readonly agentName: string }
   | { readonly type: 'snapshot'; readonly rooms: ReadonlyArray<RoomProfile>; readonly agents: ReadonlyArray<AgentProfile>; readonly agentId: string; readonly sessionToken?: string }
   | { readonly type: 'error'; readonly message: string }
+  | { readonly type: 'turn_taking_changed'; readonly roomName: string; readonly enabled: boolean; readonly paused: boolean }
+  | { readonly type: 'turn_changed'; readonly roomName: string; readonly agentName?: string; readonly waitingForHuman?: boolean }
 
 // === System Constants ===
 

@@ -99,6 +99,7 @@ export const spawnAIAgent = async (
     if (decision.response.action === 'respond') {
       routeMessage(target, {
         senderId: agent.id,
+        senderName: agent.name,
         content: decision.response.content,
         type: 'chat',
         generationMs: decision.generationMs,
@@ -108,6 +109,7 @@ export const spawnAIAgent = async (
       const reason = decision.response.reason ?? 'nothing to add'
       routeMessage(target, {
         senderId: agent.id,
+        senderName: agent.name,
         content: `[pass] ${reason}`,
         type: 'pass',
         generationMs: decision.generationMs,

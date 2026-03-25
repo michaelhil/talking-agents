@@ -5,7 +5,7 @@
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
 // ============================================================================
 
-import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
+import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, OnTurnChanged, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './core/types.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
@@ -28,6 +28,7 @@ export interface System {
   readonly removeAgent: (id: string) => boolean
   readonly spawnAIAgent: (config: AIAgentConfig) => Promise<Agent>
   readonly spawnHumanAgent: (config: HumanAgentConfig, send: TransportSend) => Promise<HumanAgent>
+  readonly setOnTurnChanged: (callback: OnTurnChanged) => void
 }
 
 export const createSystem = (ollamaUrl?: string): System => {
@@ -38,7 +39,13 @@ export const createSystem = (ollamaUrl?: string): System => {
     team.getAgent(agentId)?.receive(message, history)
   }
 
-  const house = createHouse(deliver)
+  // Late-binding turn-changed callback — set by server after wsManager is created
+  let turnChangedCallback: OnTurnChanged | undefined
+  const onTurnChanged: OnTurnChanged = (roomId, agentId, waitingForHuman) => {
+    turnChangedCallback?.(roomId, agentId, waitingForHuman)
+  }
+
+  const house = createHouse(deliver, onTurnChanged)
   const routeMessage = createMessageRouter(house, team, deliver)
   const ollama = createOllamaProvider(ollamaUrl ?? DEFAULTS.ollamaBaseUrl)
   const toolRegistry = createToolRegistry()
@@ -80,6 +87,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     house, team, routeMessage, ollama, toolRegistry, introRoom, removeAgent,
     spawnAIAgent: boundSpawnAIAgent,
     spawnHumanAgent: boundSpawnHumanAgent,
+    setOnTurnChanged: (callback: OnTurnChanged) => { turnChangedCallback = callback },
   }
 }
 

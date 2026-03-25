@@ -60,6 +60,18 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
   const wsManager = createWSManager(system)
 
+  // Wire turn-taking notifications to WebSocket broadcast
+  system.setOnTurnChanged((roomId, agentId, waitingForHuman) => {
+    const room = system.house.getRoom(roomId)
+    const agent = agentId ? system.team.getAgent(agentId) : undefined
+    wsManager.broadcast({
+      type: 'turn_changed',
+      roomName: room?.profile.name ?? roomId,
+      agentName: agent?.name,
+      waitingForHuman,
+    })
+  })
+
   const server = Bun.serve<WSData>({
     port,
 

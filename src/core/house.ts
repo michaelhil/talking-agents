@@ -6,7 +6,7 @@
 // createRoomSafe auto-renames on collision and returns CreateResult.
 // ============================================================================
 
-import type { CreateResult, DeliverFn, House, Room, RoomConfig, RoomProfile } from './types.ts'
+import type { CreateResult, DeliverFn, House, OnTurnChanged, Room, RoomConfig, RoomProfile } from './types.ts'
 import { createRoom } from './room.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
@@ -15,6 +15,9 @@ const DEFAULT_HOUSE_PROMPT = `You are part of Talking Agents, a collaborative mu
 const DEFAULT_RESPONSE_FORMAT = `- By default, just write your message as natural text. Your response IS the message other participants will read.
 - To stay silent, start your response with exactly ::PASS:: followed by a brief reason.
   Example: ::PASS:: This question was already answered by someone else
+- To direct a message to a specific agent, use [[AgentName]] in your response. The addressed agent(s) will respond next. Other agents will see your message as context later.
+  Example: [[Analyst-1]] can you elaborate on that point?
+  You can address multiple agents: [[Analyst-1]] [[Researcher-2]] compare notes.
 - Never wrap your response in JSON, code blocks, or data structures.`
 
 const DEFAULT_RESPONSE_FORMAT_TOOLS = `\n- To use a tool, write ONLY ::TOOL:: followed by the tool name on its own line. Do not write anything else — just the tool call. Add JSON arguments after the name if needed.
@@ -25,7 +28,7 @@ const DEFAULT_RESPONSE_FORMAT_TOOLS = `\n- To use a tool, write ONLY ::TOOL:: fo
 
 export { DEFAULT_RESPONSE_FORMAT_TOOLS }
 
-export const createHouse = (deliver?: DeliverFn): House => {
+export const createHouse = (deliver?: DeliverFn, onTurnChanged?: OnTurnChanged): House => {
   const rooms = new Map<string, Room>()
   let housePrompt = DEFAULT_HOUSE_PROMPT
   let responseFormat = DEFAULT_RESPONSE_FORMAT
@@ -49,7 +52,7 @@ export const createHouse = (deliver?: DeliverFn): House => {
       createdBy: config.createdBy,
       createdAt: Date.now(),
     }
-    const room = createRoom(profile, deliver)
+    const room = createRoom(profile, deliver, onTurnChanged)
     rooms.set(id, room)
     return room
   }

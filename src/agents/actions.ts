@@ -65,7 +65,7 @@ export const addAgentToRoom = async (
 
   routeMessage(
     { rooms: [roomId] },
-    { senderId: targetId, content, type: 'join', metadata: makeJoinMetadata(target) },
+    { senderId: targetId, senderName: targetName, content, type: 'join', metadata: makeJoinMetadata(target) },
   )
 }
 

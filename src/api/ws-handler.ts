@@ -111,6 +111,7 @@ export const handleWSMessage = async (
         const resolved = msg.target ?? {}
         const delivered = system.routeMessage(resolved, {
           senderId: session.agent.id,
+          senderName: session.agent.name,
           content: msg.content,
           type: 'chat',
         })
@@ -161,6 +162,56 @@ export const handleWSMessage = async (
         if (agent && agent.kind === 'ai' && 'updateSystemPrompt' in agent) {
           (agent as AIAgent).updateSystemPrompt(msg.systemPrompt)
         }
+        break
+      }
+      case 'set_turn_taking': {
+        const room = system.house.getRoom(msg.roomName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        room.setTurnTaking(msg.enabled)
+        wsManager.broadcast({
+          type: 'turn_taking_changed',
+          roomName: room.profile.name,
+          enabled: room.turnTaking.enabled,
+          paused: room.turnTaking.paused,
+        })
+        break
+      }
+      case 'set_turn_taking_paused': {
+        const room = system.house.getRoom(msg.roomName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        room.setTurnTakingPaused(msg.paused)
+        wsManager.broadcast({
+          type: 'turn_taking_changed',
+          roomName: room.profile.name,
+          enabled: room.turnTaking.enabled,
+          paused: room.turnTaking.paused,
+        })
+        break
+      }
+      case 'set_participating': {
+        const room = system.house.getRoom(msg.roomName)
+        const agent = system.team.getAgent(msg.agentName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        if (!agent) {
+          ws.send(JSON.stringify({ type: 'error', message: `Agent "${msg.agentName}" not found` } satisfies WSOutbound))
+          break
+        }
+        room.setParticipating(agent.id, msg.participating)
+        wsManager.broadcast({
+          type: 'turn_taking_changed',
+          roomName: room.profile.name,
+          enabled: room.turnTaking.enabled,
+          paused: room.turnTaking.paused,
+        })
         break
       }
       default: {

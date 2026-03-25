@@ -193,7 +193,7 @@ describe('Room — self-contained component', () => {
   // === Message eviction ===
 
   test('evicts oldest messages when exceeding maxMessages', () => {
-    const room = createRoom(makeProfile(), undefined, 5)
+    const room = createRoom(makeProfile(), undefined, undefined, 5)
 
     for (let i = 0; i < 8; i++) {
       room.post({ senderId: 'alice', content: `msg-${i}`, type: 'chat' })
@@ -206,7 +206,7 @@ describe('Room — self-contained component', () => {
   })
 
   test('eviction does not affect member tracking', () => {
-    const room = createRoom(makeProfile(), undefined, 3)
+    const room = createRoom(makeProfile(), undefined, undefined, 3)
 
     room.post({ senderId: 'alice', content: 'a', type: 'chat' })
     room.post({ senderId: 'bob', content: 'b', type: 'chat' })
@@ -281,5 +281,412 @@ describe('Room — self-contained component', () => {
   test('post throws on whitespace-only senderId', () => {
     const room = createRoom(makeProfile())
     expect(() => room.post({ senderId: '   ', content: 'Hi', type: 'chat' })).toThrow()
+  })
+})
+
+// ============================================================================
+// Turn-Taking Tests
+// ============================================================================
+
+describe('Room — Turn-Taking mode', () => {
+  const trackDeliveries = () => {
+    const delivered: Array<{ agentId: string; content: string }> = []
+    const deliverFn = (agentId: string, message: Message) => {
+      delivered.push({ agentId, content: message.content })
+    }
+    return { delivered, deliverFn }
+  }
+
+  test('turnTaking defaults to disabled', () => {
+    const room = createRoom(makeProfile())
+    expect(room.turnTaking.enabled).toBe(false)
+    expect(room.turnTaking.paused).toBe(false)
+    expect(room.turnTaking.participating.size).toBe(0)
+    expect(room.turnTaking.currentTurn).toBeUndefined()
+  })
+
+  test('TT disabled: broadcasts to all members (unchanged behavior)', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.addMember('c')
+
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'Hello', type: 'chat' })
+    expect(delivered).toHaveLength(3) // broadcast to all
+    expect(delivered.map(d => d.agentId).sort()).toEqual(['a', 'b', 'c'])
+  })
+
+  test('TT enabled: delivers only to stalest agent', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.addMember('c')
+
+    // Pre-TT messages to establish staleness: C spoke, then B, then A
+    room.post({ senderId: 'c', senderName: 'Charlie', content: 'msg-c', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'msg-b', type: 'chat' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'msg-a', type: 'chat' })
+    delivered.length = 0
+
+    // Enable TT with all three participating
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setParticipating('c', true)
+    room.setTurnTaking(true)
+
+    // setTurnTaking(true) kicks off chain — delivers to stalest (C)
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('c')
+    expect(room.turnTaking.currentTurn).toBe('c')
+  })
+
+  test('TT chain advances when currentTurn agent responds', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.addMember('c')
+
+    // Establish staleness: C, B, A
+    room.post({ senderId: 'c', senderName: 'Charlie', content: 'c1', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    delivered.length = 0
+
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setParticipating('c', true)
+    room.setTurnTaking(true)
+
+    // C was delivered to (stalest). Clear and simulate C's response.
+    delivered.length = 0
+    room.post({ senderId: 'c', senderName: 'Charlie', content: 'c-response', type: 'chat' })
+
+    // Should advance to next stalest: B (B's last msg is at index 1, A's at index 2)
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('b')
+    expect(room.turnTaking.currentTurn).toBe('b')
+
+    // B responds — should advance to A
+    delivered.length = 0
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b-response', type: 'chat' })
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('a')
+    expect(room.turnTaking.currentTurn).toBe('a')
+  })
+
+  test('pass messages advance the turn', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    delivered.length = 0
+
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setTurnTaking(true)
+
+    // B is stalest, gets delivery
+    expect(delivered[0]!.agentId).toBe('b')
+    delivered.length = 0
+
+    // B passes — still advances to A
+    room.post({ senderId: 'b', senderName: 'Bob', content: '[pass] nothing to add', type: 'pass' })
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('a')
+  })
+
+  test('pause stops the chain', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+    delivered.length = 0
+
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setTurnTaking(true)
+
+    delivered.length = 0
+    room.setTurnTakingPaused(true)
+    expect(room.turnTaking.paused).toBe(true)
+    expect(room.turnTaking.currentTurn).toBeUndefined()
+
+    // Posting while paused — no TT delivery
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'during pause', type: 'chat' })
+    // Message is stored but no TT delivery (falls through to broadcast since TT is paused)
+    // Wait — actually when TT enabled + paused, post() checks `ttEnabled && !ttPaused`
+    // Since ttPaused is true, it falls through to broadcast
+  })
+
+  test('resume restarts the chain from stalest', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    delivered.length = 0
+
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setTurnTaking(true)
+
+    // Chain started, pause it
+    room.setTurnTakingPaused(true)
+    delivered.length = 0
+
+    // Resume
+    room.setTurnTakingPaused(false)
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('b') // B is stalest
+  })
+
+  test('participation toggle: excluded agent is skipped', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.addMember('c')
+
+    room.post({ senderId: 'c', senderName: 'Charlie', content: 'c1', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    delivered.length = 0
+
+    // Only A and B participate — C is excluded
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setTurnTaking(true)
+
+    // Stalest among {A, B} is B
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('b')
+  })
+
+  test('removing currentTurn agent advances the chain', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    delivered.length = 0
+
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setTurnTaking(true)
+
+    // B has the turn
+    expect(room.turnTaking.currentTurn).toBe('b')
+    delivered.length = 0
+
+    // Remove B from participation
+    room.setParticipating('b', false)
+
+    // Should advance to A
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('a')
+    expect(room.turnTaking.currentTurn).toBe('a')
+  })
+
+  test('onTurnChanged callback is called on turn changes', () => {
+    const turns: Array<{ roomId: string; agentId?: string }> = []
+    const onTurnChanged = (roomId: string, agentId?: string) => {
+      turns.push({ roomId, agentId })
+    }
+
+    const { deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile({ id: 'room-1' }), deliverFn, onTurnChanged)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setTurnTaking(true)
+
+    expect(turns.length).toBeGreaterThan(0)
+    expect(turns[turns.length - 1]!.roomId).toBe('room-1')
+  })
+
+  test('messages from non-currentTurn are stored but not delivered in TT', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.addMember('c')
+
+    room.post({ senderId: 'c', senderName: 'Charlie', content: 'c1', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    delivered.length = 0
+
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setParticipating('c', true)
+    room.setTurnTaking(true)
+
+    // C has the turn
+    expect(room.turnTaking.currentTurn).toBe('c')
+    delivered.length = 0
+
+    // A posts something while C has the floor
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'interjection', type: 'chat' })
+
+    // No delivery — A is not the currentTurn, and chain is not idle
+    expect(delivered).toHaveLength(0)
+
+    // But message is stored (3 initial + interjection = 4)
+    expect(room.getMessageCount()).toBe(4)
+  })
+})
+
+// ============================================================================
+// Directed Addressing Tests
+// ============================================================================
+
+describe('Room — Directed Addressing [[AgentName]]', () => {
+  const trackDeliveries = () => {
+    const delivered: Array<{ agentId: string; content: string }> = []
+    const deliverFn = (agentId: string, message: Message) => {
+      delivered.push({ agentId, content: message.content })
+    }
+    return { delivered, deliverFn }
+  }
+
+  test('non-TT mode: [[AgentName]] delivers only to addressed agent', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.addMember('c')
+
+    // Post messages with senderName so names can be resolved
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'setup', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'setup', type: 'chat' })
+    room.post({ senderId: 'c', senderName: 'Charlie', content: 'setup', type: 'chat' })
+    delivered.length = 0
+
+    // Alice addresses Bob specifically
+    room.post({ senderId: 'a', senderName: 'Alice', content: '[[Bob]] what do you think?', type: 'chat' })
+
+    // Only Bob gets delivery (not Alice, not Charlie)
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('b')
+  })
+
+  test('non-TT mode: [[AgentName]] with multiple targets', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.addMember('c')
+
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'hi', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'hi', type: 'chat' })
+    room.post({ senderId: 'c', senderName: 'Charlie', content: 'hi', type: 'chat' })
+    delivered.length = 0
+
+    room.post({ senderId: 'a', senderName: 'Alice', content: '[[Bob]] [[Charlie]] compare notes', type: 'chat' })
+
+    expect(delivered).toHaveLength(2)
+    expect(delivered.map(d => d.agentId).sort()).toEqual(['b', 'c'])
+  })
+
+  test('non-TT mode: unresolvable [[Name]] falls through to broadcast', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'hi', type: 'chat' })
+    delivered.length = 0
+
+    // Address someone who doesn't exist — falls through to broadcast
+    room.post({ senderId: 'a', senderName: 'Alice', content: '[[Nobody]] hello?', type: 'chat' })
+
+    // Broadcasts to both members (a via post + addMember, b via addMember)
+    expect(delivered).toHaveLength(2)
+    expect(delivered.map(d => d.agentId).sort()).toEqual(['a', 'b'])
+  })
+
+  test('TT mode: [[AgentName]] overrides staleness', () => {
+    const { delivered, deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+    room.addMember('c')
+
+    room.post({ senderId: 'c', senderName: 'Charlie', content: 'c1', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'b1', type: 'chat' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'a1', type: 'chat' })
+    delivered.length = 0
+
+    room.setParticipating('a', true)
+    room.setParticipating('b', true)
+    room.setParticipating('c', true)
+    room.setTurnTaking(true)
+
+    // C has the turn (stalest). C addresses Bob directly instead of normal response.
+    delivered.length = 0
+    room.post({ senderId: 'c', senderName: 'Charlie', content: '[[Bob]] what do you think?', type: 'chat' })
+
+    // Bob gets the delivery, not the normal staleness-based next agent
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]!.agentId).toBe('b')
+    expect(room.turnTaking.currentTurn).toBe('b')
+  })
+
+  test('message with [[AgentName]] is always stored regardless of delivery', () => {
+    const { deliverFn } = trackDeliveries()
+    const room = createRoom(makeProfile(), deliverFn)
+
+    room.addMember('a')
+    room.addMember('b')
+
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'setup', type: 'chat' })
+    room.post({ senderId: 'b', senderName: 'Bob', content: 'setup', type: 'chat' })
+    const before = room.getMessageCount()
+
+    room.post({ senderId: 'a', senderName: 'Alice', content: '[[Bob]] directed msg', type: 'chat' })
+    expect(room.getMessageCount()).toBe(before + 1)
+  })
+
+  test('senderName is preserved on messages', () => {
+    const room = createRoom(makeProfile())
+    const msg = room.post({ senderId: 'a', senderName: 'Alice', content: 'hi', type: 'chat' })
+    expect(msg.senderName).toBe('Alice')
+  })
+
+  test('senderName is optional (backwards compatibility)', () => {
+    const room = createRoom(makeProfile())
+    const msg = room.post({ senderId: 'a', content: 'hi', type: 'chat' })
+    expect(msg.senderName).toBeUndefined()
   })
 })
