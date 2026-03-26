@@ -24,7 +24,8 @@ export interface System {
   readonly routeMessage: RouteMessage
   readonly ollama: LLMProvider
   readonly toolRegistry: ToolRegistry
-  readonly introRoom: Room
+  readonly introRoom: Room | undefined
+  readonly createDefaultRoom: () => Room
   readonly removeAgent: (id: string) => boolean
   readonly spawnAIAgent: (config: AIAgentConfig, options?: SpawnOptions) => Promise<Agent>
   readonly spawnHumanAgent: (config: HumanAgentConfig, send: TransportSend) => Promise<HumanAgent>
@@ -68,11 +69,9 @@ export const createSystem = (ollamaUrl?: string): System => {
   toolRegistry.register(createGetTimeTool())
   toolRegistry.register(createQueryAgentTool(team))
 
-  const introRoom = house.createRoom({
-    name: 'Introductions',
-    visibility: 'public',
-    createdBy: SYSTEM_SENDER_ID,
-  })
+  // Default intro room — created only when no snapshot is being restored.
+  // Callers that restore from snapshot should NOT rely on this field.
+  let introRoom: Room | undefined
 
   // Remove agent from team AND all rooms (prevents ghost member delivery)
   const removeAgent = (id: string): boolean => {
@@ -95,8 +94,22 @@ export const createSystem = (ollamaUrl?: string): System => {
     return agent
   }
 
+  const createDefaultRoom = (): Room => {
+    if (!introRoom) {
+      introRoom = house.createRoom({
+        name: 'Introductions',
+        visibility: 'public',
+        createdBy: SYSTEM_SENDER_ID,
+      })
+    }
+    return introRoom
+  }
+
   return {
-    house, team, routeMessage, ollama, toolRegistry, introRoom, removeAgent,
+    house, team, routeMessage, ollama, toolRegistry,
+    get introRoom() { return introRoom },
+    createDefaultRoom,
+    removeAgent,
     spawnAIAgent: boundSpawnAIAgent,
     spawnHumanAgent: boundSpawnHumanAgent,
     setOnMessagePosted: messagePosted.set,
@@ -137,7 +150,8 @@ if (import.meta.main) {
     await restoreFromSnapshot(system, snapshot)
     console.log(`Restored from snapshot: ${snapshot.rooms.length} rooms, ${snapshot.agents.length} agents (all rooms paused)`)
   } else {
-    console.log(`Default room ready: ${system.introRoom.profile.name}`)
+    const defaultRoom = system.createDefaultRoom()
+    console.log(`Default room ready: ${defaultRoom.profile.name}`)
   }
 
   // Register MCP client tools from config (external tool servers)
