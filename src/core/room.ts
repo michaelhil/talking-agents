@@ -256,10 +256,18 @@ export const createRoom = (
     // Notify even if mode unchanged — pause state may have changed
     notifyModeChanged()
 
-    // If switching to staleness, kickstart from stalest
-    if (newMode === 'staleness' && messages.length > 0) {
-      const lastMsg = messages[messages.length - 1]!
-      kickstartStaleness(lastMsg)
+    // If switching to staleness, auto-populate participating with all eligible members
+    if (newMode === 'staleness') {
+      if (stalenessParticipating.size === 0) {
+        const eligible = computeEligible()
+        for (const id of eligible) {
+          stalenessParticipating.add(id)
+        }
+      }
+      if (messages.length > 0) {
+        const lastMsg = messages[messages.length - 1]!
+        kickstartStaleness(lastMsg)
+      }
     }
   }
 
@@ -426,7 +434,13 @@ export const createRoom = (
       return messages.slice(-n)
     },
     getParticipantIds: (): ReadonlyArray<string> => [...members],
-    addMember: (id: string): void => { members.add(id) },
+    addMember: (id: string): void => {
+      members.add(id)
+      // Auto-add to staleness participation when mode is active
+      if (mode === 'staleness') {
+        stalenessParticipating.add(id)
+      }
+    },
     removeMember: (id: string): void => { members.delete(id) },
     hasMember: (id: string): boolean => members.has(id),
     getMessageCount: (): number => messages.length,
