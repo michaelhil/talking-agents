@@ -107,7 +107,15 @@ export const createSystem = (ollamaUrl?: string): System => {
 // --- Startup (only when run directly) ---
 
 if (import.meta.main) {
-  const { createServer } = await import('./api/server.ts')
+  const headless = process.argv.includes('--headless')
+
+  // In headless mode, redirect console.log to stderr (stdout is reserved for MCP protocol)
+  if (headless) {
+    const stderrLog = (...args: unknown[]) => console.error(...args)
+    console.log = stderrLog
+    console.info = stderrLog
+  }
+
   const { registerAllMCPServers } = await import('./integrations/mcp/client.ts')
   const { existsSync } = await import('node:fs')
 
@@ -115,10 +123,10 @@ if (import.meta.main) {
   const system = createSystem(ollamaUrl)
 
   const pkg = await Bun.file(`${import.meta.dir}/../package.json`).json() as { version: string }
-  console.log(`Talking Agents v${pkg.version}`)
+  console.log(`Samsinn v${pkg.version}${headless ? ' (headless)' : ''}`)
   console.log(`Ollama: ${ollamaUrl}`)
 
-  // Register MCP servers from config
+  // Register MCP client tools from config (external tool servers)
   const mcpConfigPath = `${import.meta.dir}/../mcp-servers.json`
   if (existsSync(mcpConfigPath)) {
     const mcpConfig = await Bun.file(mcpConfigPath).json()
@@ -136,5 +144,16 @@ if (import.meta.main) {
 
   console.log(`Default room ready: ${system.introRoom.profile.name}`)
 
-  createServer(system, { port: parseInt(process.env.PORT ?? String(DEFAULTS.port), 10) })
+  if (headless) {
+    // Headless mode: MCP server on stdio, no HTTP server
+    const { createMCPServer, wireEventNotifications, startMCPServerStdio } = await import('./integrations/mcp/server.ts')
+    const mcpServer = createMCPServer(system)
+    wireEventNotifications(system, mcpServer)
+    await startMCPServerStdio(mcpServer)
+    console.log('MCP server running on stdio')
+  } else {
+    // Full mode: HTTP + WebSocket server with browser UI
+    const { createServer } = await import('./api/server.ts')
+    createServer(system, { port: parseInt(process.env.PORT ?? String(DEFAULTS.port), 10) })
+  }
 }

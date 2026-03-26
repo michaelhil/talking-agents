@@ -75,3 +75,9 @@ export { createOllamaProvider } from './llm/ollama.ts'
 export { createSystem } from './main.ts'
 export type { System } from './main.ts'
 export { createServer } from './api/server.ts'
+
+// MCP Server
+export { createMCPServer, wireEventNotifications, startMCPServerStdio } from './integrations/mcp/server.ts'
+
+// Delivery modes
+export type { DeliveryMode, StalenessState, Flow, FlowStep, FlowExecution } from './core/types.ts'

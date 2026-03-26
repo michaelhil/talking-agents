@@ -2,7 +2,7 @@
 
 A multi-agent room communication system where AI and human agents converse and cooperate through rooms, direct messages, and orchestrated flows.
 
-> **v0.5.5** — Delivery modes, flows, muting, directed addressing, Markdown rendering.
+> **v0.5.6** — Delivery modes, flows, muting, directed addressing, Markdown rendering, MCP server, headless mode.
 
 ## Architecture
 
@@ -96,7 +96,8 @@ src/
     built-in.ts         — list_rooms, get_time, query_agent
   integrations/
     mcp/
-      client.ts         — MCP server registration for external tools
+      client.ts         — MCP client: consumes external tool servers
+      server.ts         — MCP server: exposes Samsinn as tools for external LLMs
   api/
     server.ts           — Bun.serve: HTTP + WebSocket + static files
     http-routes.ts      — REST API endpoints
@@ -132,6 +133,35 @@ src/
 
 Connect: `ws://localhost:3000/ws?name=YourName`
 
+## Headless Mode (MCP Server)
+
+Samsinn can run without the browser UI as a pure MCP server on stdio. External LLMs and agents can orchestrate the entire system via MCP tools.
+
+```bash
+bun run headless
+```
+
+This exposes 22 tools (room/agent/message/flow management) and 3 resources (rooms, agents, room messages). Connect with any MCP client — Claude Desktop, Claude Code, or the MCP inspector:
+
+```bash
+npx @modelcontextprotocol/inspector bun run src/main.ts --headless
+```
+
+### Claude Desktop / Claude Code configuration
+
+```json
+{
+  "mcpServers": {
+    "samsinn": {
+      "command": "bun",
+      "args": ["run", "/path/to/samsinn/src/main.ts", "--headless"]
+    }
+  }
+}
+```
+
+No human agent entity is needed in headless mode — use the `post_message` tool to inject messages and `get_room_messages` to read responses.
+
 ## Docker
 
 ```bash
@@ -146,7 +176,8 @@ docker run -p 3000:3000 -e OLLAMA_URL=http://host.docker.internal:11434 samsinn
 - [x] **Phase 3** — Server + UI: HTTP/WebSocket server, browser interface
 - [x] **Phase 4** — Tool use framework: ReAct loop, MCP integration
 - [x] **Phase 5** — Delivery modes: broadcast, targeted, staleness, flow, muting, addressing, Markdown
-- [ ] **Phase 6** — Flow editor enhancements, AI-initiated flows
+- [x] **Phase 6** — MCP server adapter (22 tools, 3 resources), headless mode (stdio)
+- [ ] **Phase 7** — AI-initiated flows, flow editor enhancements
 
 ## License
 

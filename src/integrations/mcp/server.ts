@@ -1,0 +1,569 @@
+// ============================================================================
+// MCP Server — Exposes the Samsinn System as MCP tools and resources.
+//
+// Symmetric with client.ts: the client consumes external MCP tools, the server
+// exposes Samsinn as MCP tools for external LLMs/agents to orchestrate.
+//
+// 22 tools mirror the REST API surface. 3 resources provide read-only access.
+// Event notifications via logging messages for real-time updates.
+//
+// Usage:
+//   const mcpServer = createMCPServer(system)
+//   await startMCPServerStdio(mcpServer)
+// ============================================================================
+
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { z } from 'zod'
+import type { System } from '../../main.ts'
+import type { AIAgent, OnDeliveryModeChanged, OnFlowEvent, OnTurnChanged } from '../../core/types.ts'
+
+// === Helpers ===
+
+const textResult = (data: unknown) => ({
+  content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+})
+
+const errorResult = (message: string) => ({
+  content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }],
+  isError: true as const,
+})
+
+const resolveRoom = (system: System, roomName: string) => {
+  const room = system.house.getRoom(roomName)
+  if (!room) throw new Error(`Room "${roomName}" not found`)
+  return room
+}
+
+const resolveAgent = (system: System, agentName: string) => {
+  const agent = system.team.getAgent(agentName)
+  if (!agent) throw new Error(`Agent "${agentName}" not found`)
+  return agent
+}
+
+// === Factory ===
+
+export const createMCPServer = (system: System): McpServer => {
+  const mcpServer = new McpServer(
+    { name: 'samsinn', version: '0.5.5' },
+    { capabilities: { resources: {}, tools: {}, logging: {} } },
+  )
+
+  // --- Room management tools ---
+
+  mcpServer.tool(
+    'create_room',
+    'Create a new room for agent communication',
+    {
+      name: z.string().describe('Room name'),
+      description: z.string().optional().describe('Room description'),
+      roomPrompt: z.string().optional().describe('Instructions for agents in this room'),
+      visibility: z.enum(['public', 'private']).default('public').describe('Room visibility'),
+    },
+    async ({ name, description, roomPrompt, visibility }) => {
+      try {
+        const result = system.house.createRoomSafe({ name, description, roomPrompt, visibility, createdBy: 'mcp-client' })
+        return textResult(result.value.profile)
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to create room')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'list_rooms',
+    'List all rooms in the system',
+    { visibility: z.enum(['public', 'all']).default('all').describe('Filter by visibility') },
+    async ({ visibility }) => {
+      const rooms = visibility === 'public' ? system.house.listPublicRooms() : system.house.listAllRooms()
+      return textResult(rooms)
+    },
+  )
+
+  mcpServer.tool(
+    'get_room',
+    'Get room details and recent messages',
+    {
+      name: z.string().describe('Room name'),
+      messageLimit: z.number().default(50).describe('Max messages to return'),
+    },
+    async ({ name, messageLimit }) => {
+      try {
+        const room = resolveRoom(system, name)
+        return textResult({ profile: room.profile, messages: room.getRecent(messageLimit), deliveryMode: room.deliveryMode })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Room not found')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'delete_room',
+    'Delete a room',
+    { name: z.string().describe('Room name') },
+    async ({ name }) => {
+      try {
+        const room = resolveRoom(system, name)
+        system.house.removeRoom(room.profile.id)
+        return textResult({ removed: true })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to delete room')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'set_room_prompt',
+    'Set the room prompt (instructions for agents in this room)',
+    {
+      roomName: z.string().describe('Room name'),
+      roomPrompt: z.string().describe('New room prompt'),
+    },
+    async ({ roomName, roomPrompt }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        room.setRoomPrompt(roomPrompt)
+        return textResult({ roomPrompt: room.profile.roomPrompt })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to set room prompt')
+      }
+    },
+  )
+
+  // --- Agent management tools ---
+
+  mcpServer.tool(
+    'create_agent',
+    'Create a new AI agent and join it to public rooms',
+    {
+      name: z.string().describe('Agent name'),
+      description: z.string().default('AI agent').describe('Agent description'),
+      model: z.string().describe('Ollama model name (e.g. llama3.2, qwen2.5:14b)'),
+      systemPrompt: z.string().describe('System prompt defining the agent personality and behavior'),
+      temperature: z.number().optional().describe('LLM temperature (0-1)'),
+    },
+    async ({ name, description, model, systemPrompt, temperature }) => {
+      try {
+        const agent = await system.spawnAIAgent({ name, description, model, systemPrompt, temperature })
+        return textResult({ id: agent.id, name: agent.name })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to create agent')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'list_agents',
+    'List all agents in the system',
+    {},
+    async () => {
+      const agents = system.team.listAgents().map(a => ({
+        id: a.id, name: a.name, description: a.description, kind: a.kind, state: a.state.get(),
+      }))
+      return textResult(agents)
+    },
+  )
+
+  mcpServer.tool(
+    'get_agent',
+    'Get detailed information about a specific agent',
+    { name: z.string().describe('Agent name') },
+    async ({ name }) => {
+      try {
+        const agent = resolveAgent(system, name)
+        const detail: Record<string, unknown> = {
+          id: agent.id, name: agent.name, description: agent.description,
+          kind: agent.kind, state: agent.state.get(),
+          rooms: system.house.getRoomsForAgent(agent.id).map(r => r.profile.name),
+        }
+        if (agent.kind === 'ai' && 'getSystemPrompt' in agent) {
+          detail.systemPrompt = (agent as AIAgent).getSystemPrompt()
+        }
+        return textResult(detail)
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Agent not found')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'remove_agent',
+    'Remove an agent from the system',
+    { name: z.string().describe('Agent name') },
+    async ({ name }) => {
+      try {
+        const agent = resolveAgent(system, name)
+        system.removeAgent(agent.id)
+        return textResult({ removed: true })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to remove agent')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'update_agent_prompt',
+    'Update an AI agent system prompt',
+    {
+      name: z.string().describe('Agent name'),
+      systemPrompt: z.string().describe('New system prompt'),
+    },
+    async ({ name, systemPrompt }) => {
+      try {
+        const agent = resolveAgent(system, name)
+        if (agent.kind !== 'ai' || !('updateSystemPrompt' in agent)) {
+          return errorResult('Only AI agents can be updated')
+        }
+        (agent as AIAgent).updateSystemPrompt(systemPrompt)
+        return textResult({ updated: true, name: agent.name })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to update agent')
+      }
+    },
+  )
+
+  // --- Messaging tools ---
+
+  mcpServer.tool(
+    'post_message',
+    'Post a message to a room or send a DM to agents. Use this to inject messages into conversations.',
+    {
+      content: z.string().describe('Message content'),
+      senderId: z.string().default('mcp-client').describe('Sender ID'),
+      senderName: z.string().optional().describe('Sender display name'),
+      roomNames: z.array(z.string()).optional().describe('Room names to post to'),
+      agentNames: z.array(z.string()).optional().describe('Agent names for DMs'),
+    },
+    async ({ content, senderId, senderName, roomNames, agentNames }) => {
+      try {
+        const target: Record<string, unknown> = {}
+        if (roomNames?.length) target.rooms = roomNames
+        if (agentNames?.length) target.agents = agentNames
+        const messages = system.routeMessage(target, {
+          senderId,
+          senderName: senderName ?? senderId,
+          content,
+          type: 'chat',
+        })
+        return textResult({ delivered: messages.length, messages })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to post message')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'get_room_messages',
+    'Get recent messages from a room',
+    {
+      roomName: z.string().describe('Room name'),
+      limit: z.number().default(50).describe('Max messages to return'),
+    },
+    async ({ roomName, limit }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        return textResult(room.getRecent(limit))
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Room not found')
+      }
+    },
+  )
+
+  // --- Delivery mode tools ---
+
+  mcpServer.tool(
+    'set_delivery_mode',
+    'Set the delivery mode for a room: broadcast (all agents), targeted (manual), or staleness (round-robin)',
+    {
+      roomName: z.string().describe('Room name'),
+      mode: z.enum(['broadcast', 'targeted', 'staleness']).describe('Delivery mode'),
+    },
+    async ({ roomName, mode }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        room.setDeliveryMode(mode)
+        return textResult({ mode: room.deliveryMode })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to set delivery mode')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'set_muted',
+    'Mute or unmute an agent in a room. Muted agents are excluded from all delivery.',
+    {
+      roomName: z.string().describe('Room name'),
+      agentName: z.string().describe('Agent name'),
+      muted: z.boolean().describe('True to mute, false to unmute'),
+    },
+    async ({ roomName, agentName, muted }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        const agent = resolveAgent(system, agentName)
+        room.setMuted(agent.id, muted)
+        return textResult({ muted: room.isMuted(agent.id) })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to set mute')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'deliver_to',
+    'Manually deliver a specific message to selected agents (for targeted mode)',
+    {
+      roomName: z.string().describe('Room name'),
+      messageId: z.string().describe('Message ID to deliver'),
+      agentNames: z.array(z.string()).describe('Agent names to deliver to'),
+    },
+    async ({ roomName, messageId, agentNames }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        const agentIds = agentNames.map(n => resolveAgent(system, n).id)
+        room.deliverMessageTo(messageId, agentIds)
+        return textResult({ delivered: agentIds.length })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to deliver')
+      }
+    },
+  )
+
+  // --- Staleness controls ---
+
+  mcpServer.tool(
+    'set_staleness_paused',
+    'Pause or resume staleness-based turn-taking',
+    {
+      roomName: z.string().describe('Room name'),
+      paused: z.boolean().describe('True to pause, false to resume'),
+    },
+    async ({ roomName, paused }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        room.setStalenessPaused(paused)
+        return textResult({ paused: room.staleness.paused })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to set staleness paused')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'set_participating',
+    'Add or remove an agent from staleness turn-taking rotation',
+    {
+      roomName: z.string().describe('Room name'),
+      agentName: z.string().describe('Agent name'),
+      participating: z.boolean().describe('True to include, false to exclude'),
+    },
+    async ({ roomName, agentName, participating }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        const agent = resolveAgent(system, agentName)
+        room.setParticipating(agent.id, participating)
+        return textResult({ participating: room.staleness.participating.has(agent.id) })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to set participating')
+      }
+    },
+  )
+
+  // --- Flow management tools ---
+
+  mcpServer.tool(
+    'add_flow',
+    'Create a predefined agent sequence (flow) for orchestrated conversations',
+    {
+      roomName: z.string().describe('Room name'),
+      name: z.string().describe('Flow name'),
+      steps: z.array(z.object({
+        agentName: z.string().describe('Agent name for this step'),
+        stepPrompt: z.string().optional().describe('Per-step instructions for this agent'),
+      })).describe('Ordered sequence of agent steps'),
+      loop: z.boolean().default(false).describe('Whether the flow repeats continuously'),
+    },
+    async ({ roomName, name, steps, loop }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        const flow = room.addFlow({ name, steps, loop })
+        return textResult(flow)
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to add flow')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'list_flows',
+    'List all flows registered in a room',
+    { roomName: z.string().describe('Room name') },
+    async ({ roomName }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        return textResult(room.getFlows())
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Room not found')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'start_flow',
+    'Start a flow execution. Optionally post a trigger message first.',
+    {
+      roomName: z.string().describe('Room name'),
+      flowId: z.string().describe('Flow ID'),
+      content: z.string().optional().describe('Optional trigger message to post before starting'),
+      senderId: z.string().default('mcp-client').describe('Sender ID for the trigger message'),
+      senderName: z.string().optional().describe('Sender display name for the trigger message'),
+    },
+    async ({ roomName, flowId, content, senderId, senderName }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        if (content) {
+          room.post({ senderId, senderName: senderName ?? senderId, content, type: 'chat' })
+        }
+        room.startFlow(flowId)
+        return textResult({ started: true, mode: room.deliveryMode })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to start flow')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'cancel_flow',
+    'Cancel the currently active flow in a room',
+    { roomName: z.string().describe('Room name') },
+    async ({ roomName }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        room.cancelFlow()
+        return textResult({ cancelled: true, mode: room.deliveryMode })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to cancel flow')
+      }
+    },
+  )
+
+  // --- House prompt tools ---
+
+  mcpServer.tool(
+    'get_house_prompts',
+    'Get the global house prompt and response format that guide all agents',
+    {},
+    async () => {
+      return textResult({
+        housePrompt: system.house.getHousePrompt(),
+        responseFormat: system.house.getResponseFormat(),
+      })
+    },
+  )
+
+  mcpServer.tool(
+    'set_house_prompts',
+    'Update the global house prompt and/or response format',
+    {
+      housePrompt: z.string().optional().describe('Global behavioral guidance for all agents'),
+      responseFormat: z.string().optional().describe('Response format instructions for agents'),
+    },
+    async ({ housePrompt, responseFormat }) => {
+      if (housePrompt !== undefined) system.house.setHousePrompt(housePrompt)
+      if (responseFormat !== undefined) system.house.setResponseFormat(responseFormat)
+      return textResult({
+        housePrompt: system.house.getHousePrompt(),
+        responseFormat: system.house.getResponseFormat(),
+      })
+    },
+  )
+
+  // --- Resources ---
+
+  mcpServer.resource(
+    'rooms',
+    'samsinn://rooms',
+    { description: 'List of all rooms in the system', mimeType: 'application/json' },
+    async () => ({
+      contents: [{
+        uri: 'samsinn://rooms',
+        mimeType: 'application/json',
+        text: JSON.stringify(system.house.listAllRooms(), null, 2),
+      }],
+    }),
+  )
+
+  mcpServer.resource(
+    'agents',
+    'samsinn://agents',
+    { description: 'List of all agents in the system', mimeType: 'application/json' },
+    async () => ({
+      contents: [{
+        uri: 'samsinn://agents',
+        mimeType: 'application/json',
+        text: JSON.stringify(
+          system.team.listAgents().map(a => ({
+            id: a.id, name: a.name, description: a.description, kind: a.kind, state: a.state.get(),
+          })),
+          null, 2,
+        ),
+      }],
+    }),
+  )
+
+  mcpServer.resource(
+    'room-messages',
+    new ResourceTemplate('samsinn://rooms/{name}/messages', { list: undefined }),
+    { description: 'Recent messages in a specific room', mimeType: 'application/json' },
+    async (uri, { name }) => {
+      const room = system.house.getRoom(name as string)
+      if (!room) return { contents: [] }
+      return {
+        contents: [{
+          uri: uri.href,
+          mimeType: 'application/json',
+          text: JSON.stringify(room.getRecent(50), null, 2),
+        }],
+      }
+    },
+  )
+
+  return mcpServer
+}
+
+// === Wire system event callbacks to MCP logging notifications ===
+
+export const wireEventNotifications = (system: System, mcpServer: McpServer): void => {
+  const sendNotification = (data: Record<string, unknown>): void => {
+    try {
+      mcpServer.server.sendLoggingMessage({ level: 'info', data: JSON.stringify(data) })
+    } catch { /* client may not support logging */ }
+  }
+
+  const onTurnChanged: OnTurnChanged = (roomId, agentId, waitingForHuman) => {
+    const room = system.house.getRoom(roomId)
+    const agent = agentId ? system.team.getAgent(agentId) : undefined
+    sendNotification({ type: 'turn_changed', roomName: room?.profile.name, agentName: agent?.name, waitingForHuman })
+  }
+
+  const onDeliveryModeChanged: OnDeliveryModeChanged = (roomId, mode) => {
+    const room = system.house.getRoom(roomId)
+    sendNotification({ type: 'delivery_mode_changed', roomName: room?.profile.name, mode })
+  }
+
+  const onFlowEvent: OnFlowEvent = (roomId, event, detail) => {
+    const room = system.house.getRoom(roomId)
+    sendNotification({ type: 'flow_event', roomName: room?.profile.name, event, detail })
+  }
+
+  system.setOnTurnChanged(onTurnChanged)
+  system.setOnDeliveryModeChanged(onDeliveryModeChanged)
+  system.setOnFlowEvent(onFlowEvent)
+}
+
+// === Start MCP server on stdio ===
+
+export const startMCPServerStdio = async (mcpServer: McpServer): Promise<void> => {
+  const transport = new StdioServerTransport()
+  await mcpServer.connect(transport)
+}
