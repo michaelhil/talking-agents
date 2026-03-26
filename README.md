@@ -1,141 +1,71 @@
-# Talking Agents
+# Samsinn
 
-A multi-agent room communication system where AI and human agents converse and cooperate through rooms.
+A multi-agent room communication system where AI and human agents converse and cooperate through rooms, direct messages, and orchestrated flows.
 
-> **v0.1.0-alpha** — Core engine complete. No UI yet (Phase 3).
+> **v0.5.5** — Delivery modes, flows, muting, directed addressing, Markdown rendering.
 
 ## Architecture
 
 Three things:
 
 ```
-House            — collection of Rooms (pure data structures)
+House            — collection of Rooms (self-contained components with delivery)
 Team             — collection of Agents (AI + human, unified interface)
-postAndDeliver() — one function that routes messages to rooms and/or agents
+routeMessage()   — one function that routes messages to rooms and/or agents
 ```
+
+### Delivery Modes
+
+Each room has exactly one active delivery mode:
+
+| Mode | Behavior |
+|------|----------|
+| **Broadcast** | Deliver to all non-muted members (default) |
+| **Targeted** | No auto-delivery. Human selects agents per message via UI |
+| **Staleness** | One-at-a-time delivery, agent who hasn't spoken longest goes first |
+| **Flow** | Follow a predefined agent sequence with optional per-step prompts |
+
+`[[AgentName]]` directed addressing and per-agent muting work in all modes.
 
 ### Key Concepts
 
-- **Rooms** are pure data structures — an array of messages with a profile. No delivery logic, no dependencies.
-- **Agents** are self-contained — each maintains its own message history, room profiles, and agent profiles. AI agents use LLMs to decide responses; human agents relay messages via transport (WebSocket in Phase 3).
-- **Direct messaging** — agents can message each other directly without going through a room. Room messages and DMs use the same delivery mechanism.
-- **No membership lists** — room participants are derived from message senders.
-- **Profiles, not registries** — agents learn about other agents from join message metadata. No centralized coordination.
+- **Rooms** are self-contained components — messages + explicit members + delivery. `Room.post()` stores the message and dispatches delivery based on the active mode.
+- **Agents** are unified — AI and human agents share the same interface. AI agents use LLMs; human agents relay via WebSocket.
+- **Direct messaging** — agents can message each other outside rooms.
+- **Flows** — user-defined sequences of agent steps with optional per-step prompts. Agents can appear multiple times. Flows can loop.
+- **Muting** — per-agent, per-room mute that excludes agents from all delivery. Mute/unmute events appear in message history.
+- **Plain text protocol** — AI agents respond in natural text. `::PASS::` to stay silent, `::TOOL::` for tool calls.
+- **Markdown** — agents can use Markdown in responses; the UI renders it with sanitized HTML.
 
 ### How It Works
 
-1. A message arrives in a room (or as a DM)
-2. The room returns recipient IDs (derived from who has posted there)
-3. `postAndDeliver` delivers to each recipient via `team.get(id).receive(message)`
-4. AI agents evaluate whether to respond (cooldown, context building, LLM call)
-5. The LLM returns JSON with a `target` specifying where to send the response
-6. `postAndDeliver` routes the response to the targeted rooms and/or agents
-
-### Agent Self-Containment
-
-Each agent maintains three data structures internally:
-
-- **messages[]** — all messages from all rooms and DMs
-- **roomProfiles** — metadata for each room the agent is in
-- **agentProfiles** — metadata for each agent it has encountered
-
-No external queries needed. Everything is derived from the agent's own data.
+1. A message is posted to a room via `room.post()`
+2. The room stores it, then dispatches based on the active delivery mode
+3. In broadcast: all non-muted members receive it. In staleness: the stalest agent receives it. In flow: the next step agent receives it. In targeted: no auto-delivery.
+4. AI agents evaluate and respond via LLM; responses route back through `routeMessage()`
+5. `[[AgentName]]` in any message overrides the mode — delivers only to addressed agents
 
 ## Requirements
 
 - [Bun](https://bun.sh) >= 1.0
-- [Ollama](https://ollama.ai) running locally with at least one model pulled
+- [Ollama](https://ollama.ai) running locally (or remote via `OLLAMA_URL`)
 - TypeScript 5+
 
 ## Quick Start
 
 ```bash
-# Install dependencies
 bun install
-
-# Pull a model (if not already done)
 ollama pull llama3.2
-
-# Type check
-bun run check
-
-# Run unit tests (no Ollama needed)
-bun run test:unit
-
-# Run all tests (requires Ollama with llama3.2)
-bun test
+bun run start
 ```
 
-## Usage Example
+Open `http://localhost:3000` in your browser. Enter your name. Create AI agents, switch delivery modes, build flows.
 
-```typescript
-import { createHouse, initIntroductionsRoom } from './src/core/house.ts'
-import { createTeam } from './src/agents/team.ts'
-import { createHumanAgent } from './src/agents/human-agent.ts'
-import { spawnAIAgent, spawnHumanAgent } from './src/agents/spawn.ts'
-import { createOllamaProvider } from './src/llm/ollama.ts'
-import type { Message, MessageTarget, PostAndDeliver } from './src/core/types.ts'
-
-// Create the system
-const house = createHouse()
-const team = createTeam()
-const intro = initIntroductionsRoom(house)
-const ollama = createOllamaProvider('http://localhost:11434')
-
-// Wire delivery
-const deliver = (id: string, msg: Message) => {
-  try { team.get(id)?.receive(msg) } catch (e) { console.error(e) }
-}
-
-const postAndDeliver: PostAndDeliver = (target, params) => {
-  const correlationId = crypto.randomUUID()
-  const delivered: Message[] = []
-
-  for (const roomId of target.rooms ?? []) {
-    const room = house.getRoom(roomId)
-    if (!room) continue
-    const { message, recipientIds } = room.post({ ...params, correlationId })
-    delivered.push(message)
-    for (const id of recipientIds) deliver(id, message)
-  }
-
-  for (const agentId of target.agents ?? []) {
-    if (agentId === params.senderId) continue
-    const dm: Message = {
-      id: crypto.randomUUID(), recipientId: agentId,
-      senderId: params.senderId, content: params.content,
-      timestamp: Date.now(), type: params.type, correlationId,
-    }
-    delivered.push(dm)
-    deliver(agentId, dm)
-    deliver(params.senderId, dm)
-  }
-
-  return delivered
-}
-
-// Spawn an AI agent
-await spawnAIAgent({
-  participantId: 'analyst-1',
-  name: 'Analyst',
-  description: 'Analyzes data and identifies patterns',
-  model: 'llama3.2',
-  systemPrompt: 'You are a data analyst. Be concise and precise.',
-  cooldownMs: 10000,
-}, ollama, house, team, postAndDeliver)
-
-// Spawn a human agent
-const human = createHumanAgent(
-  { id: 'alice', name: 'Alice', description: 'A researcher' },
-  (msg) => console.log(`[${msg.senderId}]: ${msg.content}`),
-)
-await spawnHumanAgent(human, house, team, postAndDeliver, [intro])
-
-// Human posts a message
-postAndDeliver(
-  { rooms: [intro.profile.id] },
-  { senderId: 'alice', content: 'What patterns do you see in the data?', type: 'chat' },
-)
+```bash
+# Tests
+bun run test:unit   # no Ollama needed
+bun test            # full suite (requires Ollama)
+bun run check       # TypeScript type check
 ```
 
 ## Project Structure
@@ -143,38 +73,80 @@ postAndDeliver(
 ```
 src/
   core/
-    types.ts          — All interfaces and type definitions
-    room.ts           — Room: pure data structure (messages + profile)
-    house.ts          — House: room collection
+    types.ts            — All interfaces and type definitions
+    room.ts             — Room: self-contained component (messages + members + delivery modes)
+    house.ts            — House: room collection with house prompts
+    delivery.ts         — routeMessage: routes to rooms and DMs
+    delivery-modes.ts   — Pure functions for broadcast, targeted, staleness, flow delivery
+    staleness.ts        — Staleness calculation (who hasn't spoken longest)
+    addressing.ts       — [[AgentName]] parser
+    tool-registry.ts    — Global tool store
+    names.ts            — Name uniqueness utilities
   agents/
-    team.ts           — Team: agent collection
-    ai-agent.ts       — AI agent factory (LLM-powered)
-    human-agent.ts    — Human agent factory (transport-powered)
-    actions.ts        — Self-management action executor
-    spawn.ts          — Agent wiring (create + register + join)
-    shared.ts         — Shared utilities (profile extraction, join metadata)
+    ai-agent.ts         — AI agent factory with two-buffer architecture
+    context-builder.ts  — LLM context assembly (history, prompts, step instructions)
+    evaluation.ts       — LLM interaction + ReAct tool loop
+    human-agent.ts      — Human agent factory (WebSocket transport)
+    team.ts             — Agent collection
+    actions.ts          — Self-management action runner
+    spawn.ts            — Agent wiring (create + register + join)
   llm/
-    ollama.ts         — Ollama LLM provider
+    ollama.ts           — Ollama HTTP client with timing
+  tools/
+    built-in.ts         — list_rooms, get_time, query_agent
+  integrations/
+    mcp/
+      client.ts         — MCP server registration for external tools
+  api/
+    server.ts           — Bun.serve: HTTP + WebSocket + static files
+    http-routes.ts      — REST API endpoints
+    ws-handler.ts       — WebSocket message dispatch
+  ui/
+    index.html          — Browser UI (Tailwind + marked + DOMPurify)
+    modules/
+      app.ts            — Main app orchestrator
+      ws-client.ts      — WebSocket client
+      ui-renderer.ts    — DOM rendering (messages, agents, modals, flow editor)
+  main.ts               — createSystem() factory + startup entry point
 ```
+
+## API
+
+### REST Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | System health + Ollama status |
+| GET/PUT | `/api/house/prompts` | House prompt + response format |
+| GET/POST/DELETE | `/api/rooms/:name` | Room CRUD |
+| PUT | `/api/rooms/:name/delivery-mode` | Set delivery mode |
+| PUT | `/api/rooms/:name/mute` | Mute/unmute agent |
+| POST | `/api/rooms/:name/deliver-to` | Targeted delivery |
+| PUT | `/api/rooms/:name/staleness/pause` | Pause/resume staleness |
+| POST/GET | `/api/rooms/:name/flows` | Flow CRUD |
+| POST | `/api/rooms/:name/flows/start` | Start a flow |
+| GET/POST/PATCH/DELETE | `/api/agents/:name` | Agent CRUD |
+| POST | `/api/messages` | Post message |
+
+### WebSocket Protocol
+
+Connect: `ws://localhost:3000/ws?name=YourName`
 
 ## Docker
 
 ```bash
-# Build
 docker build -t samsinn .
-
-# Run (requires Ollama accessible from container)
 docker run -p 3000:3000 -e OLLAMA_URL=http://host.docker.internal:11434 samsinn
 ```
-
-GitHub Actions automatically builds and pushes a Docker image to `ghcr.io` on every push to `main`.
 
 ## Roadmap
 
 - [x] **Phase 1** — Core: rooms, house, types, LLM provider
-- [x] **Phase 2** — Agents: AI + human agents, team, spawn, actions, DMs
-- [ ] **Phase 3** — Server + UI: HTTP server, WebSocket, browser interface
-- [ ] **Phase 4** — Attention modes, tool use framework
+- [x] **Phase 2** — Agents: AI + human, team, spawn, actions, DMs
+- [x] **Phase 3** — Server + UI: HTTP/WebSocket server, browser interface
+- [x] **Phase 4** — Tool use framework: ReAct loop, MCP integration
+- [x] **Phase 5** — Delivery modes: broadcast, targeted, staleness, flow, muting, addressing, Markdown
+- [ ] **Phase 6** — Flow editor enhancements, AI-initiated flows
 
 ## License
 

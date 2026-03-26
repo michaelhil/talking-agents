@@ -43,12 +43,14 @@ export const formatMessage = (
   agentId: string,
   resolveName: (senderId: string) => string,
 ): { role: 'user' | 'assistant'; content: string } | null => {
-  if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.type === 'pass') return null
+  if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.type === 'pass' || msg.type === 'mute') return null
+  const stepPrompt = (msg.metadata as Record<string, unknown> | undefined)?.stepPrompt as string | undefined
   if (msg.senderId === agentId) {
     return { role: 'assistant' as const, content: msg.content }
   }
   const name = resolveName(msg.senderId)
-  return { role: 'user' as const, content: `${prefix}[${name}]: ${msg.content}` }
+  const stepLine = stepPrompt ? `\n[Step instruction: ${stepPrompt}]` : ''
+  return { role: 'user' as const, content: `${prefix}[${name}]: ${msg.content}${stepLine}` }
 }
 
 // === Flush incoming buffer after evaluation ===

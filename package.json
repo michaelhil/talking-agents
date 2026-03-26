@@ -1,7 +1,7 @@
 {
   "name": "samsinn",
-  "version": "0.5.3",
-  "description": "Multi-agent room communication system with prompt hierarchy, MCP tool integration, and plain text protocol",
+  "version": "0.5.5",
+  "description": "Multi-agent room communication system with delivery modes, flows, muting, directed addressing, and Markdown rendering",
   "module": "src/index.ts",
   "type": "module",
   "scripts": {

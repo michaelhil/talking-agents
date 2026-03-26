@@ -5,6 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Talking Agents</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <style>
+    /* Prose styles for rendered Markdown inside messages */
+    .msg-prose h1 { font-size: 1.25em; font-weight: 700; margin: 0.5em 0 0.25em; }
+    .msg-prose h2 { font-size: 1.15em; font-weight: 600; margin: 0.5em 0 0.25em; }
+    .msg-prose h3 { font-size: 1.05em; font-weight: 600; margin: 0.4em 0 0.2em; }
+    .msg-prose p { margin: 0.3em 0; }
+    .msg-prose ul, .msg-prose ol { margin: 0.3em 0; padding-left: 1.5em; }
+    .msg-prose ul { list-style-type: disc; }
+    .msg-prose ol { list-style-type: decimal; }
+    .msg-prose li { margin: 0.1em 0; }
+    .msg-prose code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+    .msg-prose pre { background: #1f2937; color: #e5e7eb; padding: 0.75em; border-radius: 6px; overflow-x: auto; margin: 0.4em 0; }
+    .msg-prose pre code { background: none; padding: 0; color: inherit; }
+    .msg-prose blockquote { border-left: 3px solid #d1d5db; padding-left: 0.75em; margin: 0.4em 0; color: #6b7280; }
+    .msg-prose a { color: #3b82f6; text-decoration: underline; }
+    .msg-prose table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.9em; }
+    .msg-prose th, .msg-prose td { border: 1px solid #d1d5db; padding: 0.25em 0.5em; }
+    .msg-prose th { background: #f3f4f6; font-weight: 600; }
+    .msg-prose strong { font-weight: 600; }
+    .msg-prose em { font-style: italic; }
+  </style>
   <style>
     .msg-system { color: #6b7280; font-style: italic; }
     .msg-pass { color: #9ca3af; font-style: italic; font-size: 0.75rem; }
@@ -17,6 +40,10 @@
     .typing-indicator { animation: pulse 1.5s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
     #messages { scroll-behavior: smooth; }
+    .mute-btn { cursor: pointer; font-size: 11px; padding: 1px 5px; border-radius: 3px; border: 1px solid #d1d5db; }
+    .mute-btn:hover { background: #fee2e2; border-color: #fca5a5; }
+    .mute-btn.muted { background: #fecaca; color: #991b1b; border-color: #fca5a5; }
+    .agent-muted { opacity: 0.5; }
   </style>
 </head>
 <body class="bg-gray-50 h-screen flex flex-col">
@@ -48,8 +75,14 @@
         <div class="flex items-center gap-2">
           <div id="room-name" class="font-medium text-gray-800">Select a room</div>
           <button id="btn-room-prompt" class="prompt-icon" title="Room Prompt">R</button>
+          <select id="mode-selector" class="ml-auto text-xs border rounded px-2 py-1 bg-gray-50">
+            <option value="broadcast">Broadcast</option>
+            <option value="targeted">Targeted</option>
+            <option value="staleness">Staleness</option>
+          </select>
         </div>
         <div id="room-description" class="text-xs text-gray-500"></div>
+        <div id="room-mode-info" class="text-xs text-gray-400 h-4"></div>
         <div id="typing-indicators" class="text-xs text-blue-500 h-4"></div>
       </div>
 
@@ -61,7 +94,11 @@
         <input id="chat-input" type="text" placeholder="Type a message..."
                class="flex-1 px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
                autocomplete="off" disabled>
-        <button type="submit" class="px-4 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50" disabled>Send</button>
+        <button type="submit" id="btn-send" class="px-4 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50" disabled>Send</button>
+        <button type="button" id="btn-send-to" class="px-3 py-2 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300 hidden" title="Send to specific agents">Send to...</button>
+        <select id="flow-selector" class="text-xs border rounded px-2 py-1 bg-gray-50 hidden">
+          <option value="">Flow...</option>
+        </select>
       </form>
     </section>
 

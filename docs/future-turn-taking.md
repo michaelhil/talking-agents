@@ -280,11 +280,36 @@ You can address multiple agents: "[[Analyst-1]] [[Researcher-2]] compare notes."
 The addressed agent(s) will respond next. Other agents will see your message as context later.
 ```
 
-## Open Questions
+## Markdown Compatibility
 
-- How to handle tool calls within a turn? (Agent uses tools before responding — should be transparent, just takes longer)
+LLM agents produce Markdown in their responses so the UI can render rich formatting. Our special syntaxes do not conflict with standard Markdown:
+
+- **`[[AgentName]]`** — not standard Markdown. Double brackets are wiki-link syntax (Obsidian/Notion) but not part of any Markdown spec a renderer would act on.
+- **`::PASS::` / `::TOOL::`** — not standard Markdown. Some extended flavors use `:::` for containers but `::TEXT::` is unused.
+
+### Edge Case: Special Syntax Inside Code Blocks
+
+An LLM might write Markdown code blocks containing our syntax literally, e.g. `` `[[example]]` `` or a fenced block with `::PASS::`. To prevent false matches:
+
+- **`::PASS::` / `::TOOL::`** — already parsed only at the start of the raw LLM response (before any message is created). No risk of false match inside message content.
+- **`[[AgentName]]`** — parsed from message content, so code blocks could produce false matches. **Mitigation: validate parsed names against the room's current member list.** If `[[addressing]]` doesn't match any known agent name, it's ignored. No Markdown-aware parsing needed — just check against real names.
+
+## Implementation Status (v0.5.5)
+
+All features in this document have been implemented:
+
+- **Delivery modes**: broadcast, targeted, staleness, flow — unified in Room.post() with delivery-modes.ts extraction
+- **Staleness turn-taking**: fully working with pause/resume, participation toggles, currentTurn tracking
+- **Flows**: CRUD, execution, step prompts via metadata, loop support, auto-switch to targeted on completion
+- **Muting**: per-agent per-room, mute/unmute system messages in history, muted agents skipped in all modes
+- **`[[AgentName]]` addressing**: works in all modes, validated against room members
+- **Markdown**: marked + DOMPurify in UI, prose styles, LLMs told they can use Markdown
+- **UI**: mode selector dropdown, mute buttons, targeted send modal, flow editor modal, flow selector
+- **API**: full REST + WebSocket support for all features
+
+## Remaining Open Questions
+
 - Timeout: what if the agent with the floor takes too long or crashes? Need a configurable timeout that auto-skips
 - Should there be a max-rounds limit to prevent infinite loops of passes?
-- How does TT interact with DMs? (Probably doesn't — DMs are always 1:1)
-- When TT is toggled on mid-conversation, how to handle agents that are already generating?
-- In non-TT mode with `[[Agent]]`, should non-addressed agents still receive the message with a flag indicating "not for you" so they can update context? Or just let them pick it up from history on their next delivery?
+- AI-initiated flows: agents creating and triggering flows via tools (data model supports it, tools not yet created)
+- Flow editor drag-and-drop reordering (currently uses ▲/▼ buttons)

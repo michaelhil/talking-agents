@@ -9,7 +9,7 @@
 
 // === Message — the fundamental unit of communication ===
 
-export type MessageType = 'chat' | 'join' | 'leave' | 'system' | 'room_summary' | 'pass'
+export type MessageType = 'chat' | 'join' | 'leave' | 'system' | 'room_summary' | 'pass' | 'mute'
 
 export interface Message {
   readonly id: string
@@ -60,16 +60,45 @@ export type PostParams = Omit<Message, 'id' | 'roomId' | 'timestamp' | 'recipien
 
 export type DeliverFn = (agentId: string, message: Message, history: ReadonlyArray<Message>) => void
 
-// === Turn-Taking — room-controlled sequential delivery ===
+// === Delivery Modes — room has exactly one active mode ===
+// [[AgentName]] addressing and muting work as universal overrides in all modes.
 
-export interface TurnTakingState {
-  readonly enabled: boolean
+export type DeliveryMode = 'broadcast' | 'targeted' | 'staleness' | 'flow'
+
+// --- Staleness state (active when mode === 'staleness') ---
+
+export interface StalenessState {
   readonly paused: boolean
   readonly participating: ReadonlySet<string>  // agent IDs in rotation
   readonly currentTurn?: string                // agent ID with the floor
 }
 
+// --- Flow types ---
+
+export interface FlowStep {
+  readonly agentName: string       // human-readable name (resolved at execution time)
+  readonly stepPrompt?: string     // per-step instruction for this agent
+}
+
+export interface Flow {
+  readonly id: string              // crypto.randomUUID()
+  readonly name: string
+  readonly steps: ReadonlyArray<FlowStep>
+  readonly loop: boolean           // repeat or stop after one pass
+}
+
+export interface FlowExecution {
+  readonly flow: Flow
+  readonly triggerMessageId: string
+  stepIndex: number
+  active: boolean
+}
+
+// --- Room event callbacks ---
+
+export type OnDeliveryModeChanged = (roomId: string, mode: DeliveryMode) => void
 export type OnTurnChanged = (roomId: string, agentId?: string, waitingForHuman?: boolean) => void
+export type OnFlowEvent = (roomId: string, event: 'started' | 'step' | 'completed' | 'cancelled', detail?: Record<string, unknown>) => void
 
 // === Room — self-contained component: stores messages and delivers to members ===
 
@@ -83,10 +112,31 @@ export interface Room {
   readonly hasMember: (id: string) => boolean
   readonly getMessageCount: () => number
   readonly setRoomPrompt: (prompt: string) => void
-  readonly turnTaking: TurnTakingState
-  readonly setTurnTaking: (enabled: boolean) => void
-  readonly setTurnTakingPaused: (paused: boolean) => void
+
+  // Delivery mode
+  readonly deliveryMode: DeliveryMode
+  readonly setDeliveryMode: (mode: Exclude<DeliveryMode, 'flow'>) => void
+
+  // Muting — universal, mode-independent
+  readonly setMuted: (agentId: string, muted: boolean) => void
+  readonly isMuted: (agentId: string) => boolean
+  readonly getMutedIds: () => ReadonlySet<string>
+
+  // Targeted delivery (for targeted mode)
+  readonly deliverMessageTo: (messageId: string, agentIds: ReadonlyArray<string>) => void
+
+  // Staleness controls (active when mode === 'staleness')
+  readonly staleness: StalenessState
+  readonly setStalenessPaused: (paused: boolean) => void
   readonly setParticipating: (agentId: string, participating: boolean) => void
+
+  // Flow management
+  readonly addFlow: (config: Omit<Flow, 'id'>) => Flow
+  readonly removeFlow: (flowId: string) => boolean
+  readonly getFlows: () => ReadonlyArray<Flow>
+  readonly startFlow: (flowId: string) => void
+  readonly cancelFlow: () => void
+  readonly flowExecution: FlowExecution | undefined
 }
 
 // === CreateResult — returned when name uniqueness is enforced ===
@@ -281,9 +331,20 @@ export type WSInbound =
   | { readonly type: 'create_agent'; readonly config: AIAgentConfig }
   | { readonly type: 'remove_agent'; readonly name: string }
   | { readonly type: 'update_agent'; readonly name: string; readonly systemPrompt: string }
-  | { readonly type: 'set_turn_taking'; readonly roomName: string; readonly enabled: boolean }
-  | { readonly type: 'set_turn_taking_paused'; readonly roomName: string; readonly paused: boolean }
+  // Delivery mode
+  | { readonly type: 'set_delivery_mode'; readonly roomName: string; readonly mode: 'broadcast' | 'targeted' | 'staleness' }
+  // Muting
+  | { readonly type: 'set_muted'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
+  // Targeted delivery
+  | { readonly type: 'deliver_to'; readonly roomName: string; readonly messageId: string; readonly agentNames: ReadonlyArray<string> }
+  // Staleness controls
+  | { readonly type: 'set_staleness_paused'; readonly roomName: string; readonly paused: boolean }
   | { readonly type: 'set_participating'; readonly roomName: string; readonly agentName: string; readonly participating: boolean }
+  // Flow management
+  | { readonly type: 'add_flow'; readonly roomName: string; readonly name: string; readonly steps: ReadonlyArray<FlowStep>; readonly loop?: boolean }
+  | { readonly type: 'remove_flow'; readonly roomName: string; readonly flowId: string }
+  | { readonly type: 'start_flow'; readonly roomName: string; readonly flowId: string; readonly content: string }
+  | { readonly type: 'cancel_flow'; readonly roomName: string }
 
 export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
@@ -293,8 +354,10 @@ export type WSOutbound =
   | { readonly type: 'agent_removed'; readonly agentName: string }
   | { readonly type: 'snapshot'; readonly rooms: ReadonlyArray<RoomProfile>; readonly agents: ReadonlyArray<AgentProfile>; readonly agentId: string; readonly sessionToken?: string }
   | { readonly type: 'error'; readonly message: string }
-  | { readonly type: 'turn_taking_changed'; readonly roomName: string; readonly enabled: boolean; readonly paused: boolean }
+  | { readonly type: 'delivery_mode_changed'; readonly roomName: string; readonly mode: DeliveryMode }
+  | { readonly type: 'mute_changed'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
   | { readonly type: 'turn_changed'; readonly roomName: string; readonly agentName?: string; readonly waitingForHuman?: boolean }
+  | { readonly type: 'flow_event'; readonly roomName: string; readonly event: 'started' | 'step' | 'completed' | 'cancelled'; readonly detail?: Record<string, unknown> }
 
 // === System Constants ===
 

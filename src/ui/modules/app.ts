@@ -12,6 +12,8 @@ import {
   renderMessage,
   renderTypingIndicators,
   openPromptEditor,
+  openTargetedSendModal,
+  openFlowEditorModal,
   type UIMessage,
   type RoomProfile,
   type AgentInfo,
@@ -27,6 +29,10 @@ type WSOutbound =
   | { type: 'agent_joined'; agent: AgentInfo }
   | { type: 'agent_removed'; agentName: string }
   | { type: 'error'; message: string }
+  | { type: 'delivery_mode_changed'; roomName: string; mode: string }
+  | { type: 'mute_changed'; roomName: string; agentName: string; muted: boolean }
+  | { type: 'turn_changed'; roomName: string; agentName?: string; waitingForHuman?: boolean }
+  | { type: 'flow_event'; roomName: string; event: string; detail?: Record<string, unknown> }
 
 // === State ===
 
@@ -34,10 +40,16 @@ let client: WSClient | null = null
 let myAgentId = ''
 let sessionToken = localStorage.getItem('ta_session') ?? ''
 let selectedRoomId = ''
+let currentDeliveryMode = 'broadcast'
 const rooms = new Map<string, RoomProfile>()
 const agents = new Map<string, AgentInfo>()
 const roomMessages = new Map<string, UIMessage[]>()
 const agentStates = new Map<string, { state: string; context?: string }>()
+const mutedAgents = new Set<string>()  // agent names that are muted in current room
+
+// Flow state per room
+interface FlowInfo { id: string; name: string; steps: Array<{ agentName: string; stepPrompt?: string }>; loop: boolean }
+const roomFlows = new Map<string, FlowInfo[]>()  // roomName → flows
 
 // === DOM refs ===
 
@@ -51,6 +63,10 @@ const roomName = $('#room-name') as HTMLElement
 const roomDescription = $('#room-description') as HTMLElement
 const typingIndicators = $('#typing-indicators') as HTMLElement
 const connectionStatus = $('#connection-status') as HTMLElement
+const modeSelector = $('#mode-selector') as HTMLSelectElement
+const roomModeInfo = $('#room-mode-info') as HTMLElement
+const btnSendTo = $('#btn-send-to') as HTMLButtonElement
+const flowSelector = $('#flow-selector') as HTMLSelectElement
 const nameModal = $('#name-modal') as HTMLDialogElement
 const nameForm = $('#name-form') as HTMLFormElement
 const roomModal = $('#room-modal') as HTMLDialogElement
@@ -65,10 +81,60 @@ const send = (data: unknown) => client?.send(data)
 const refreshRooms = () => renderRooms(roomList, rooms, selectedRoomId, selectRoom)
 
 const refreshAgents = () => renderAgents(
-  agentList, agents, agentStates,
+  agentList, agents, agentStates, mutedAgents,
   (name) => openPromptEditor(name, send),
   (id, name) => { send({ type: 'remove_agent', name }); agents.delete(id); refreshAgents() },
+  (name, muted) => {
+    const room = rooms.get(selectedRoomId)
+    if (room) send({ type: 'set_muted', roomName: room.name, agentName: name, muted })
+  },
 )
+
+const refreshFlowSelector = (): void => {
+  flowSelector.innerHTML = '<option value="">Flow...</option><option value="__create__">+ Create Flow</option>'
+  const room = rooms.get(selectedRoomId)
+  if (!room) return
+  const flows = roomFlows.get(room.name) ?? []
+  for (const flow of flows) {
+    const opt = document.createElement('option')
+    opt.value = flow.id
+    opt.textContent = `▶ ${flow.name}${flow.loop ? ' ↻' : ''}`
+    flowSelector.appendChild(opt)
+  }
+  // Show flow selector if there are flows or we have agents
+  flowSelector.classList.toggle('hidden', agents.size <= 1)
+}
+
+const fetchFlowsForRoom = async (roomName: string): Promise<void> => {
+  try {
+    const res = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/flows`)
+    if (!res.ok) return
+    const flows = await res.json() as FlowInfo[]
+    roomFlows.set(roomName, flows)
+    refreshFlowSelector()
+  } catch { /* ignore */ }
+}
+
+const updateModeUI = () => {
+  modeSelector.value = currentDeliveryMode
+  const isTargeted = currentDeliveryMode === 'targeted'
+  const isFlow = currentDeliveryMode === 'flow'
+  btnSendTo.classList.toggle('hidden', !isTargeted)
+
+  if (isFlow) {
+    roomModeInfo.textContent = 'Flow active'
+    roomModeInfo.className = 'text-xs text-purple-500 h-4'
+  } else if (isTargeted) {
+    roomModeInfo.textContent = 'Targeted mode — select agents to send to'
+    roomModeInfo.className = 'text-xs text-orange-500 h-4'
+  } else if (currentDeliveryMode === 'staleness') {
+    roomModeInfo.textContent = 'Staleness turn-taking active'
+    roomModeInfo.className = 'text-xs text-blue-500 h-4'
+  } else {
+    roomModeInfo.textContent = ''
+    roomModeInfo.className = 'text-xs text-gray-400 h-4'
+  }
+}
 
 const refreshTyping = () => renderTypingIndicators(typingIndicators, agentStates, selectedRoomId)
 
@@ -82,6 +148,8 @@ const selectRoom = (roomId: string) => {
   roomName.textContent = room.name
   roomDescription.textContent = room.description ?? ''
   refreshRooms()
+  updateModeUI()
+  fetchFlowsForRoom(room.name)
 
   messagesDiv.innerHTML = ''
   const cached = roomMessages.get(roomId)
@@ -167,6 +235,41 @@ const handleMessage = (raw: unknown) => {
       refreshAgents(); refreshTyping()
       break
     }
+    case 'delivery_mode_changed': {
+      currentDeliveryMode = msg.mode
+      updateModeUI()
+      break
+    }
+    case 'mute_changed': {
+      if (msg.muted) {
+        mutedAgents.add(msg.agentName)
+      } else {
+        mutedAgents.delete(msg.agentName)
+      }
+      refreshAgents()
+      break
+    }
+    case 'turn_changed': {
+      if (msg.agentName) {
+        roomModeInfo.textContent = `Turn: ${msg.agentName}${msg.waitingForHuman ? ' (waiting for input)' : ''}`
+        roomModeInfo.className = 'text-xs text-blue-500 h-4 font-medium'
+      }
+      break
+    }
+    case 'flow_event': {
+      if (msg.event === 'completed') {
+        currentDeliveryMode = 'targeted'
+        updateModeUI()
+      } else if (msg.event === 'step') {
+        const detail = msg.detail as Record<string, unknown> | undefined
+        roomModeInfo.textContent = `Flow step ${(detail?.stepIndex as number ?? 0) + 1}: ${detail?.agentName ?? '...'}`
+        roomModeInfo.className = 'text-xs text-purple-500 h-4 font-medium'
+      } else if (msg.event === 'cancelled') {
+        currentDeliveryMode = 'targeted'
+        updateModeUI()
+      }
+      break
+    }
     case 'error': {
       console.error('Server error:', msg.message)
       break
@@ -193,12 +296,94 @@ chatForm.onsubmit = (e) => {
   if (!content || !selectedRoomId) return
   const room = rooms.get(selectedRoomId)
   if (!room) return
+
+  // If a flow is selected, start it with this message
+  const selectedFlow = flowSelector.value
+  if (selectedFlow && selectedFlow !== '__create__') {
+    send({ type: 'start_flow', roomName: room.name, flowId: selectedFlow, content })
+    chatInput.value = ''
+    flowSelector.value = ''
+    chatInput.placeholder = 'Type a message...'
+    return
+  }
+
   send({ type: 'post_message', target: { rooms: [room.name] }, content })
   chatInput.value = ''
 }
 
 document.getElementById('btn-create-room')!.onclick = () => roomModal.showModal()
 document.getElementById('btn-create-agent')!.onclick = () => agentModal.showModal()
+
+// Mode selector
+modeSelector.onchange = () => {
+  const room = rooms.get(selectedRoomId)
+  if (!room) return
+  send({ type: 'set_delivery_mode', roomName: room.name, mode: modeSelector.value })
+}
+
+// Flow selector
+flowSelector.onchange = () => {
+  const room = rooms.get(selectedRoomId)
+  if (!room) return
+  const val = flowSelector.value
+
+  if (val === '__create__') {
+    flowSelector.value = ''
+    openFlowEditorModal(agents, myAgentId, (name, steps, loop) => {
+      send({ type: 'add_flow', roomName: room.name, name, steps, loop })
+      // Refresh flows after a short delay to pick up the new flow
+      setTimeout(() => fetchFlowsForRoom(room.name), 200)
+    })
+    return
+  }
+
+  if (val) {
+    const content = chatInput.value.trim()
+    if (!content) {
+      chatInput.placeholder = 'Type a message to start the flow...'
+      chatInput.focus()
+      flowSelector.value = val // keep selection
+      return
+    }
+    // Start the flow with the message
+    send({ type: 'start_flow', roomName: room.name, flowId: val, content })
+    chatInput.value = ''
+    flowSelector.value = ''
+  }
+}
+
+// Targeted "Send to..." button
+btnSendTo.onclick = () => {
+  const content = chatInput.value.trim()
+  if (!content || !selectedRoomId) return
+  const room = rooms.get(selectedRoomId)
+  if (!room) return
+
+  // First post the message, then open the modal to select who to deliver to
+  openTargetedSendModal(agents, mutedAgents, myAgentId, (agentNames) => {
+    // Post the message to the room first
+    send({ type: 'post_message', target: { rooms: [room.name] }, content })
+    // Then after a short delay, deliver to selected agents
+    // The message will be the latest one — we need its ID
+    // Simpler approach: use [[AgentName]] addressing in the content
+    // Actually, targeted mode stores but doesn't deliver. We need to use deliver_to.
+    // But we don't have the message ID yet. Let's use a different approach:
+    // Post via targeted mode (stores), then deliver_to via the last message.
+    // For now, use the HTTP API to get the room messages after posting.
+    setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/rooms/${encodeURIComponent(room.name)}?limit=1`)
+        if (!res.ok) return
+        const data = await res.json() as { messages: Array<{ id: string }> }
+        const lastMsg = data.messages[data.messages.length - 1]
+        if (lastMsg) {
+          send({ type: 'deliver_to', roomName: room.name, messageId: lastMsg.id, agentNames })
+        }
+      } catch { /* ignore */ }
+    }, 100)
+    chatInput.value = ''
+  })
+}
 
 roomForm.onsubmit = (e) => {
   e.preventDefault()

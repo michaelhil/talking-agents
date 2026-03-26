@@ -164,34 +164,51 @@ export const handleWSMessage = async (
         }
         break
       }
-      case 'set_turn_taking': {
+      case 'set_delivery_mode': {
         const room = system.house.getRoom(msg.roomName)
         if (!room) {
           ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
           break
         }
-        room.setTurnTaking(msg.enabled)
-        wsManager.broadcast({
-          type: 'turn_taking_changed',
-          roomName: room.profile.name,
-          enabled: room.turnTaking.enabled,
-          paused: room.turnTaking.paused,
-        })
+        room.setDeliveryMode(msg.mode)
+        // delivery_mode_changed is broadcast via onDeliveryModeChanged callback
         break
       }
-      case 'set_turn_taking_paused': {
+      case 'set_muted': {
+        const room = system.house.getRoom(msg.roomName)
+        const agent = system.team.getAgent(msg.agentName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        if (!agent) {
+          ws.send(JSON.stringify({ type: 'error', message: `Agent "${msg.agentName}" not found` } satisfies WSOutbound))
+          break
+        }
+        room.setMuted(agent.id, msg.muted)
+        wsManager.broadcast({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: msg.muted })
+        break
+      }
+      case 'deliver_to': {
         const room = system.house.getRoom(msg.roomName)
         if (!room) {
           ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
           break
         }
-        room.setTurnTakingPaused(msg.paused)
-        wsManager.broadcast({
-          type: 'turn_taking_changed',
-          roomName: room.profile.name,
-          enabled: room.turnTaking.enabled,
-          paused: room.turnTaking.paused,
-        })
+        const agentIds = msg.agentNames
+          .map(name => system.team.getAgent(name))
+          .filter((a): a is NonNullable<typeof a> => a !== undefined)
+          .map(a => a.id)
+        room.deliverMessageTo(msg.messageId, agentIds)
+        break
+      }
+      case 'set_staleness_paused': {
+        const room = system.house.getRoom(msg.roomName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        room.setStalenessPaused(msg.paused)
         break
       }
       case 'set_participating': {
@@ -206,12 +223,50 @@ export const handleWSMessage = async (
           break
         }
         room.setParticipating(agent.id, msg.participating)
-        wsManager.broadcast({
-          type: 'turn_taking_changed',
-          roomName: room.profile.name,
-          enabled: room.turnTaking.enabled,
-          paused: room.turnTaking.paused,
+        break
+      }
+      case 'add_flow': {
+        const room = system.house.getRoom(msg.roomName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        const flow = room.addFlow({ name: msg.name, steps: msg.steps, loop: msg.loop ?? false })
+        ws.send(JSON.stringify({ type: 'flow_event', roomName: room.profile.name, event: 'started', detail: { flowId: flow.id, flowName: flow.name } } satisfies WSOutbound))
+        break
+      }
+      case 'remove_flow': {
+        const room = system.house.getRoom(msg.roomName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        room.removeFlow(msg.flowId)
+        break
+      }
+      case 'start_flow': {
+        const room = system.house.getRoom(msg.roomName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        // Post the human's message first, then start the flow
+        room.post({
+          senderId: session.agent.id,
+          senderName: session.agent.name,
+          content: msg.content,
+          type: 'chat',
         })
+        room.startFlow(msg.flowId)
+        break
+      }
+      case 'cancel_flow': {
+        const room = system.house.getRoom(msg.roomName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        room.cancelFlow()
         break
       }
       default: {

@@ -6,19 +6,20 @@
 // createRoomSafe auto-renames on collision and returns CreateResult.
 // ============================================================================
 
-import type { CreateResult, DeliverFn, House, OnTurnChanged, Room, RoomConfig, RoomProfile } from './types.ts'
-import { createRoom } from './room.ts'
+import type { CreateResult, DeliverFn, House, OnDeliveryModeChanged, OnFlowEvent, OnTurnChanged, Room, RoomConfig, RoomProfile } from './types.ts'
+import { createRoom, type RoomCallbacks } from './room.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
 const DEFAULT_HOUSE_PROMPT = `You are part of Talking Agents, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use ::PASS:: only when the conversation genuinely does not need your input.`
 
 const DEFAULT_RESPONSE_FORMAT = `- By default, just write your message as natural text. Your response IS the message other participants will read.
+- You may use Markdown formatting (headings, bold, lists, code blocks, etc.).
 - To stay silent, start your response with exactly ::PASS:: followed by a brief reason.
   Example: ::PASS:: This question was already answered by someone else
 - To direct a message to a specific agent, use [[AgentName]] in your response. The addressed agent(s) will respond next. Other agents will see your message as context later.
   Example: [[Analyst-1]] can you elaborate on that point?
   You can address multiple agents: [[Analyst-1]] [[Researcher-2]] compare notes.
-- Never wrap your response in JSON, code blocks, or data structures.`
+- Never wrap your response in JSON or data structures.`
 
 const DEFAULT_RESPONSE_FORMAT_TOOLS = `\n- To use a tool, write ONLY ::TOOL:: followed by the tool name on its own line. Do not write anything else — just the tool call. Add JSON arguments after the name if needed.
   Example: ::TOOL:: get_time
@@ -28,7 +29,7 @@ const DEFAULT_RESPONSE_FORMAT_TOOLS = `\n- To use a tool, write ONLY ::TOOL:: fo
 
 export { DEFAULT_RESPONSE_FORMAT_TOOLS }
 
-export const createHouse = (deliver?: DeliverFn, onTurnChanged?: OnTurnChanged): House => {
+export const createHouse = (deliver?: DeliverFn, onTurnChanged?: OnTurnChanged, onDeliveryModeChanged?: OnDeliveryModeChanged, onFlowEvent?: OnFlowEvent): House => {
   const rooms = new Map<string, Room>()
   let housePrompt = DEFAULT_HOUSE_PROMPT
   let responseFormat = DEFAULT_RESPONSE_FORMAT
@@ -52,7 +53,8 @@ export const createHouse = (deliver?: DeliverFn, onTurnChanged?: OnTurnChanged):
       createdBy: config.createdBy,
       createdAt: Date.now(),
     }
-    const room = createRoom(profile, deliver, onTurnChanged)
+    const roomCallbacks: RoomCallbacks = { deliver, onTurnChanged, onDeliveryModeChanged, onFlowEvent }
+    const room = createRoom(profile, roomCallbacks)
     rooms.set(id, room)
     return room
   }

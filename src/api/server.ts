@@ -60,7 +60,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
   const wsManager = createWSManager(system)
 
-  // Wire turn-taking notifications to WebSocket broadcast
+  // Wire room event callbacks to WebSocket broadcast
   system.setOnTurnChanged((roomId, agentId, waitingForHuman) => {
     const room = system.house.getRoom(roomId)
     const agent = agentId ? system.team.getAgent(agentId) : undefined
@@ -69,6 +69,25 @@ export const createServer = (system: System, config?: ServerConfig) => {
       roomName: room?.profile.name ?? roomId,
       agentName: agent?.name,
       waitingForHuman,
+    })
+  })
+
+  system.setOnDeliveryModeChanged((roomId, mode) => {
+    const room = system.house.getRoom(roomId)
+    wsManager.broadcast({
+      type: 'delivery_mode_changed',
+      roomName: room?.profile.name ?? roomId,
+      mode,
+    })
+  })
+
+  system.setOnFlowEvent((roomId, event, detail) => {
+    const room = system.house.getRoom(roomId)
+    wsManager.broadcast({
+      type: 'flow_event',
+      roomName: room?.profile.name ?? roomId,
+      event,
+      detail,
     })
   })
 

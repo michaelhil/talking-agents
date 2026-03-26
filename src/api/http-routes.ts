@@ -252,54 +252,120 @@ export const handleAPI = async (
     return json(messages, 201)
   }
 
-  // PUT /api/rooms/:name/turn-taking
-  const ttRoomName = extractParam(pathname, '/api/rooms/:name/turn-taking')
-  if (method === 'PUT' && ttRoomName) {
-    const room = system.house.getRoom(ttRoomName)
+  // PUT /api/rooms/:name/delivery-mode
+  const dmRoomName = extractParam(pathname, '/api/rooms/:name/delivery-mode')
+  if (method === 'PUT' && dmRoomName) {
+    const room = system.house.getRoom(dmRoomName)
     if (!room) return notFound('Room')
     const body = await parseBody(req)
-    room.setTurnTaking(body.enabled as boolean)
-    broadcast({
-      type: 'turn_taking_changed',
-      roomName: room.profile.name,
-      enabled: room.turnTaking.enabled,
-      paused: room.turnTaking.paused,
-    })
-    return json({ enabled: room.turnTaking.enabled, paused: room.turnTaking.paused })
+    const newMode = body.mode as 'broadcast' | 'targeted' | 'staleness'
+    if (!['broadcast', 'targeted', 'staleness'].includes(newMode)) {
+      return errorResponse('mode must be broadcast, targeted, or staleness')
+    }
+    room.setDeliveryMode(newMode)
+    return json({ mode: room.deliveryMode })
   }
 
-  // PUT /api/rooms/:name/turn-taking/pause
-  const ttPauseRoom = extractParam(pathname, '/api/rooms/:name/turn-taking/pause')
-  if (method === 'PUT' && ttPauseRoom) {
-    const room = system.house.getRoom(ttPauseRoom)
+  // PUT /api/rooms/:name/mute
+  const muteRoomName = extractParam(pathname, '/api/rooms/:name/mute')
+  if (method === 'PUT' && muteRoomName) {
+    const room = system.house.getRoom(muteRoomName)
     if (!room) return notFound('Room')
     const body = await parseBody(req)
-    room.setTurnTakingPaused(body.paused as boolean)
-    broadcast({
-      type: 'turn_taking_changed',
-      roomName: room.profile.name,
-      enabled: room.turnTaking.enabled,
-      paused: room.turnTaking.paused,
-    })
-    return json({ enabled: room.turnTaking.enabled, paused: room.turnTaking.paused })
+    const agent = system.team.getAgent(body.agentName as string)
+    if (!agent) return notFound('Agent')
+    room.setMuted(agent.id, body.muted as boolean)
+    broadcast({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: body.muted as boolean })
+    return json({ muted: room.isMuted(agent.id) })
   }
 
-  // PUT /api/rooms/:name/turn-taking/participating
-  const ttPartRoom = extractParam(pathname, '/api/rooms/:name/turn-taking/participating')
-  if (method === 'PUT' && ttPartRoom) {
-    const room = system.house.getRoom(ttPartRoom)
+  // POST /api/rooms/:name/deliver-to
+  const deliverToRoom = extractParam(pathname, '/api/rooms/:name/deliver-to')
+  if (method === 'POST' && deliverToRoom) {
+    const room = system.house.getRoom(deliverToRoom)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    const messageId = body.messageId as string
+    const agentNames = body.agentNames as ReadonlyArray<string>
+    if (!messageId || !agentNames?.length) return errorResponse('messageId and agentNames are required')
+    const agentIds = agentNames
+      .map(name => system.team.getAgent(name))
+      .filter((a): a is NonNullable<typeof a> => a !== undefined)
+      .map(a => a.id)
+    room.deliverMessageTo(messageId, agentIds)
+    return json({ delivered: agentIds.length })
+  }
+
+  // PUT /api/rooms/:name/staleness/pause
+  const stalenessPauseRoom = extractParam(pathname, '/api/rooms/:name/staleness/pause')
+  if (method === 'PUT' && stalenessPauseRoom) {
+    const room = system.house.getRoom(stalenessPauseRoom)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    room.setStalenessPaused(body.paused as boolean)
+    return json({ paused: room.staleness.paused })
+  }
+
+  // PUT /api/rooms/:name/staleness/participating
+  const stalenessPartRoom = extractParam(pathname, '/api/rooms/:name/staleness/participating')
+  if (method === 'PUT' && stalenessPartRoom) {
+    const room = system.house.getRoom(stalenessPartRoom)
     if (!room) return notFound('Room')
     const body = await parseBody(req)
     const agent = system.team.getAgent(body.agentName as string)
     if (!agent) return notFound('Agent')
     room.setParticipating(agent.id, body.participating as boolean)
-    broadcast({
-      type: 'turn_taking_changed',
-      roomName: room.profile.name,
-      enabled: room.turnTaking.enabled,
-      paused: room.turnTaking.paused,
+    return json({ participating: room.staleness.participating.has(agent.id) })
+  }
+
+  // POST /api/rooms/:name/flows
+  const flowsRoom = extractParam(pathname, '/api/rooms/:name/flows')
+  if (method === 'POST' && flowsRoom) {
+    const room = system.house.getRoom(flowsRoom)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    if (!body.name || !body.steps) return errorResponse('name and steps are required')
+    const flow = room.addFlow({
+      name: body.name as string,
+      steps: body.steps as Array<{ agentName: string; stepPrompt?: string }>,
+      loop: (body.loop as boolean) ?? false,
     })
-    return json({ enabled: room.turnTaking.enabled, paused: room.turnTaking.paused })
+    return json(flow, 201)
+  }
+
+  // GET /api/rooms/:name/flows
+  if (method === 'GET' && flowsRoom) {
+    const room = system.house.getRoom(flowsRoom)
+    if (!room) return notFound('Room')
+    return json(room.getFlows())
+  }
+
+  // POST /api/rooms/:name/flows/start
+  const flowStartRoom = extractParam(pathname, '/api/rooms/:name/flows/start')
+  if (method === 'POST' && flowStartRoom) {
+    const room = system.house.getRoom(flowStartRoom)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    if (!body.flowId) return errorResponse('flowId is required')
+    if (body.content && body.senderId) {
+      room.post({
+        senderId: body.senderId as string,
+        senderName: body.senderName as string | undefined,
+        content: body.content as string,
+        type: 'chat',
+      })
+    }
+    room.startFlow(body.flowId as string)
+    return json({ started: true, mode: room.deliveryMode })
+  }
+
+  // POST /api/rooms/:name/flows/cancel
+  const flowCancelRoom = extractParam(pathname, '/api/rooms/:name/flows/cancel')
+  if (method === 'POST' && flowCancelRoom) {
+    const room = system.house.getRoom(flowCancelRoom)
+    if (!room) return notFound('Room')
+    room.cancelFlow()
+    return json({ cancelled: true, mode: room.deliveryMode })
   }
 
   return null
