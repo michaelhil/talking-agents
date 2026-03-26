@@ -26,7 +26,6 @@ const createSystem = () => {
   const routeMessage = createMessageRouter(house, team, deliver)
   const intro = house.createRoom({
     name: 'Introductions',
-    description: 'All participants introduce themselves here',
     visibility: 'public',
     createdBy: SYSTEM_SENDER_ID,
   })
@@ -64,7 +63,7 @@ describe('Integration — Full message lifecycle', () => {
     // Set up human observer
     const humanInbox: Message[] = []
     const human = createHumanAgent(
-      { name: 'Alice', description: 'A researcher' },
+      { name: 'Alice' },
       (msg) => { humanInbox.push(msg) },
     )
     team.addAgent(human)
@@ -75,7 +74,7 @@ describe('Integration — Full message lifecycle', () => {
     const provider = makeRespondProvider('Hello from AI!')
     const decisions: Decision[] = []
     const agent = createAIAgent(
-      { name: 'Bot', description: 'Test bot', model: 'mock', systemPrompt: 'Be helpful.' },
+      { name: 'Bot', model: 'mock', systemPrompt: 'Be helpful.' },
       provider,
       (d) => {
         decisions.push(d)
@@ -115,13 +114,13 @@ describe('Integration — Full message lifecycle', () => {
     const { team, intro, routeMessage } = createSystem()
 
     const humanInbox: Message[] = []
-    const human = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { humanInbox.push(msg) })
+    const human = createHumanAgent({ name: 'Alice' }, (msg) => { humanInbox.push(msg) })
     team.addAgent(human)
     intro.addMember(human.id)
 
     const provider = makePassProvider('nothing to add')
     const agent = createAIAgent(
-      { name: 'Quiet', description: 'Silent bot', model: 'mock', systemPrompt: 'Stay quiet.' },
+      { name: 'Quiet', model: 'mock', systemPrompt: 'Stay quiet.' },
       provider,
       () => {}, // no-op onDecision for pass
     )
@@ -158,7 +157,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Bot', description: 'Test', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Bot', model: 'mock', systemPrompt: 'Test.' },
       provider,
       () => {},
     )
@@ -216,7 +215,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Bot', description: 'Test', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Bot', model: 'mock', systemPrompt: 'Test.' },
       provider,
       (d) => {
         if (d.response.action === 'respond') {
@@ -264,7 +263,7 @@ describe('Integration — Full message lifecycle', () => {
 
     const decisionsA: Decision[] = []
     const agentA = createAIAgent(
-      { name: 'AgentA', description: 'First agent', model: 'mock', systemPrompt: 'Respond.' },
+      { name: 'AgentA', model: 'mock', systemPrompt: 'Respond.' },
       providerA,
       (d) => {
         decisionsA.push(d)
@@ -282,7 +281,7 @@ describe('Integration — Full message lifecycle', () => {
 
     const decisionsB: Decision[] = []
     const agentB = createAIAgent(
-      { name: 'AgentB', description: 'Second agent', model: 'mock', systemPrompt: 'Acknowledge.' },
+      { name: 'AgentB', model: 'mock', systemPrompt: 'Acknowledge.' },
       providerB,
       (d) => { decisionsB.push(d) },
     )
@@ -291,7 +290,7 @@ describe('Integration — Full message lifecycle', () => {
     await agentB.join(intro)
 
     // Human triggers the conversation
-    const human = createHumanAgent({ name: 'Human', description: 'Test' }, () => {})
+    const human = createHumanAgent({ name: 'Human' }, () => {})
     team.addAgent(human)
     intro.addMember(human.id)
 
@@ -322,12 +321,12 @@ describe('Integration — Full message lifecycle', () => {
     const { team, routeMessage } = createSystem()
 
     const humanInbox: Message[] = []
-    const human = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { humanInbox.push(msg) })
+    const human = createHumanAgent({ name: 'Alice' }, (msg) => { humanInbox.push(msg) })
     team.addAgent(human)
 
     const provider = makeRespondProvider('DM received!')
     const agent = createAIAgent(
-      { name: 'Bot', description: 'DM bot', model: 'mock', systemPrompt: 'Respond to DMs.' },
+      { name: 'Bot', model: 'mock', systemPrompt: 'Respond to DMs.' },
       provider,
       (d) => {
         if (d.response.action === 'respond') {
@@ -382,7 +381,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Joiner', description: 'Late joiner', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Joiner', model: 'mock', systemPrompt: 'Test.' },
       provider,
       () => {},
     )
@@ -423,7 +422,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Observer', description: 'Watches', model: 'mock', systemPrompt: 'Observe.' },
+      { name: 'Observer', model: 'mock', systemPrompt: 'Observe.' },
       provider,
       () => {},
     )
@@ -475,7 +474,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Multi', description: 'In two rooms', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Multi', model: 'mock', systemPrompt: 'Test.' },
       provider,
       () => {},
     )
@@ -526,7 +525,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Bot', description: 'Test', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Bot', model: 'mock', systemPrompt: 'Test.' },
       provider,
       () => {},
     )
@@ -565,7 +564,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'StateBot', description: 'Test', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'StateBot', model: 'mock', systemPrompt: 'Test.' },
       provider,
       () => {},
     )
@@ -599,12 +598,12 @@ describe('Integration — spawnAIAgent full wiring', () => {
     const { house, team, intro, routeMessage } = createSystem()
 
     const humanInbox: Message[] = []
-    const human = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { humanInbox.push(msg) })
+    const human = createHumanAgent({ name: 'Alice' }, (msg) => { humanInbox.push(msg) })
     await spawnHumanAgent(human, house, team, routeMessage, [intro])
 
     const provider = makeRespondProvider('Spawned response!')
     const agent = await spawnAIAgent(
-      { name: 'Spawned', description: 'Auto-wired', model: 'mock', systemPrompt: 'Respond.' },
+      { name: 'Spawned', model: 'mock', systemPrompt: 'Respond.' },
       provider, house, team, routeMessage,
     )
 
@@ -629,7 +628,7 @@ describe('Integration — spawnAIAgent full wiring', () => {
 
     const provider = makePassProvider()
     const agent = await spawnAIAgent(
-      { name: 'Joiner', description: 'Joins rooms', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Joiner', model: 'mock', systemPrompt: 'Test.' },
       provider, house, team, routeMessage,
     )
 
@@ -674,11 +673,11 @@ describe('Integration — spawnAIAgent full wiring', () => {
     }
 
     const humanInbox: Message[] = []
-    const human = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { humanInbox.push(msg) })
+    const human = createHumanAgent({ name: 'Alice' }, (msg) => { humanInbox.push(msg) })
     await spawnHumanAgent(human, house, team, routeMessage, [intro])
 
     const agent = await spawnAIAgent(
-      { name: 'ToolBot', description: 'Uses tools', model: 'mock', systemPrompt: 'Use tools.', tools: ['get_time'] },
+      { name: 'ToolBot', model: 'mock', systemPrompt: 'Use tools.', tools: ['get_time'] },
       provider, house, team, routeMessage, toolRegistry,
     )
 
@@ -704,13 +703,13 @@ describe('Integration — spawnAIAgent full wiring', () => {
     const room = house.createRoom({ name: 'NewRoom', visibility: 'private', createdBy: SYSTEM_SENDER_ID })
 
     const humanInbox: Message[] = []
-    const human = createHumanAgent({ name: 'Alice', description: 'A person' }, (msg) => { humanInbox.push(msg) })
+    const human = createHumanAgent({ name: 'Alice' }, (msg) => { humanInbox.push(msg) })
     team.addAgent(human)
     room.addMember(human.id)
     await human.join(room)
 
     const bot = createAIAgent(
-      { name: 'Bot', description: 'Helper', model: 'mock', systemPrompt: 'Help.' },
+      { name: 'Bot', model: 'mock', systemPrompt: 'Help.' },
       makePassProvider(),
       () => {},
     )
@@ -734,13 +733,13 @@ describe('Integration — Room + Team + routeMessage', () => {
 
     const aliceInbox: Message[] = []
     const alice = createHumanAgent(
-      { name: 'Alice', description: 'A researcher' },
+      { name: 'Alice' },
       (msg) => { aliceInbox.push(msg) },
     )
 
     const bobInbox: Message[] = []
     const bob = createHumanAgent(
-      { name: 'Bob', description: 'An engineer' },
+      { name: 'Bob' },
       (msg) => { bobInbox.push(msg) },
     )
 
@@ -770,8 +769,8 @@ describe('Integration — Room + Team + routeMessage', () => {
     const aliceInbox: Message[] = []
     const bobInbox: Message[] = []
 
-    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
-    const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, (msg) => { bobInbox.push(msg) })
+    const alice = createHumanAgent({ name: 'Alice' }, (msg) => { aliceInbox.push(msg) })
+    const bob = createHumanAgent({ name: 'Bob' }, (msg) => { bobInbox.push(msg) })
 
     team.addAgent(alice)
     team.addAgent(bob)
@@ -792,14 +791,14 @@ describe('Integration — Room + Team + routeMessage', () => {
     const aliceInbox: Message[] = []
     const bobInbox: Message[] = []
 
-    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
-    const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, (msg) => { bobInbox.push(msg) })
+    const alice = createHumanAgent({ name: 'Alice' }, (msg) => { aliceInbox.push(msg) })
+    const bob = createHumanAgent({ name: 'Bob' }, (msg) => { bobInbox.push(msg) })
     team.addAgent(alice)
     team.addAgent(bob)
 
     routeMessage({ rooms: [intro.profile.id] }, { senderId: alice.id, content: '[Alice] joined', type: 'join' })
 
-    const charlie = createHumanAgent({ name: 'Charlie', description: 'Test' }, () => {})
+    const charlie = createHumanAgent({ name: 'Charlie' }, () => {})
     team.addAgent(charlie)
     routeMessage({ rooms: [intro.profile.id] }, { senderId: charlie.id, content: '[Charlie] joined', type: 'join' })
 
@@ -818,7 +817,7 @@ describe('Integration — Room + Team + routeMessage', () => {
   test('DM does not go through room — room has no record', () => {
     const { team, intro, routeMessage } = createSystem()
 
-    const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, () => {})
+    const bob = createHumanAgent({ name: 'Bob' }, () => {})
     team.addAgent(bob)
 
     routeMessage({ agents: [bob.id] }, { senderId: 'alice-temp', content: 'Secret', type: 'chat' })
@@ -830,7 +829,7 @@ describe('Integration — Room + Team + routeMessage', () => {
     const { team, routeMessage } = createSystem()
 
     const aliceInbox: Message[] = []
-    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
+    const alice = createHumanAgent({ name: 'Alice' }, (msg) => { aliceInbox.push(msg) })
     team.addAgent(alice)
 
     const msgs = routeMessage({ agents: [alice.id] }, { senderId: alice.id, content: 'Hello me', type: 'chat' })
@@ -844,11 +843,11 @@ describe('Integration — Room + Team + routeMessage', () => {
     const room2 = house.createRoom({ name: 'Room 2', visibility: 'public', createdBy: 'test' })
 
     const aliceInbox: Message[] = []
-    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, (msg) => { aliceInbox.push(msg) })
+    const alice = createHumanAgent({ name: 'Alice' }, (msg) => { aliceInbox.push(msg) })
     team.addAgent(alice)
 
-    const bob = createHumanAgent({ name: 'Bob', description: 'Test' }, () => {})
-    const charlie = createHumanAgent({ name: 'Charlie', description: 'Test' }, () => {})
+    const bob = createHumanAgent({ name: 'Bob' }, () => {})
+    const charlie = createHumanAgent({ name: 'Charlie' }, () => {})
     team.addAgent(bob)
     team.addAgent(charlie)
 
@@ -871,7 +870,7 @@ describe('Integration — Room + Team + routeMessage', () => {
     expect(house.getRoom('Planning')).toBe(room)
     expect(house.getRoom('planning')).toBe(room)
 
-    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, () => {})
+    const alice = createHumanAgent({ name: 'Alice' }, () => {})
     team.addAgent(alice)
     expect(team.getAgent('Alice')).toBe(alice)
     expect(team.getAgent('alice')).toBe(alice)
@@ -880,10 +879,10 @@ describe('Integration — Room + Team + routeMessage', () => {
   test('team name uniqueness enforced', () => {
     const { team } = createSystem()
 
-    const alice = createHumanAgent({ name: 'Alice', description: 'Test' }, () => {})
+    const alice = createHumanAgent({ name: 'Alice' }, () => {})
     team.addAgent(alice)
 
-    const alice2 = createHumanAgent({ name: 'Alice', description: 'Test 2' }, () => {})
+    const alice2 = createHumanAgent({ name: 'Alice' }, () => {})
     expect(() => team.addAgent(alice2)).toThrow('Agent name "Alice" is already taken')
   })
 })
@@ -897,7 +896,6 @@ describe('Integration — AI Agent with real Ollama', () => {
     const agent = await spawnAIAgent(
       {
         name: 'Analyst',
-        description: 'Analyzes data',
         model: FAST_MODEL,
         systemPrompt: 'You are a data analyst. Be concise.',
       },
@@ -920,7 +918,7 @@ describe('Integration — AI Agent with real Ollama', () => {
 
     const humanInbox: Message[] = []
     const human = createHumanAgent(
-      { name: 'Alice', description: 'A curious researcher' },
+      { name: 'Alice' },
       (msg) => { humanInbox.push(msg) },
     )
     await spawnHumanAgent(human, house, team, routeMessage, [intro])
@@ -928,7 +926,6 @@ describe('Integration — AI Agent with real Ollama', () => {
     const aiAgent = await spawnAIAgent(
       {
         name: 'Responder',
-        description: 'Responds to questions',
         model: FAST_MODEL,
         systemPrompt: 'You are a friendly assistant. Always respond to questions concisely. Never pass. Always target the room you are in.',
       },

@@ -1,5 +1,5 @@
 // ============================================================================
-// Talking Agents — System Factory + Entry Point
+// samsinn — System Factory + Entry Point
 //
 // createSystem() builds the full system. Can be imported without side effects.
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
@@ -68,7 +68,6 @@ export const createSystem = (ollamaUrl?: string): System => {
 
   const introRoom = house.createRoom({
     name: 'Introductions',
-    description: 'All participants introduce themselves here',
     visibility: 'public',
     createdBy: SYSTEM_SENDER_ID,
   })

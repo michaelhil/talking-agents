@@ -56,13 +56,12 @@ export const createMCPServer = (system: System): McpServer => {
     'Create a new room for agent communication',
     {
       name: z.string().describe('Room name'),
-      description: z.string().optional().describe('Room description'),
       roomPrompt: z.string().optional().describe('Instructions for agents in this room'),
       visibility: z.enum(['public', 'private']).default('public').describe('Room visibility'),
     },
-    async ({ name, description, roomPrompt, visibility }) => {
+    async ({ name, roomPrompt, visibility }) => {
       try {
-        const result = system.house.createRoomSafe({ name, description, roomPrompt, visibility, createdBy: 'mcp-client' })
+        const result = system.house.createRoomSafe({ name, roomPrompt, visibility, createdBy: 'mcp-client' })
         return textResult(result.value.profile)
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to create room')
@@ -137,14 +136,13 @@ export const createMCPServer = (system: System): McpServer => {
     'Create a new AI agent and join it to public rooms',
     {
       name: z.string().describe('Agent name'),
-      description: z.string().default('AI agent').describe('Agent description'),
       model: z.string().describe('Ollama model name (e.g. llama3.2, qwen2.5:14b)'),
       systemPrompt: z.string().describe('System prompt defining the agent personality and behavior'),
       temperature: z.number().optional().describe('LLM temperature (0-1)'),
     },
-    async ({ name, description, model, systemPrompt, temperature }) => {
+    async ({ name, model, systemPrompt, temperature }) => {
       try {
-        const agent = await system.spawnAIAgent({ name, description, model, systemPrompt, temperature })
+        const agent = await system.spawnAIAgent({ name, model, systemPrompt, temperature })
         return textResult({ id: agent.id, name: agent.name })
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to create agent')
@@ -158,7 +156,7 @@ export const createMCPServer = (system: System): McpServer => {
     {},
     async () => {
       const agents = system.team.listAgents().map(a => ({
-        id: a.id, name: a.name, description: a.description, kind: a.kind, state: a.state.get(),
+        id: a.id, name: a.name, kind: a.kind, state: a.state.get(),
       }))
       return textResult(agents)
     },
@@ -172,7 +170,7 @@ export const createMCPServer = (system: System): McpServer => {
       try {
         const agent = resolveAgent(system, name)
         const detail: Record<string, unknown> = {
-          id: agent.id, name: agent.name, description: agent.description,
+          id: agent.id, name: agent.name,
           kind: agent.kind, state: agent.state.get(),
           rooms: system.house.getRoomsForAgent(agent.id).map(r => r.profile.name),
         }
@@ -273,10 +271,10 @@ export const createMCPServer = (system: System): McpServer => {
 
   mcpServer.tool(
     'set_delivery_mode',
-    'Set the delivery mode for a room: broadcast (all agents), targeted (manual), or staleness (round-robin)',
+    'Set the delivery mode for a room: broadcast (all agents) or staleness (round-robin). Use muting to control which agents respond.',
     {
       roomName: z.string().describe('Room name'),
-      mode: z.enum(['broadcast', 'targeted', 'staleness']).describe('Delivery mode'),
+      mode: z.enum(['broadcast', 'staleness']).describe('Delivery mode'),
     },
     async ({ roomName, mode }) => {
       try {
@@ -285,6 +283,24 @@ export const createMCPServer = (system: System): McpServer => {
         return textResult({ mode: room.deliveryMode })
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to set delivery mode')
+      }
+    },
+  )
+
+  mcpServer.tool(
+    'set_paused',
+    'Pause or resume a room. Paused rooms store messages but do not deliver them. Set after flow completion or to manually halt conversation.',
+    {
+      roomName: z.string().describe('Room name'),
+      paused: z.boolean().describe('True to pause, false to resume'),
+    },
+    async ({ roomName, paused }) => {
+      try {
+        const room = resolveRoom(system, roomName)
+        room.setPaused(paused)
+        return textResult({ paused: room.paused })
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'Failed to set paused')
       }
     },
   )
@@ -305,26 +321,6 @@ export const createMCPServer = (system: System): McpServer => {
         return textResult({ muted: room.isMuted(agent.id) })
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to set mute')
-      }
-    },
-  )
-
-  mcpServer.tool(
-    'deliver_to',
-    'Manually deliver a specific message to selected agents (for targeted mode)',
-    {
-      roomName: z.string().describe('Room name'),
-      messageId: z.string().describe('Message ID to deliver'),
-      agentNames: z.array(z.string()).describe('Agent names to deliver to'),
-    },
-    async ({ roomName, messageId, agentNames }) => {
-      try {
-        const room = resolveRoom(system, roomName)
-        const agentIds = agentNames.map(n => resolveAgent(system, n).id)
-        room.deliverMessageTo(messageId, agentIds)
-        return textResult({ delivered: agentIds.length })
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : 'Failed to deliver')
       }
     },
   )
@@ -503,7 +499,7 @@ export const createMCPServer = (system: System): McpServer => {
         mimeType: 'application/json',
         text: JSON.stringify(
           system.team.listAgents().map(a => ({
-            id: a.id, name: a.name, description: a.description, kind: a.kind, state: a.state.get(),
+            id: a.id, name: a.name, kind: a.kind, state: a.state.get(),
           })),
           null, 2,
         ),

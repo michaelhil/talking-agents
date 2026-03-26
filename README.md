@@ -2,7 +2,7 @@
 
 A multi-agent room communication system where AI and human agents converse and cooperate through rooms, direct messages, and orchestrated flows.
 
-> **v0.5.6** — Delivery modes, flows, muting, directed addressing, Markdown rendering, MCP server, headless mode.
+> **v0.5.7** — Simplified data model (no descriptions), room pause dots, onMessagePosted callback, delivery-modes refactor.
 
 ## Architecture
 

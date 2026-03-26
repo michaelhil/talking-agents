@@ -133,12 +133,11 @@ describe('Room — self-contained component', () => {
   })
 
   test('profile is accessible', () => {
-    const profile = makeProfile({ description: 'A test room', roomPrompt: 'Be nice' })
+    const profile = makeProfile({ roomPrompt: 'Be nice' })
     const room = createRoom(profile)
 
     expect(room.profile.id).toBe('test-room')
     expect(room.profile.name).toBe('Test Room')
-    expect(room.profile.description).toBe('A test room')
     expect(room.profile.roomPrompt).toBe('Be nice')
     expect(room.profile.visibility).toBe('public')
   })
@@ -294,66 +293,10 @@ describe('Room — Delivery modes', () => {
 
   test('setDeliveryMode switches mode', () => {
     const room = createRoom(makeProfile())
-    room.setDeliveryMode('targeted')
-    expect(room.deliveryMode).toBe('targeted')
+    room.setDeliveryMode('staleness')
+    expect(room.deliveryMode).toBe('staleness')
     room.setDeliveryMode('broadcast')
     expect(room.deliveryMode).toBe('broadcast')
-  })
-
-  test('targeted mode: messages stored but not delivered', () => {
-    const { delivered, deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
-
-    room.addMember('a')
-    room.addMember('b')
-    room.setDeliveryMode('targeted')
-
-    room.post({ senderId: 'a', content: 'Hello', type: 'chat' })
-    expect(delivered).toHaveLength(0)
-    expect(room.getMessageCount()).toBe(1)
-  })
-
-  test('deliverMessageTo delivers existing message to selected agents', () => {
-    const { delivered, deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
-
-    room.addMember('a')
-    room.addMember('b')
-    room.addMember('c')
-    room.setDeliveryMode('targeted')
-
-    const msg = room.post({ senderId: 'a', content: 'Hello', type: 'chat' })
-    expect(delivered).toHaveLength(0)
-
-    room.deliverMessageTo(msg.id, ['b', 'c'])
-    expect(delivered).toHaveLength(2)
-    expect(delivered.map(d => d.agentId).sort()).toEqual(['b', 'c'])
-  })
-
-  test('deliverMessageTo skips muted agents', () => {
-    const { delivered, deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
-
-    room.addMember('a')
-    room.addMember('b')
-    room.addMember('c')
-    room.setDeliveryMode('targeted')
-    room.setMuted('c', true)
-
-    const msg = room.post({ senderId: 'a', content: 'Hello', type: 'chat' })
-    room.deliverMessageTo(msg.id, ['b', 'c'])
-
-    expect(delivered).toHaveLength(1)
-    expect(delivered[0]!.agentId).toBe('b')
-  })
-
-  test('deliverMessageTo ignores unknown message IDs', () => {
-    const { delivered, deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
-
-    room.addMember('a')
-    room.deliverMessageTo('nonexistent', ['a'])
-    expect(delivered).toHaveLength(0)
   })
 })
 
@@ -786,7 +729,8 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
 
     expect(delivered).toHaveLength(1)
     expect(delivered[0]!.agentId).toBe('b')
-    expect(room.staleness.currentTurn).toBe('b')
+    // Addressing is a one-off override — staleness turn stays unchanged
+    expect(room.staleness.currentTurn).toBe('c')
   })
 
   test('message with [[AgentName]] is always stored regardless of delivery', () => {
@@ -880,7 +824,7 @@ describe('Room — Flow mode', () => {
     expect(delivered[0]!.agentId).toBe('b')
   })
 
-  test('flow completes and switches to targeted mode', () => {
+  test('flow completes: switches to broadcast and pauses', () => {
     const { delivered, deliver } = trackDeliveries()
     const room = createRoom(makeProfile(), { deliver })
 
@@ -904,8 +848,12 @@ describe('Room — Flow mode', () => {
 
     // Bob responds → flow complete
     room.post({ senderId: 'b', senderName: 'Bob', content: 'step2', type: 'chat' })
-    expect(room.deliveryMode).toBe('targeted')
+    expect(room.deliveryMode).toBe('broadcast')
+    expect(room.paused).toBe(true)
     expect(room.flowExecution).toBeUndefined()
+    // Members are NOT muted — pause handles cascade prevention
+    expect(room.isMuted('a')).toBe(false)
+    expect(room.isMuted('b')).toBe(false)
   })
 
   test('flow with loop restarts from step 0', () => {
@@ -970,7 +918,7 @@ describe('Room — Flow mode', () => {
     expect(deliveredMeta[0]?.stepPrompt).toBe('Summarize findings')
   })
 
-  test('cancelFlow stops execution and switches to targeted', () => {
+  test('cancelFlow stops execution, switches to broadcast, pauses', () => {
     const { deliver } = trackDeliveries()
     const room = createRoom(makeProfile(), { deliver })
 
@@ -982,8 +930,10 @@ describe('Room — Flow mode', () => {
     expect(room.deliveryMode).toBe('flow')
 
     room.cancelFlow()
-    expect(room.deliveryMode).toBe('targeted')
+    expect(room.deliveryMode).toBe('broadcast')
+    expect(room.paused).toBe(true)
     expect(room.flowExecution).toBeUndefined()
+    expect(room.isMuted('a')).toBe(false)
   })
 
   test('off-turn posts during flow are stored but not delivered', () => {

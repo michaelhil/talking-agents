@@ -281,7 +281,7 @@ export const createAIAgent = (
           },
           {
             role: 'user',
-            content: `Room: "${room.profile.name}"${room.profile.description ? ` — ${room.profile.description}` : ''}\n\nRecent discussion:\n${messageLines}`,
+            content: `Room: "${room.profile.name}"\n\nRecent discussion:\n${messageLines}`,
           },
         ],
         temperature: 0.3,
@@ -328,7 +328,6 @@ export const createAIAgent = (
   return {
     id: agentId,
     name: config.name,
-    description: config.description,
     kind: 'ai',
     metadata: { model: config.model },
     state,

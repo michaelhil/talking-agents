@@ -6,11 +6,11 @@ import type { AIAgent, House, Team, Tool, ToolContext } from '../core/types.ts'
 
 export const createListRoomsTool = (house: House): Tool => ({
   name: 'list_rooms',
-  description: 'Lists all available rooms with their names and descriptions.',
+  description: 'Lists all available rooms with their names and visibility.',
   parameters: {},
   execute: async () => ({
     success: true,
-    data: house.listAllRooms().map(r => ({ name: r.name, description: r.description, visibility: r.visibility })),
+    data: house.listAllRooms().map(r => ({ name: r.name, visibility: r.visibility })),
   }),
 })
 

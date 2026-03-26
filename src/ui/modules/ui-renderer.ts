@@ -18,14 +18,12 @@ export interface UIMessage {
 export interface RoomProfile {
   id: string
   name: string
-  description?: string
   visibility: string
 }
 
 export interface AgentInfo {
   id: string
   name: string
-  description: string
   kind: string
   state?: string
 }
@@ -36,13 +34,28 @@ export const renderRooms = (
   container: HTMLElement,
   rooms: Map<string, RoomProfile>,
   selectedRoomId: string,
+  pausedRooms: Set<string>,
   onSelect: (roomId: string) => void,
+  onTogglePause: (roomId: string, paused: boolean) => void,
 ): void => {
   container.innerHTML = ''
   for (const room of rooms.values()) {
+    const isPaused = pausedRooms.has(room.id)
+    const isSelected = room.id === selectedRoomId
     const div = document.createElement('div')
-    div.className = `px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 ${room.id === selectedRoomId ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'}`
-    div.textContent = `${room.visibility === 'private' ? '🔒 ' : ''}${room.name}`
+    div.className = `px-3 py-2 cursor-pointer text-sm hover:bg-gray-100 flex items-center gap-1.5 ${isSelected ? 'bg-blue-50 font-medium' : ''} ${isPaused ? 'text-gray-400' : isSelected ? 'text-blue-700' : 'text-gray-700'}`
+
+    const dot = document.createElement('span')
+    dot.className = `inline-block w-2 h-2 rounded-full flex-shrink-0 ${isPaused ? 'bg-gray-300' : 'bg-green-400'}`
+    dot.style.cursor = 'pointer'
+    dot.title = isPaused ? 'Resume room' : 'Pause room'
+    dot.onclick = (e) => { e.stopPropagation(); onTogglePause(room.id, !isPaused) }
+
+    const nameSpan = document.createElement('span')
+    nameSpan.textContent = `${room.visibility === 'private' ? '🔒 ' : ''}${room.name}`
+
+    div.appendChild(dot)
+    div.appendChild(nameSpan)
     div.onclick = () => onSelect(room.id)
     container.appendChild(div)
   }
@@ -64,14 +77,37 @@ export const renderAgents = (
     const isMuted = mutedAgents.has(agent.name)
 
     const div = document.createElement('div')
-    div.className = `px-3 py-2 border-b border-gray-100 ${isMuted ? 'agent-muted' : ''}`
+    div.className = `px-3 py-2 border-b border-gray-100 relative ${isMuted ? 'agent-muted' : ''}`
+
+    if (agent.kind === 'ai') {
+      const closeBtn = document.createElement('button')
+      closeBtn.className = 'absolute top-1 right-1 w-5 h-5 flex items-center justify-center text-red-300 hover:text-red-600 text-xs leading-none rounded-full hover:bg-red-50'
+      closeBtn.textContent = '✕'
+      closeBtn.title = `Remove ${agent.name}`
+      closeBtn.onclick = (e) => {
+        e.stopPropagation()
+        if (confirm(`Remove agent "${agent.name}"? This cannot be undone.`)) {
+          onRemove(agent.id, agent.name)
+        }
+      }
+      div.appendChild(closeBtn)
+    }
 
     const nameRow = document.createElement('div')
     nameRow.className = 'text-sm font-medium text-gray-800 flex items-center gap-1'
     const dot = document.createElement('span')
-    dot.className = `inline-block w-2 h-2 rounded-full ${isGenerating ? 'bg-yellow-400 typing-indicator' : 'bg-green-400'}`
+    const dotColor = isMuted ? 'bg-gray-300' : isGenerating ? 'bg-yellow-400 typing-indicator' : 'bg-green-400'
+    dot.className = `inline-block w-2.5 h-2.5 rounded-full ${dotColor}`
+    if (agent.kind !== 'human') {
+      dot.style.cursor = 'pointer'
+      dot.title = isMuted ? `Unmute ${agent.name}` : `Mute ${agent.name}`
+      dot.onclick = (e) => { e.stopPropagation(); onToggleMute(agent.name, !isMuted) }
+    }
     nameRow.appendChild(dot)
-    nameRow.appendChild(document.createTextNode(` ${agent.name}`))
+    const nameText = document.createElement('span')
+    nameText.textContent = ` ${agent.name}`
+    if (isMuted) nameText.style.textDecoration = 'line-through'
+    nameRow.appendChild(nameText)
 
     if (agent.kind === 'ai') {
       // ? icon with hover tooltip showing system prompt, click opens editor
@@ -87,7 +123,7 @@ export const renderAgents = (
 
       const tooltip = document.createElement('div')
       tooltip.className = 'prompt-tooltip'
-      tooltip.textContent = agent.description === 'AI agent' ? '(click to set prompt)' : agent.description
+      tooltip.textContent = agent.kind
       // Fetch actual system prompt for tooltip on hover
       promptIcon.onmouseenter = () => {
         fetch(`/api/agents/${encodeURIComponent(agent.name)}`)
@@ -113,26 +149,7 @@ export const renderAgents = (
     div.appendChild(nameRow)
     div.appendChild(kindSpan)
 
-    {
-      const btnRow = document.createElement('div')
-      btnRow.className = 'flex gap-2 mt-1'
-
-      const muteBtn = document.createElement('button')
-      muteBtn.className = `mute-btn ${isMuted ? 'muted' : ''}`
-      muteBtn.textContent = isMuted ? 'Unmute' : 'Mute'
-      muteBtn.onclick = (e) => { e.stopPropagation(); onToggleMute(agent.name, !isMuted) }
-      btnRow.appendChild(muteBtn)
-
-      if (agent.kind === 'ai') {
-        const removeBtn = document.createElement('button')
-        removeBtn.className = 'text-xs text-red-400 hover:text-red-600'
-        removeBtn.textContent = 'Remove'
-        removeBtn.onclick = (e) => { e.stopPropagation(); onRemove(agent.id, agent.name) }
-        btnRow.appendChild(removeBtn)
-      }
-
-      div.appendChild(btnRow)
-    }
+    // Mute toggle is handled via the status dot — no separate button needed
 
     container.appendChild(div)
   }
@@ -467,79 +484,3 @@ export const openFlowEditorModal = (
   nameInput.focus()
 }
 
-// === Targeted Send Modal ===
-// Shows a modal with agent checkboxes. Calls onSend with selected agent names.
-
-export const openTargetedSendModal = (
-  agents: Map<string, AgentInfo>,
-  mutedAgents: Set<string>,
-  myAgentId: string,
-  onSend: (agentNames: ReadonlyArray<string>) => void,
-): void => {
-  const overlay = document.createElement('div')
-  overlay.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
-
-  const modal = document.createElement('div')
-  modal.className = 'bg-white rounded-lg shadow-xl p-6 w-full max-w-sm mx-4'
-
-  const title = document.createElement('h3')
-  title.className = 'text-lg font-semibold mb-3'
-  title.textContent = 'Send to...'
-
-  const list = document.createElement('div')
-  list.className = 'space-y-2 max-h-64 overflow-y-auto'
-
-  const checkboxes: Array<{ name: string; checkbox: HTMLInputElement }> = []
-  for (const agent of agents.values()) {
-    if (agent.id === myAgentId) continue
-    if (mutedAgents.has(agent.name)) continue
-
-    const label = document.createElement('label')
-    label.className = 'flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-1 rounded'
-
-    const checkbox = document.createElement('input')
-    checkbox.type = 'checkbox'
-    checkbox.className = 'rounded'
-
-    const nameSpan = document.createElement('span')
-    nameSpan.textContent = agent.name
-
-    const kindSpan = document.createElement('span')
-    kindSpan.className = 'text-xs text-gray-400'
-    kindSpan.textContent = `(${agent.kind})`
-
-    label.appendChild(checkbox)
-    label.appendChild(nameSpan)
-    label.appendChild(kindSpan)
-    list.appendChild(label)
-    checkboxes.push({ name: agent.name, checkbox })
-  }
-
-  const btnRow = document.createElement('div')
-  btnRow.className = 'flex justify-end gap-2 mt-4'
-
-  const cancelBtn = document.createElement('button')
-  cancelBtn.className = 'px-4 py-2 text-sm text-gray-600 hover:text-gray-800'
-  cancelBtn.textContent = 'Cancel'
-  cancelBtn.onclick = () => overlay.remove()
-
-  const sendBtn = document.createElement('button')
-  sendBtn.className = 'px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600'
-  sendBtn.textContent = 'Send'
-  sendBtn.onclick = () => {
-    const selected = checkboxes.filter(c => c.checkbox.checked).map(c => c.name)
-    if (selected.length > 0) {
-      onSend(selected)
-    }
-    overlay.remove()
-  }
-
-  btnRow.appendChild(cancelBtn)
-  btnRow.appendChild(sendBtn)
-  modal.appendChild(title)
-  modal.appendChild(list)
-  modal.appendChild(btnRow)
-  overlay.appendChild(modal)
-  document.body.appendChild(overlay)
-}

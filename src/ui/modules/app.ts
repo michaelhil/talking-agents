@@ -1,5 +1,5 @@
 // ============================================================================
-// Talking Agents — UI Application
+// samsinn — UI Application
 //
 // Orchestrator: connects WS client, delegates rendering, handles events.
 // No framework, no build step. Served as transpiled JS by the server.
@@ -12,7 +12,6 @@ import {
   renderMessage,
   renderTypingIndicators,
   openPromptEditor,
-  openTargetedSendModal,
   openFlowEditorModal,
   type UIMessage,
   type RoomProfile,
@@ -29,7 +28,7 @@ type WSOutbound =
   | { type: 'agent_joined'; agent: AgentInfo }
   | { type: 'agent_removed'; agentName: string }
   | { type: 'error'; message: string }
-  | { type: 'delivery_mode_changed'; roomName: string; mode: string }
+  | { type: 'delivery_mode_changed'; roomName: string; mode: string; paused: boolean }
   | { type: 'mute_changed'; roomName: string; agentName: string; muted: boolean }
   | { type: 'turn_changed'; roomName: string; agentName?: string; waitingForHuman?: boolean }
   | { type: 'flow_event'; roomName: string; event: string; detail?: Record<string, unknown> }
@@ -46,6 +45,8 @@ const agents = new Map<string, AgentInfo>()
 const roomMessages = new Map<string, UIMessage[]>()
 const agentStates = new Map<string, { state: string; context?: string }>()
 const mutedAgents = new Set<string>()  // agent names that are muted in current room
+let roomPaused = false
+const pausedRooms = new Set<string>()  // room IDs that are paused
 
 // Flow state per room
 interface FlowInfo { id: string; name: string; steps: Array<{ agentName: string; stepPrompt?: string }>; loop: boolean }
@@ -60,12 +61,10 @@ const messagesDiv = $('#messages') as HTMLElement
 const chatForm = $('#chat-form') as HTMLFormElement
 const chatInput = $('#chat-input') as HTMLInputElement
 const roomName = $('#room-name') as HTMLElement
-const roomDescription = $('#room-description') as HTMLElement
 const typingIndicators = $('#typing-indicators') as HTMLElement
 const connectionStatus = $('#connection-status') as HTMLElement
 const modeSelector = $('#mode-selector') as HTMLSelectElement
 const roomModeInfo = $('#room-mode-info') as HTMLElement
-const btnSendTo = $('#btn-send-to') as HTMLButtonElement
 const flowSelector = $('#flow-selector') as HTMLSelectElement
 const nameModal = $('#name-modal') as HTMLDialogElement
 const nameForm = $('#name-form') as HTMLFormElement
@@ -78,7 +77,13 @@ const agentForm = $('#agent-form') as HTMLFormElement
 
 const send = (data: unknown) => client?.send(data)
 
-const refreshRooms = () => renderRooms(roomList, rooms, selectedRoomId, selectRoom)
+const onTogglePause = (roomId: string, paused: boolean): void => {
+  const room = rooms.get(roomId)
+  if (!room) return
+  send({ type: 'set_paused', roomName: room.name, paused })
+}
+
+const refreshRooms = () => renderRooms(roomList, rooms, selectedRoomId, pausedRooms, selectRoom, onTogglePause)
 
 const refreshAgents = () => renderAgents(
   agentList, agents, agentStates, mutedAgents,
@@ -117,16 +122,11 @@ const fetchFlowsForRoom = async (roomName: string): Promise<void> => {
 
 const updateModeUI = () => {
   modeSelector.value = currentDeliveryMode
-  const isTargeted = currentDeliveryMode === 'targeted'
   const isFlow = currentDeliveryMode === 'flow'
-  btnSendTo.classList.toggle('hidden', !isTargeted)
 
   if (isFlow) {
     roomModeInfo.textContent = 'Flow active'
     roomModeInfo.className = 'text-xs text-purple-500 h-4'
-  } else if (isTargeted) {
-    roomModeInfo.textContent = 'Targeted mode — select agents to send to'
-    roomModeInfo.className = 'text-xs text-orange-500 h-4'
   } else if (currentDeliveryMode === 'staleness') {
     roomModeInfo.textContent = 'Staleness turn-taking active'
     roomModeInfo.className = 'text-xs text-blue-500 h-4'
@@ -146,7 +146,6 @@ const selectRoom = (roomId: string) => {
   if (!room) return
 
   roomName.textContent = room.name
-  roomDescription.textContent = room.description ?? ''
   refreshRooms()
   updateModeUI()
   fetchFlowsForRoom(room.name)
@@ -186,11 +185,26 @@ const handleMessage = (raw: unknown) => {
         localStorage.setItem('ta_session', sessionToken)
       }
       myAgentId = msg.agentId
-      rooms.clear(); agents.clear(); agentStates.clear()
+      rooms.clear(); agents.clear(); agentStates.clear(); mutedAgents.clear(); pausedRooms.clear()
       for (const r of msg.rooms) rooms.set(r.id, r)
       for (const a of msg.agents) {
         agents.set(a.id, a)
         if (a.state === 'generating') agentStates.set(a.name, { state: 'generating' })
+      }
+      // Restore per-room state from snapshot
+      if (msg.roomStates) {
+        for (const [roomId, rs] of Object.entries(msg.roomStates as Record<string, { mode: string; paused: boolean; muted: string[] }>)) {
+          if (rs.paused) pausedRooms.add(roomId)
+        }
+      }
+      if (msg.roomStates && selectedRoomId && msg.roomStates[selectedRoomId]) {
+        const rs = msg.roomStates[selectedRoomId] as { mode: string; paused: boolean; muted: string[] }
+        currentDeliveryMode = rs.mode
+        roomPaused = rs.paused
+        for (const id of rs.muted) {
+          const agent = agents.get(id)
+          if (agent) mutedAgents.add(agent.name)
+        }
       }
       refreshRooms(); refreshAgents(); refreshTyping()
       if (!selectedRoomId && rooms.size > 0) {
@@ -237,7 +251,15 @@ const handleMessage = (raw: unknown) => {
     }
     case 'delivery_mode_changed': {
       currentDeliveryMode = msg.mode
+      roomPaused = msg.paused
+      // Update pausedRooms set for room list dots
+      const changedRoom = [...rooms.values()].find(r => r.name === msg.roomName)
+      if (changedRoom) {
+        if (msg.paused) pausedRooms.add(changedRoom.id)
+        else pausedRooms.delete(changedRoom.id)
+      }
       updateModeUI()
+      refreshRooms()
       break
     }
     case 'mute_changed': {
@@ -258,14 +280,18 @@ const handleMessage = (raw: unknown) => {
     }
     case 'flow_event': {
       if (msg.event === 'completed') {
-        currentDeliveryMode = 'targeted'
+        currentDeliveryMode = 'broadcast'
+        roomPaused = true
+        if (selectedRoomId) pausedRooms.add(selectedRoomId)
         updateModeUI()
+        refreshRooms()
       } else if (msg.event === 'step') {
         const detail = msg.detail as Record<string, unknown> | undefined
         roomModeInfo.textContent = `Flow step ${(detail?.stepIndex as number ?? 0) + 1}: ${detail?.agentName ?? '...'}`
         roomModeInfo.className = 'text-xs text-purple-500 h-4 font-medium'
       } else if (msg.event === 'cancelled') {
-        currentDeliveryMode = 'targeted'
+        currentDeliveryMode = 'broadcast'
+        roomPaused = true
         updateModeUI()
       }
       break
@@ -318,6 +344,7 @@ document.getElementById('btn-create-agent')!.onclick = () => agentModal.showModa
 modeSelector.onchange = () => {
   const room = rooms.get(selectedRoomId)
   if (!room) return
+  roomPaused = false  // switching mode clears pause
   send({ type: 'set_delivery_mode', roomName: room.name, mode: modeSelector.value })
 }
 
@@ -352,46 +379,12 @@ flowSelector.onchange = () => {
   }
 }
 
-// Targeted "Send to..." button
-btnSendTo.onclick = () => {
-  const content = chatInput.value.trim()
-  if (!content || !selectedRoomId) return
-  const room = rooms.get(selectedRoomId)
-  if (!room) return
-
-  // First post the message, then open the modal to select who to deliver to
-  openTargetedSendModal(agents, mutedAgents, myAgentId, (agentNames) => {
-    // Post the message to the room first
-    send({ type: 'post_message', target: { rooms: [room.name] }, content })
-    // Then after a short delay, deliver to selected agents
-    // The message will be the latest one — we need its ID
-    // Simpler approach: use [[AgentName]] addressing in the content
-    // Actually, targeted mode stores but doesn't deliver. We need to use deliver_to.
-    // But we don't have the message ID yet. Let's use a different approach:
-    // Post via targeted mode (stores), then deliver_to via the last message.
-    // For now, use the HTTP API to get the room messages after posting.
-    setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(room.name)}?limit=1`)
-        if (!res.ok) return
-        const data = await res.json() as { messages: Array<{ id: string }> }
-        const lastMsg = data.messages[data.messages.length - 1]
-        if (lastMsg) {
-          send({ type: 'deliver_to', roomName: room.name, messageId: lastMsg.id, agentNames })
-        }
-      } catch { /* ignore */ }
-    }, 100)
-    chatInput.value = ''
-  })
-}
-
 roomForm.onsubmit = (e) => {
   e.preventDefault()
   const data = new FormData(roomForm)
   send({
     type: 'create_room',
     name: data.get('name') as string,
-    description: data.get('description') as string || undefined,
     visibility: data.get('visibility') as string,
   })
   roomModal.close()
@@ -405,7 +398,6 @@ agentForm.onsubmit = (e) => {
     type: 'create_agent',
     config: {
       name: data.get('name') as string,
-      description: 'AI agent',
       model: data.get('model') as string,
       systemPrompt: data.get('systemPrompt') as string,
     },

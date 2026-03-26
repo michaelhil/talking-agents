@@ -15,7 +15,6 @@ import { DEFAULTS } from '../core/types.ts'
 
 export interface HumanAgentConfig {
   readonly name: string
-  readonly description: string
   readonly metadata?: Record<string, unknown>
 }
 
@@ -66,7 +65,6 @@ export const createHumanAgent = (
   return {
     id: agentId,
     name: config.name,
-    description: config.description,
     kind: 'human',
     metadata: config.metadata ?? {},
     state,

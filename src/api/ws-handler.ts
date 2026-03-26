@@ -73,17 +73,28 @@ export const createWSManager = (system: System): WSManager => {
     if (agent.kind === 'ai') subscribeAgentState(agent.id, agent.name)
   }
 
-  const buildSnapshot = (agentId: string, sessionToken?: string): Record<string, unknown> => ({
-    type: 'snapshot',
-    rooms: system.house.listAllRooms(),
-    agents: system.team.listAgents()
-      .filter(a => !a.inactive)
-      .map(a => ({
-        id: a.id, name: a.name, description: a.description, kind: a.kind, state: a.state.get(),
-      })),
-    agentId,
-    ...(sessionToken ? { sessionToken } : {}),
-  })
+  const buildSnapshot = (agentId: string, sessionToken?: string): Record<string, unknown> => {
+    // Build per-room state for UI sync on connect/reconnect
+    const roomStates: Record<string, unknown> = {}
+    for (const profile of system.house.listAllRooms()) {
+      const room = system.house.getRoom(profile.id)
+      if (room) {
+        roomStates[profile.id] = room.getRoomState()
+      }
+    }
+    return {
+      type: 'snapshot',
+      rooms: system.house.listAllRooms(),
+      agents: system.team.listAgents()
+        .filter(a => !a.inactive)
+        .map(a => ({
+          id: a.id, name: a.name, kind: a.kind, state: a.state.get(),
+        })),
+      agentId,
+      roomStates,
+      ...(sessionToken ? { sessionToken } : {}),
+    }
+  }
 
   return { sessions, wsConnections, broadcast, subscribeAgentState, unsubscribeAgentState, buildSnapshot }
 }
@@ -123,7 +134,6 @@ export const handleWSMessage = async (
       case 'create_room': {
         const result = system.house.createRoomSafe({
           name: msg.name,
-          description: msg.description,
           roomPrompt: msg.roomPrompt,
           visibility: msg.visibility ?? 'public',
           createdBy: session.agent.id,
@@ -145,7 +155,7 @@ export const handleWSMessage = async (
       case 'create_agent': {
         const agent = await system.spawnAIAgent(msg.config)
         wsManager.subscribeAgentState(agent.id, agent.name)
-        wsManager.broadcast({ type: 'agent_joined', agent: { id: agent.id, name: agent.name, description: agent.description, kind: agent.kind } })
+        wsManager.broadcast({ type: 'agent_joined', agent: { id: agent.id, name: agent.name, kind: agent.kind } })
         break
       }
       case 'remove_agent': {
@@ -174,6 +184,16 @@ export const handleWSMessage = async (
         // delivery_mode_changed is broadcast via onDeliveryModeChanged callback
         break
       }
+      case 'set_paused': {
+        const room = system.house.getRoom(msg.roomName)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
+          break
+        }
+        room.setPaused(msg.paused)
+        wsManager.broadcast({ type: 'delivery_mode_changed', roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused })
+        break
+      }
       case 'set_muted': {
         const room = system.house.getRoom(msg.roomName)
         const agent = system.team.getAgent(msg.agentName)
@@ -187,19 +207,6 @@ export const handleWSMessage = async (
         }
         room.setMuted(agent.id, msg.muted)
         wsManager.broadcast({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: msg.muted })
-        break
-      }
-      case 'deliver_to': {
-        const room = system.house.getRoom(msg.roomName)
-        if (!room) {
-          ws.send(JSON.stringify({ type: 'error', message: `Room "${msg.roomName}" not found` } satisfies WSOutbound))
-          break
-        }
-        const agentIds = msg.agentNames
-          .map(name => system.team.getAgent(name))
-          .filter((a): a is NonNullable<typeof a> => a !== undefined)
-          .map(a => a.id)
-        room.deliverMessageTo(msg.messageId, agentIds)
         break
       }
       case 'set_staleness_paused': {

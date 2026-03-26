@@ -1,5 +1,5 @@
 // ============================================================================
-// Talking Agents — Core Type Definitions
+// samsinn — Core Type Definitions
 //
 // ID Architecture: UUIDs internal, names for LLM interaction.
 // - All entities get auto-generated UUIDs (never caller-specified)
@@ -30,7 +30,6 @@ export interface Message {
 export interface RoomProfile {
   readonly id: string
   readonly name: string
-  readonly description?: string
   readonly roomPrompt?: string
   readonly visibility: 'public' | 'private'
   readonly createdBy: string
@@ -40,7 +39,6 @@ export interface RoomProfile {
 export interface AgentProfile {
   readonly id: string
   readonly name: string
-  readonly description: string
   readonly kind: 'ai' | 'human'
 }
 
@@ -63,7 +61,7 @@ export type DeliverFn = (agentId: string, message: Message, history: ReadonlyArr
 // === Delivery Modes — room has exactly one active mode ===
 // [[AgentName]] addressing and muting work as universal overrides in all modes.
 
-export type DeliveryMode = 'broadcast' | 'targeted' | 'staleness' | 'flow'
+export type DeliveryMode = 'broadcast' | 'staleness' | 'flow'
 
 // --- Staleness state (active when mode === 'staleness') ---
 
@@ -94,6 +92,22 @@ export interface FlowExecution {
   active: boolean
 }
 
+// --- Room state snapshot (for UI sync on connect/reconnect) ---
+
+export interface RoomState {
+  readonly mode: DeliveryMode
+  readonly paused: boolean
+  readonly muted: ReadonlyArray<string>
+  readonly staleness: StalenessState
+  readonly flowExecution?: {
+    readonly flowId: string
+    readonly stepIndex: number
+    readonly active: boolean
+  }
+}
+
+export type AgentDeliveryStatus = 'active' | 'waiting' | 'muted'
+
 // --- Room event callbacks ---
 
 export type OnDeliveryModeChanged = (roomId: string, mode: DeliveryMode) => void
@@ -117,13 +131,17 @@ export interface Room {
   readonly deliveryMode: DeliveryMode
   readonly setDeliveryMode: (mode: Exclude<DeliveryMode, 'flow'>) => void
 
-  // Muting — universal, mode-independent
+  // Pause — room-level, prevents all delivery (join/leave and addressing still work)
+  readonly paused: boolean
+  readonly setPaused: (paused: boolean) => void
+
+  // Room state snapshot (for UI sync)
+  readonly getRoomState: () => RoomState
+
+  // Muting — user-controlled, persistent, mode-independent
   readonly setMuted: (agentId: string, muted: boolean) => void
   readonly isMuted: (agentId: string) => boolean
   readonly getMutedIds: () => ReadonlySet<string>
-
-  // Targeted delivery (for targeted mode)
-  readonly deliverMessageTo: (messageId: string, agentIds: ReadonlyArray<string>) => void
 
   // Staleness controls (active when mode === 'staleness')
   readonly staleness: StalenessState
@@ -165,7 +183,6 @@ export interface House {
 
 export interface RoomConfig {
   readonly name: string
-  readonly description?: string
   readonly roomPrompt?: string
   readonly visibility: 'public' | 'private'
   readonly createdBy: string
@@ -187,7 +204,6 @@ export type StateSubscriber = (state: StateValue, agentId: string, context?: str
 export interface Agent {
   readonly id: string
   readonly name: string
-  readonly description: string
   readonly kind: 'ai' | 'human'
   readonly metadata: Record<string, unknown>
   readonly state: AgentState
@@ -258,7 +274,6 @@ export type ToolExecutor = (calls: ReadonlyArray<ToolCall>) => Promise<ReadonlyA
 
 export interface AIAgentConfig {
   readonly name: string
-  readonly description: string
   readonly model: string
   readonly systemPrompt: string
   readonly temperature?: number
@@ -284,7 +299,6 @@ export type AgentAction =
   | {
       readonly type: 'create_room'
       readonly name: string
-      readonly description?: string
       readonly roomPrompt?: string
       readonly visibility: 'public' | 'private'
       readonly add?: ReadonlyArray<string>  // agent names to add after creation
@@ -326,17 +340,17 @@ export interface LLMProvider {
 
 export type WSInbound =
   | { readonly type: 'post_message'; readonly target: MessageTarget; readonly content: string }
-  | { readonly type: 'create_room'; readonly name: string; readonly description?: string; readonly roomPrompt?: string; readonly visibility: 'public' | 'private' }
+  | { readonly type: 'create_room'; readonly name: string; readonly roomPrompt?: string; readonly visibility: 'public' | 'private' }
   | { readonly type: 'add_to_room'; readonly roomName: string; readonly agentName: string }
   | { readonly type: 'create_agent'; readonly config: AIAgentConfig }
   | { readonly type: 'remove_agent'; readonly name: string }
   | { readonly type: 'update_agent'; readonly name: string; readonly systemPrompt: string }
   // Delivery mode
-  | { readonly type: 'set_delivery_mode'; readonly roomName: string; readonly mode: 'broadcast' | 'targeted' | 'staleness' }
+  | { readonly type: 'set_delivery_mode'; readonly roomName: string; readonly mode: 'broadcast' | 'staleness' }
+  // Pause
+  | { readonly type: 'set_paused'; readonly roomName: string; readonly paused: boolean }
   // Muting
   | { readonly type: 'set_muted'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
-  // Targeted delivery
-  | { readonly type: 'deliver_to'; readonly roomName: string; readonly messageId: string; readonly agentNames: ReadonlyArray<string> }
   // Staleness controls
   | { readonly type: 'set_staleness_paused'; readonly roomName: string; readonly paused: boolean }
   | { readonly type: 'set_participating'; readonly roomName: string; readonly agentName: string; readonly participating: boolean }
@@ -354,7 +368,7 @@ export type WSOutbound =
   | { readonly type: 'agent_removed'; readonly agentName: string }
   | { readonly type: 'snapshot'; readonly rooms: ReadonlyArray<RoomProfile>; readonly agents: ReadonlyArray<AgentProfile>; readonly agentId: string; readonly sessionToken?: string }
   | { readonly type: 'error'; readonly message: string }
-  | { readonly type: 'delivery_mode_changed'; readonly roomName: string; readonly mode: DeliveryMode }
+  | { readonly type: 'delivery_mode_changed'; readonly roomName: string; readonly mode: DeliveryMode; readonly paused: boolean }
   | { readonly type: 'mute_changed'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
   | { readonly type: 'turn_changed'; readonly roomName: string; readonly agentName?: string; readonly waitingForHuman?: boolean }
   | { readonly type: 'flow_event'; readonly roomName: string; readonly event: 'started' | 'step' | 'completed' | 'cancelled'; readonly detail?: Record<string, unknown> }

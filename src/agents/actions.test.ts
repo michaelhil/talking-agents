@@ -19,7 +19,7 @@ const createTestSystem = () => {
 
 const makeAgent = (name: string) => {
   const inbox: Message[] = []
-  const agent = createHumanAgent({ name, description: `Test ${name}` }, (msg) => inbox.push(msg))
+  const agent = createHumanAgent({ name }, (msg) => inbox.push(msg))
   return { agent, inbox }
 }
 

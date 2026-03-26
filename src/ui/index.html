@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Talking Agents</title>
+  <title>samsinn</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
@@ -50,7 +50,7 @@
   <!-- Header -->
   <header class="bg-white border-b px-4 py-2 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <h1 class="text-lg font-semibold text-gray-800">Talking Agents</h1>
+      <h1 class="text-lg font-semibold text-gray-800">samsinn</h1>
       <button id="btn-house-prompt" class="prompt-icon" title="House Rules">H</button>
       <button id="btn-response-format" class="prompt-icon" title="Response Format">F</button>
     </div>
@@ -77,11 +77,9 @@
           <button id="btn-room-prompt" class="prompt-icon" title="Room Prompt">R</button>
           <select id="mode-selector" class="ml-auto text-xs border rounded px-2 py-1 bg-gray-50">
             <option value="broadcast">Broadcast</option>
-            <option value="targeted">Targeted</option>
             <option value="staleness">Staleness</option>
           </select>
         </div>
-        <div id="room-description" class="text-xs text-gray-500"></div>
         <div id="room-mode-info" class="text-xs text-gray-400 h-4"></div>
         <div id="typing-indicators" class="text-xs text-blue-500 h-4"></div>
       </div>
@@ -95,7 +93,6 @@
                class="flex-1 px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
                autocomplete="off" disabled>
         <button type="submit" id="btn-send" class="px-4 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50" disabled>Send</button>
-        <button type="button" id="btn-send-to" class="px-3 py-2 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300 hidden" title="Send to specific agents">Send to...</button>
         <select id="flow-selector" class="text-xs border rounded px-2 py-1 bg-gray-50 hidden">
           <option value="">Flow...</option>
         </select>
@@ -117,7 +114,6 @@
     <form id="room-form" class="p-4 space-y-3">
       <h3 class="font-medium text-gray-800">Create Room</h3>
       <input name="name" placeholder="Room name" required class="w-full px-3 py-2 border rounded text-sm">
-      <input name="description" placeholder="Description (optional)" class="w-full px-3 py-2 border rounded text-sm">
       <select name="visibility" class="w-full px-3 py-2 border rounded text-sm">
         <option value="public">Public</option>
         <option value="private">Private</option>
@@ -146,7 +142,6 @@
   <!-- Name prompt modal -->
   <dialog id="name-modal" class="rounded-lg shadow-xl p-0 w-80">
     <form id="name-form" class="p-4 space-y-3">
-      <h3 class="font-medium text-gray-800">Welcome to Talking Agents</h3>
       <p class="text-sm text-gray-600">Enter your name to join:</p>
       <input name="name" placeholder="Your name" required autofocus class="w-full px-3 py-2 border rounded text-sm">
       <button type="submit" class="w-full px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600">Join</button>

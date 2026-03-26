@@ -1,18 +1,17 @@
 // ============================================================================
 // Delivery Modes — Pure functions for each room delivery strategy.
 //
-// Each mode function receives room state and returns void (delivers directly).
-// Room.post() dispatches to the active mode after handling message storage
-// and [[AgentName]] addressing override.
+// Each mode function receives an `eligible` set (members minus user-muted)
+// and delivers accordingly. Room.post() computes eligible once and passes it
+// to the active mode. Muting and mode filtering are independent concerns.
 //
 // Modes:
-//   broadcast  — deliver to all non-muted members
-//   targeted   — no auto-delivery (human triggers manually)
-//   staleness  — deliver to stalest non-muted participating agent
-//   flow       — deliver to current step agent in predefined sequence
+//   broadcast  — deliver to all eligible members
+//   staleness  — deliver to stalest eligible participating agent
+//   flow       — deliver to current step agent (if eligible)
 // ============================================================================
 
-import type { DeliverFn, FlowExecution, FlowStep, Message } from './types.ts'
+import type { DeliverFn, FlowExecution, Message } from './types.ts'
 import { findStalestAgent } from './staleness.ts'
 
 // --- Shared delivery helper ---
@@ -33,23 +32,13 @@ export const deliverToAgent = (
 
 export const deliverBroadcast = (
   message: Message,
-  members: ReadonlySet<string>,
-  muted: ReadonlySet<string>,
+  eligible: ReadonlySet<string>,
   allMessages: ReadonlyArray<Message>,
   deliver: DeliverFn,
 ): void => {
-  for (const id of members) {
-    if (!muted.has(id)) {
-      deliverToAgent(id, message, allMessages, deliver)
-    }
+  for (const id of eligible) {
+    deliverToAgent(id, message, allMessages, deliver)
   }
-}
-
-// --- Targeted mode ---
-// No-op: messages are stored but not auto-delivered.
-
-export const deliverTargeted = (): void => {
-  // Intentionally empty — delivery is manual in targeted mode
 }
 
 // --- Staleness mode ---
@@ -61,17 +50,11 @@ export interface StalenessResult {
 export const deliverStaleness = (
   message: Message,
   allMessages: ReadonlyArray<Message>,
-  participating: ReadonlySet<string>,
-  muted: ReadonlySet<string>,
+  activeParticipants: ReadonlySet<string>,
   currentTurn: string | undefined,
   senderId: string,
   deliver: DeliverFn,
 ): StalenessResult => {
-  // Filter out muted agents from participating set
-  const activeParticipants = new Set(
-    [...participating].filter(id => !muted.has(id)),
-  )
-
   if (senderId === currentTurn) {
     // Current turn holder responded — advance to next stalest
     const next = findStalestAgent(allMessages, activeParticipants, senderId)
@@ -110,7 +93,7 @@ export const deliverFlow = (
   message: Message,
   allMessages: ReadonlyArray<Message>,
   execution: FlowExecution,
-  muted: ReadonlySet<string>,
+  eligible: ReadonlySet<string>,
   senderId: string,
   resolveNameToId: (name: string) => string | undefined,
   deliver: DeliverFn,
@@ -127,7 +110,39 @@ export const deliverFlow = (
     return { advanced: false, completed: false, looped: false, nextStepIndex: execution.stepIndex }
   }
 
-  // Advance to next step
+  // Advance to next step — find next eligible agent
+  const result = advanceFlowStep(execution, eligible, resolveNameToId)
+
+  if (!result.completed && result.nextAgentName) {
+    const nextAgentId = resolveNameToId(result.nextAgentName)
+    if (nextAgentId) {
+      const nextStep = execution.flow.steps[result.nextStepIndex]!
+      const enriched = nextStep.stepPrompt
+        ? { ...message, metadata: { ...message.metadata, stepPrompt: nextStep.stepPrompt } }
+        : message
+      deliverToAgent(nextAgentId, enriched, allMessages, deliver)
+    }
+  }
+
+  return { advanced: true, ...result }
+}
+
+// --- Flow step advancement (pure, no delivery side effects) ---
+// Used by deliverFlow for normal advancement, and by room.ts when
+// muting the current step agent (skip without fake senderId).
+
+export interface FlowAdvanceResult {
+  readonly completed: boolean
+  readonly looped: boolean
+  readonly nextStepIndex: number
+  readonly nextAgentName?: string
+}
+
+export const advanceFlowStep = (
+  execution: FlowExecution,
+  eligible: ReadonlySet<string>,
+  resolveNameToId: (name: string) => string | undefined,
+): FlowAdvanceResult => {
   let nextIndex = execution.stepIndex + 1
   let looped = false
 
@@ -136,34 +151,29 @@ export const deliverFlow = (
       nextIndex = 0
       looped = true
     } else {
-      return { advanced: true, completed: true, looped: false, nextStepIndex: nextIndex }
+      return { completed: true, looped: false, nextStepIndex: nextIndex }
     }
   }
 
-  // Find next non-muted step (skip muted agents)
+  // Find next eligible step agent (skip ineligible)
   const stepsLength = execution.flow.steps.length
   let attempts = 0
   while (attempts < stepsLength) {
     const nextStep = execution.flow.steps[nextIndex]!
     const nextAgentId = resolveNameToId(nextStep.agentName)
 
-    if (nextAgentId && !muted.has(nextAgentId)) {
-      // Deliver with step prompt in metadata if present
-      const enriched = nextStep.stepPrompt
-        ? { ...message, metadata: { ...message.metadata, stepPrompt: nextStep.stepPrompt } }
-        : message
-      deliverToAgent(nextAgentId, enriched, allMessages, deliver)
-      return { advanced: true, completed: false, looped, nextStepIndex: nextIndex, nextAgentName: nextStep.agentName }
+    if (nextAgentId && eligible.has(nextAgentId)) {
+      return { completed: false, looped, nextStepIndex: nextIndex, nextAgentName: nextStep.agentName }
     }
 
-    // Skip muted agent
+    // Skip ineligible agent
     nextIndex = (nextIndex + 1) % stepsLength
     if (nextIndex === 0 && !execution.flow.loop) {
-      return { advanced: true, completed: true, looped: false, nextStepIndex: nextIndex }
+      return { completed: true, looped: false, nextStepIndex: nextIndex }
     }
     attempts++
   }
 
-  // All agents in flow are muted — flow is effectively complete
-  return { advanced: true, completed: true, looped: false, nextStepIndex: nextIndex }
+  // All agents ineligible — flow is effectively complete
+  return { completed: true, looped: false, nextStepIndex: nextIndex }
 }

@@ -122,17 +122,15 @@ describe('House — room collection', () => {
     expect(house.getRoom(intro.profile.id)).toBeUndefined()
   })
 
-  test('preserves room description and roomPrompt', () => {
+  test('preserves roomPrompt', () => {
     const house = createHouse()
     const room = house.createRoom({
       name: 'Focused',
-      description: 'A focused room',
       roomPrompt: 'Stay on topic about data pipelines',
       visibility: 'public',
       createdBy: 'alice',
     })
 
-    expect(room.profile.description).toBe('A focused room')
     expect(room.profile.roomPrompt).toBe('Stay on topic about data pipelines')
   })
 

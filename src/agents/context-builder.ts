@@ -155,7 +155,7 @@ export const buildContext = (
   if (triggerRoomId) {
     const roomProfile = deps.roomProfiles.get(triggerRoomId)
     if (roomProfile) {
-      contextLines.push(`You are in room "${roomProfile.name}".${roomProfile.description ? ` ${roomProfile.description}` : ''}`)
+      contextLines.push(`You are in room "${roomProfile.name}".`)
     }
 
     const participants = getParticipantsForRoom(

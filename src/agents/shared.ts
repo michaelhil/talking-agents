@@ -16,14 +16,12 @@ export const extractAgentProfile = (
 
   const meta = message.metadata
   const name = meta.agentName
-  const description = meta.agentDescription
   const kind = meta.agentKind
 
   if (typeof name === 'string' && (kind === 'ai' || kind === 'human')) {
     profiles.set(message.senderId, {
       id: message.senderId,
       name,
-      description: typeof description === 'string' ? description : '',
       kind,
     })
   }
@@ -33,6 +31,5 @@ export const extractAgentProfile = (
 // Used by spawn.ts and actions.ts when posting join messages.
 export const makeJoinMetadata = (agent: Agent) => ({
   agentName: agent.name,
-  agentDescription: agent.description,
   agentKind: agent.kind,
 })

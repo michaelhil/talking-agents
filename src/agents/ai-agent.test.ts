@@ -9,7 +9,6 @@ import { createRoom } from '../core/room.ts'
 
 const makeConfig = (overrides?: Partial<AIAgentConfig>): AIAgentConfig => ({
   name: 'TestBot',
-  description: 'A test bot',
   model: 'test-model',
   systemPrompt: 'You are a helpful test bot.',
   historyLimit: 10,
@@ -505,7 +504,7 @@ describe('Agent state', () => {
 
   test('human agent state is always idle', () => {
     const { createHumanAgent } = require('./human-agent.ts')
-    const human = createHumanAgent({ name: 'Human', description: 'Test' }, () => {})
+    const human = createHumanAgent({ name: 'Human' }, () => {})
     expect(human.state.get()).toBe('idle')
 
     const states: string[] = []

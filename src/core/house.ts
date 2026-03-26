@@ -10,7 +10,7 @@ import type { CreateResult, DeliverFn, House, OnDeliveryModeChanged, OnFlowEvent
 import { createRoom, type RoomCallbacks } from './room.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
-const DEFAULT_HOUSE_PROMPT = `You are part of Talking Agents, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use ::PASS:: only when the conversation genuinely does not need your input.`
+const DEFAULT_HOUSE_PROMPT = `You are part of samsinn, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use ::PASS:: only when the conversation genuinely does not need your input.`
 
 const DEFAULT_RESPONSE_FORMAT = `- By default, just write your message as natural text. Your response IS the message other participants will read.
 - You may use Markdown formatting (headings, bold, lists, code blocks, etc.).
@@ -47,7 +47,6 @@ export const createHouse = (deliver?: DeliverFn, onTurnChanged?: OnTurnChanged, 
     const profile: RoomProfile = {
       id,
       name,
-      description: config.description,
       roomPrompt: config.roomPrompt,
       visibility: config.visibility,
       createdBy: config.createdBy,

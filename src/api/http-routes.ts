@@ -102,7 +102,6 @@ export const handleAPI = async (
     try {
       const result = system.house.createRoomSafe({
         name: body.name,
-        description: body.description as string | undefined,
         roomPrompt: body.roomPrompt as string | undefined,
         visibility: (body.visibility as 'public' | 'private') ?? 'public',
         createdBy: (body.createdBy as string) ?? SYSTEM_SENDER_ID,
@@ -158,7 +157,7 @@ export const handleAPI = async (
   // GET /api/agents
   if (method === 'GET' && pathname === '/api/agents') {
     return json(system.team.listAgents().map(a => ({
-      id: a.id, name: a.name, description: a.description, kind: a.kind, state: a.state.get(),
+      id: a.id, name: a.name, kind: a.kind, state: a.state.get(),
     })))
   }
 
@@ -176,7 +175,7 @@ export const handleAPI = async (
       const agent = system.team.getAgent(agentName)
       if (!agent) return notFound(`Agent "${agentName}"`)
       const detail: Record<string, unknown> = {
-        id: agent.id, name: agent.name, description: agent.description,
+        id: agent.id, name: agent.name,
         kind: agent.kind, state: agent.state.get(), rooms: system.house.getRoomsForAgent(agent.id).map(r => r.profile.id),
       }
       if (agent.kind === 'ai' && 'getSystemPrompt' in agent) {
@@ -208,14 +207,13 @@ export const handleAPI = async (
     try {
       const agent = await system.spawnAIAgent({
         name: body.name as string,
-        description: (body.description as string) ?? '',
         model: body.model as string,
         systemPrompt: body.systemPrompt as string,
         temperature: body.temperature as number | undefined,
         historyLimit: body.historyLimit as number | undefined,
       })
       subscribeAgentState(agent.id, agent.name)
-      broadcast({ type: 'agent_joined', agent: { id: agent.id, name: agent.name, description: agent.description, kind: agent.kind } })
+      broadcast({ type: 'agent_joined', agent: { id: agent.id, name: agent.name, kind: agent.kind } })
       return json({ id: agent.id, name: agent.name }, 201)
     } catch (err) {
       return errorResponse(err instanceof Error ? err.message : 'Failed to create agent')
@@ -258,12 +256,23 @@ export const handleAPI = async (
     const room = system.house.getRoom(dmRoomName)
     if (!room) return notFound('Room')
     const body = await parseBody(req)
-    const newMode = body.mode as 'broadcast' | 'targeted' | 'staleness'
-    if (!['broadcast', 'targeted', 'staleness'].includes(newMode)) {
-      return errorResponse('mode must be broadcast, targeted, or staleness')
+    const newMode = body.mode as 'broadcast' | 'staleness'
+    if (!['broadcast', 'staleness'].includes(newMode)) {
+      return errorResponse('mode must be broadcast or staleness')
     }
     room.setDeliveryMode(newMode)
     return json({ mode: room.deliveryMode })
+  }
+
+  // PUT /api/rooms/:name/pause
+  const pauseRoomName = extractParam(pathname, '/api/rooms/:name/pause')
+  if (method === 'PUT' && pauseRoomName) {
+    const room = system.house.getRoom(pauseRoomName)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    room.setPaused(body.paused as boolean)
+    broadcast({ type: 'delivery_mode_changed', roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused })
+    return json({ paused: room.paused })
   }
 
   // PUT /api/rooms/:name/mute
@@ -277,23 +286,6 @@ export const handleAPI = async (
     room.setMuted(agent.id, body.muted as boolean)
     broadcast({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: body.muted as boolean })
     return json({ muted: room.isMuted(agent.id) })
-  }
-
-  // POST /api/rooms/:name/deliver-to
-  const deliverToRoom = extractParam(pathname, '/api/rooms/:name/deliver-to')
-  if (method === 'POST' && deliverToRoom) {
-    const room = system.house.getRoom(deliverToRoom)
-    if (!room) return notFound('Room')
-    const body = await parseBody(req)
-    const messageId = body.messageId as string
-    const agentNames = body.agentNames as ReadonlyArray<string>
-    if (!messageId || !agentNames?.length) return errorResponse('messageId and agentNames are required')
-    const agentIds = agentNames
-      .map(name => system.team.getAgent(name))
-      .filter((a): a is NonNullable<typeof a> => a !== undefined)
-      .map(a => a.id)
-    room.deliverMessageTo(messageId, agentIds)
-    return json({ delivered: agentIds.length })
   }
 
   // PUT /api/rooms/:name/staleness/pause

@@ -4,28 +4,28 @@
 // post() appends the message, dispatches delivery based on the active mode,
 // and returns the stamped message. Room stamps its own roomId on messages.
 //
-// Delivery modes (mutually exclusive):
-//   broadcast  — deliver to all non-muted members (default)
-//   targeted   — no auto-delivery, human triggers manually via deliverMessageTo()
-//   staleness  — one-at-a-time delivery, stalest participating agent first
-//   flow       — follow predefined agent sequence with optional step prompts
+// Delivery pipeline:
+//   1. Store message
+//   2. Compute eligible = members - userMuted
+//   3. Check paused flag (paused rooms store but don't deliver)
+//   4. Apply mode filter (broadcast / staleness / flow)
+//
+// User muting and mode filtering are independent concerns applied in sequence.
+// System code NEVER modifies the muted set — only explicit setMuted() calls do.
 //
 // [[AgentName]] addressing overrides any mode — delivers only to addressed agents.
-// Muting is universal — muted agents are excluded from all delivery in all modes.
-//
-// Mute/unmute events create 'mute' messages in the array (visible in history)
-// but do NOT trigger delivery (agents see them as context on next real delivery).
+// Pause flag stops all delivery (join/leave and addressing still work).
 // ============================================================================
 
 import type {
   DeliverFn, DeliveryMode, Flow, FlowExecution, Message,
   OnDeliveryModeChanged, OnFlowEvent, OnTurnChanged,
-  PostParams, Room, RoomProfile, StalenessState,
+  PostParams, Room, RoomProfile, RoomState, StalenessState,
 } from './types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './types.ts'
 import { parseAddressedAgents } from './addressing.ts'
 import {
-  deliverBroadcast, deliverFlow, deliverStaleness, deliverTargeted, deliverToAgent,
+  advanceFlowStep, deliverBroadcast, deliverFlow, deliverStaleness, deliverToAgent,
 } from './delivery-modes.ts'
 
 export interface RoomCallbacks {
@@ -48,8 +48,9 @@ export const createRoom = (
 
   const deliver = callbacks?.deliver
 
-  // --- Delivery mode state ---
+  // --- State ---
   let mode: DeliveryMode = 'broadcast'
+  let paused = false
 
   // Staleness state
   let stalenessPaused = false
@@ -69,6 +70,11 @@ export const createRoom = (
     }
     return undefined
   }
+
+  // --- Eligible set: members minus user-muted ---
+
+  const computeEligible = (): Set<string> =>
+    new Set([...members].filter(id => !muted.has(id)))
 
   // --- Internal helpers ---
 
@@ -98,18 +104,27 @@ export const createRoom = (
     flowExecution = undefined
   }
 
-  // Kick off staleness chain from the stalest agent
   const kickstartStaleness = (message: Message): void => {
     if (!deliver || stalenessPaused) return
+    const eligible = computeEligible()
     const activeParticipants = new Set(
-      [...stalenessParticipating].filter(id => !muted.has(id)),
+      [...stalenessParticipating].filter(id => eligible.has(id)),
     )
     const { nextTurn } = deliverStaleness(
-      message, messages, activeParticipants, muted,
+      message, messages, activeParticipants,
       undefined, '', deliver,
     )
     stalenessCurrentTurn = nextTurn
     notifyTurnChanged(nextTurn)
+  }
+
+  // Handle flow completion or cancellation: switch to broadcast + pause
+  const endFlow = (flowId: string, event: 'completed' | 'cancelled'): void => {
+    clearFlowExecution()
+    mode = 'broadcast'
+    paused = true
+    notifyFlowEvent(event, { flowId })
+    notifyModeChanged()
   }
 
   // --- Post ---
@@ -148,14 +163,16 @@ export const createRoom = (
     const nonDeliverable = message.type === 'system' || message.type === 'mute' || message.type === 'room_summary'
     if (nonDeliverable || !deliver) return message
 
-    // Join/leave messages are always broadcast regardless of mode
-    // (agents need to know about membership changes, but these don't affect turns)
+    // Compute eligible once: members minus user-muted
+    const eligible = computeEligible()
+
+    // Join/leave messages are always broadcast regardless of mode and pause
     if (message.type === 'join' || message.type === 'leave') {
-      deliverBroadcast(message, members, muted, messages, deliver)
+      deliverBroadcast(message, eligible, messages, deliver)
       return message
     }
 
-    // 1. [[AgentName]] addressing override — works in ALL modes
+    // [[AgentName]] addressing override — works in ALL modes, even when paused
     const addressedNames = parseAddressedAgents(message.content)
     if (addressedNames.length > 0) {
       const addressedIds = addressedNames
@@ -166,34 +183,28 @@ export const createRoom = (
         for (const id of addressedIds) {
           deliverToOne(id, message)
         }
-        // In staleness mode, set the first addressed agent as currentTurn
-        if (mode === 'staleness' && !stalenessPaused) {
-          stalenessCurrentTurn = addressedIds[0]
-          notifyTurnChanged(stalenessCurrentTurn)
-        }
-        // In flow mode, don't disrupt flow — addressed delivery is a one-off
+        // Addressing is a one-off override — does NOT change staleness turn or flow state
         return message
       }
       // If no addressed agents resolved, fall through to mode dispatch
     }
 
-    // 2. Mode dispatch
+    // Paused: store but don't deliver
+    if (paused) return message
+
+    // Mode dispatch
     switch (mode) {
       case 'broadcast':
-        deliverBroadcast(message, members, muted, messages, deliver)
-        break
-
-      case 'targeted':
-        deliverTargeted()
+        deliverBroadcast(message, eligible, messages, deliver)
         break
 
       case 'staleness': {
         if (stalenessPaused) break
         const activeParticipants = new Set(
-          [...stalenessParticipating].filter(id => !muted.has(id)),
+          [...stalenessParticipating].filter(id => eligible.has(id)),
         )
         const result = deliverStaleness(
-          message, messages, activeParticipants, muted,
+          message, messages, activeParticipants,
           stalenessCurrentTurn, params.senderId, deliver,
         )
         stalenessCurrentTurn = result.nextTurn
@@ -204,16 +215,12 @@ export const createRoom = (
       case 'flow': {
         if (!flowExecution?.active) break
         const result = deliverFlow(
-          message, messages, flowExecution, muted,
+          message, messages, flowExecution, eligible,
           params.senderId, resolveNameToId, deliver,
         )
         if (result.advanced) {
           if (result.completed) {
-            const completedFlowId = flowExecution!.flow.id
-            clearFlowExecution()
-            mode = 'targeted'
-            notifyFlowEvent('completed', { flowId: completedFlowId })
-            notifyModeChanged()
+            endFlow(flowExecution!.flow.id, 'completed')
           } else {
             flowExecution!.stepIndex = result.nextStepIndex
             notifyFlowEvent('step', {
@@ -242,6 +249,7 @@ export const createRoom = (
 
     const prevMode = mode
     mode = newMode
+    paused = false  // switching mode clears pause
 
     if (newMode !== 'staleness') {
       clearStalenessState()
@@ -258,7 +266,7 @@ export const createRoom = (
     }
   }
 
-  // --- Muting ---
+  // --- Muting (user-controlled, never modified by system/mode logic) ---
 
   const setMuted = (agentId: string, isMuted: boolean): void => {
     const wasMuted = muted.has(agentId)
@@ -297,26 +305,27 @@ export const createRoom = (
       kickstartStaleness(lastMsg)
     }
 
-    // If muted agent is the current flow step, skip
+    // If muted agent is the current flow step, skip via advanceFlowStep
     if (mode === 'flow' && flowExecution?.active && isMuted) {
       const currentStep = flowExecution.flow.steps[flowExecution.stepIndex]
       if (currentStep && resolveNameToId(currentStep.agentName) === agentId) {
-        // Post a synthetic advance — trigger flow skip
-        // The simplest approach: just advance the stepIndex and deliver to next
-        const lastMsg = messages[messages.length - 1]!
-        const result = deliverFlow(
-          lastMsg, messages, flowExecution, muted,
-          agentId, resolveNameToId, deliver!,
-        )
+        const eligible = computeEligible()
+        const result = advanceFlowStep(flowExecution, eligible, resolveNameToId)
         if (result.completed) {
-          clearFlowExecution()
-          mode = 'targeted'
-          notifyFlowEvent('completed', { flowId: flowExecution!.flow.id })
-          notifyModeChanged()
-        } else if (result.advanced) {
-          flowExecution!.stepIndex = result.nextStepIndex
+          endFlow(flowExecution.flow.id, 'completed')
+        } else if (result.nextAgentName) {
+          flowExecution.stepIndex = result.nextStepIndex
+          const nextAgentId = resolveNameToId(result.nextAgentName)
+          if (nextAgentId && deliver) {
+            const lastMsg = messages[messages.length - 1]!
+            const nextStep = flowExecution.flow.steps[result.nextStepIndex]!
+            const enriched = nextStep.stepPrompt
+              ? { ...lastMsg, metadata: { ...lastMsg.metadata, stepPrompt: nextStep.stepPrompt } }
+              : lastMsg
+            deliverToOne(nextAgentId, enriched)
+          }
           notifyFlowEvent('step', {
-            flowId: flowExecution!.flow.id,
+            flowId: flowExecution.flow.id,
             stepIndex: result.nextStepIndex,
             agentName: result.nextAgentName,
           })
@@ -325,29 +334,14 @@ export const createRoom = (
     }
   }
 
-  // --- Targeted delivery ---
-
-  const deliverMessageTo = (messageId: string, agentIds: ReadonlyArray<string>): void => {
-    if (!deliver) return
-    const msgIndex = messages.findIndex(m => m.id === messageId)
-    if (msgIndex === -1) return
-    const message = messages[msgIndex]!
-    const history = messages.slice(0, msgIndex)
-    for (const agentId of agentIds) {
-      if (members.has(agentId) && !muted.has(agentId)) {
-        deliver(agentId, message, history)
-      }
-    }
-  }
-
   // --- Staleness controls ---
 
-  const setStalenessPaused = (paused: boolean): void => {
-    stalenessPaused = paused
-    if (!paused && mode === 'staleness' && messages.length > 0) {
+  const setStalenessPaused = (p: boolean): void => {
+    stalenessPaused = p
+    if (!p && mode === 'staleness' && messages.length > 0) {
       const lastMsg = messages[messages.length - 1]!
       kickstartStaleness(lastMsg)
-    } else if (paused) {
+    } else if (p) {
       stalenessCurrentTurn = undefined
       notifyTurnChanged(undefined)
     }
@@ -393,6 +387,7 @@ export const createRoom = (
     }
 
     clearStalenessState()
+    paused = false
     const lastMsg = messages[messages.length - 1]
     if (!lastMsg || !deliver) return
 
@@ -405,10 +400,11 @@ export const createRoom = (
     mode = 'flow'
     notifyModeChanged()
 
-    // Deliver trigger message to first step agent
+    // Deliver trigger message to first eligible step agent
+    const eligible = computeEligible()
     const firstStep = flow.steps[0]!
     const agentId = resolveNameToId(firstStep.agentName)
-    if (agentId && !muted.has(agentId)) {
+    if (agentId && eligible.has(agentId)) {
       const enriched = firstStep.stepPrompt
         ? { ...lastMsg, metadata: { ...lastMsg.metadata, stepPrompt: firstStep.stepPrompt } }
         : lastMsg
@@ -419,11 +415,7 @@ export const createRoom = (
 
   const cancelFlow = (): void => {
     if (!flowExecution?.active) return
-    const flowId = flowExecution.flow.id
-    clearFlowExecution()
-    mode = 'targeted'
-    notifyFlowEvent('cancelled', { flowId })
-    notifyModeChanged()
+    endFlow(flowExecution.flow.id, 'cancelled')
   }
 
   // --- Room interface ---
@@ -449,13 +441,33 @@ export const createRoom = (
     get deliveryMode() { return mode },
     setDeliveryMode,
 
+    // Pause
+    get paused() { return paused },
+    setPaused: (p: boolean): void => { paused = p },
+
+    // Room state snapshot
+    getRoomState: (): RoomState => ({
+      mode,
+      paused,
+      muted: [...muted],
+      staleness: {
+        paused: stalenessPaused,
+        participating: new Set(stalenessParticipating),
+        currentTurn: stalenessCurrentTurn,
+      },
+      ...(flowExecution ? {
+        flowExecution: {
+          flowId: flowExecution.flow.id,
+          stepIndex: flowExecution.stepIndex,
+          active: flowExecution.active,
+        },
+      } : {}),
+    }),
+
     // Muting
     setMuted,
     isMuted: (agentId: string): boolean => muted.has(agentId),
     getMutedIds: (): ReadonlySet<string> => new Set(muted),
-
-    // Targeted delivery
-    deliverMessageTo,
 
     // Staleness
     get staleness(): StalenessState {

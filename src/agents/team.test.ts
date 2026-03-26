@@ -6,7 +6,6 @@ let counter = 0
 const makeAgent = (overrides?: Partial<Agent>): Agent => ({
   id: `agent-${++counter}`,
   name: `Agent ${counter}`,
-  description: 'A test agent',
   kind: 'ai',
   metadata: {},
   state: { get: () => 'idle' as const, subscribe: () => () => {} },

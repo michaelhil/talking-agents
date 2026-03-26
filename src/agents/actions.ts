@@ -81,7 +81,6 @@ const executeAction = async (
     case 'create_room': {
       const result = house.createRoomSafe({
         name: action.name,
-        description: action.description,
         roomPrompt: action.roomPrompt,
         visibility: action.visibility,
         createdBy: agentId,

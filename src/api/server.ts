@@ -1,5 +1,5 @@
 // ============================================================================
-// Talking Agents — HTTP + WebSocket Server
+// samsinn — HTTP + WebSocket Server
 //
 // Thin glue layer. Delegates REST to http-routes.ts, WebSocket to ws-handler.ts.
 // Handles Bun.serve setup, static file serving, and WebSocket upgrade.
@@ -28,7 +28,7 @@ const serveStatic = async (pathname: string, uiPath: string, transpiler: Bun.Tra
     if (await file.exists()) {
       return new Response(file, { headers: { 'Content-Type': 'text/html' } })
     }
-    return new Response('<h1>Talking Agents</h1><p>UI coming soon.</p>', {
+    return new Response('<h1>samsinn</h1><p>UI coming soon.</p>', {
       headers: { 'Content-Type': 'text/html' },
     })
   }
@@ -78,6 +78,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
       type: 'delivery_mode_changed',
       roomName: room?.profile.name ?? roomId,
       mode,
+      paused: room?.paused ?? false,
     })
   })
 
@@ -162,7 +163,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
             session.agent.setInactive?.(false)
             wsManager.broadcast({ type: 'agent_joined', agent: {
               id: session.agent.id, name: session.agent.name,
-              description: session.agent.description, kind: session.agent.kind,
+              kind: session.agent.kind,
             }})
           }
           session.lastActivity = Date.now()
@@ -172,7 +173,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
         }
 
         const agent = await system.spawnHumanAgent(
-          { name: ws.data.name!, description: `Human participant: ${ws.data.name}` },
+          { name: ws.data.name! },
           (msg: Message) => {
             ws.send(JSON.stringify({ type: 'message', message: msg } satisfies WSOutbound))
           },
