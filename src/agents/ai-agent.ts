@@ -73,8 +73,10 @@ export const createAIAgent = (
   const pendingContexts = new Set<string>()
   let idleResolvers: Array<() => void> = []
   const stateSubscribers = new Set<StateSubscriber>()
+  let generationEpoch = 0  // incremented on cancelGeneration to discard stale results
 
   let currentSystemPrompt: string = config.systemPrompt
+  let currentModel: string = config.model
   const historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
   const maxToolIterations = config.maxToolIterations ?? 5
   const toolExecutor = options?.toolExecutor
@@ -190,9 +192,14 @@ export const createAIAgent = (
     notifyState('generating', key)
 
     const contextResult = buildContext(contextDeps(), triggerRoomId, triggerPeerId)
+    const epochAtStart = generationEpoch
 
-    evaluate(contextResult, config, llmProvider, toolExecutor, maxToolIterations, triggerRoomId, triggerPeerId)
+    const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt }
+    evaluate(contextResult, evalConfig, llmProvider, toolExecutor, maxToolIterations, triggerRoomId, triggerPeerId)
       .then(({ decision, flushInfo }) => {
+        // Discard results if generation was cancelled
+        if (epochAtStart !== generationEpoch) return
+
         // Only flush incoming when the LLM actually responded.
         // On pass, keep messages in incoming so they stay [NEW] on re-eval.
         const didRespond = decision?.response.action === 'respond'
@@ -202,9 +209,11 @@ export const createAIAgent = (
         if (decision) onDecision(decision)
       })
       .catch(err => {
+        if (epochAtStart !== generationEpoch) return  // cancelled, ignore error
         console.error(`[${config.name}] Evaluation error:`, err)
       })
       .finally(() => {
+        if (epochAtStart !== generationEpoch) return  // cancelled, already cleaned up
         generatingContexts.delete(key)
         notifyState('idle', key)
 
@@ -273,7 +282,7 @@ export const createAIAgent = (
 
     try {
       const summaryResponse = await llmProvider.chat({
-        model: config.model,
+        model: currentModel,
         messages: [
           {
             role: 'system',
@@ -329,7 +338,7 @@ export const createAIAgent = (
     id: agentId,
     name: config.name,
     kind: 'ai',
-    metadata: { model: config.model },
+    metadata: { model: currentModel },
     state,
     receive,
     join,
@@ -337,5 +346,14 @@ export const createAIAgent = (
     query,
     updateSystemPrompt: (prompt: string) => { currentSystemPrompt = prompt },
     getSystemPrompt: () => currentSystemPrompt,
+    updateModel: (model: string) => { currentModel = model },
+    getModel: () => currentModel,
+    cancelGeneration: () => {
+      // Increment epoch so in-flight LLM calls discard their results
+      generationEpoch++
+      generatingContexts.clear()
+      pendingContexts.clear()
+      notifyState('idle')
+    },
   }
 }

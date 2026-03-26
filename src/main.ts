@@ -5,7 +5,7 @@
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
 // ============================================================================
 
-import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
+import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged, ResolveAgentName, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './core/types.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
@@ -42,26 +42,23 @@ export const createSystem = (ollamaUrl?: string): System => {
     team.getAgent(agentId)?.receive(message, history)
   }
 
-  // Late-binding callbacks — set by server after wsManager is created
-  let messagePostedCallback: OnMessagePosted | undefined
-  let turnChangedCallback: OnTurnChanged | undefined
-  let deliveryModeChangedCallback: OnDeliveryModeChanged | undefined
-  let flowEventCallback: OnFlowEvent | undefined
-
-  const onMessagePosted: OnMessagePosted = (roomId, message) => {
-    messagePostedCallback?.(roomId, message)
-  }
-  const onTurnChanged: OnTurnChanged = (roomId, agentId, waitingForHuman) => {
-    turnChangedCallback?.(roomId, agentId, waitingForHuman)
-  }
-  const onDeliveryModeChanged: OnDeliveryModeChanged = (roomId, mode) => {
-    deliveryModeChangedCallback?.(roomId, mode)
-  }
-  const onFlowEvent: OnFlowEvent = (roomId, event, detail) => {
-    flowEventCallback?.(roomId, event, detail)
+  // Late-binding callbacks — set by server after wsManager is created.
+  // Generic wrapper: creates a proxy function and a setter for the real callback.
+  const lateBinding = <T extends (...args: never[]) => void>(): { proxy: T; set: (cb: T) => void } => {
+    let real: T | undefined
+    const proxy = ((...args: Parameters<T>) => real?.(...args)) as T
+    return { proxy, set: (cb: T) => { real = cb } }
   }
 
-  const house = createHouse(deliver, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent)
+  const messagePosted = lateBinding<OnMessagePosted>()
+  const turnChanged = lateBinding<OnTurnChanged>()
+  const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>()
+  const flowEvent = lateBinding<OnFlowEvent>()
+
+  // Agent name → ID resolver for [[AgentName]] addressing in rooms
+  const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
+
+  const house = createHouse(deliver, resolveAgentName, messagePosted.proxy, turnChanged.proxy, deliveryModeChanged.proxy, flowEvent.proxy)
   const routeMessage = createMessageRouter(house, team, deliver)
   const ollama = createOllamaProvider(ollamaUrl ?? DEFAULTS.ollamaBaseUrl)
   const toolRegistry = createToolRegistry()
@@ -102,10 +99,10 @@ export const createSystem = (ollamaUrl?: string): System => {
     house, team, routeMessage, ollama, toolRegistry, introRoom, removeAgent,
     spawnAIAgent: boundSpawnAIAgent,
     spawnHumanAgent: boundSpawnHumanAgent,
-    setOnMessagePosted: (callback: OnMessagePosted) => { messagePostedCallback = callback },
-    setOnTurnChanged: (callback: OnTurnChanged) => { turnChangedCallback = callback },
-    setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => { deliveryModeChangedCallback = callback },
-    setOnFlowEvent: (callback: OnFlowEvent) => { flowEventCallback = callback },
+    setOnMessagePosted: messagePosted.set,
+    setOnTurnChanged: turnChanged.set,
+    setOnDeliveryModeChanged: deliveryModeChanged.set,
+    setOnFlowEvent: flowEvent.set,
   }
 }
 

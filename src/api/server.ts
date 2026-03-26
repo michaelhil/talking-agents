@@ -68,7 +68,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
   system.setOnTurnChanged((roomId, agentId, waitingForHuman) => {
     const room = system.house.getRoom(roomId)
-    const agent = agentId ? system.team.getAgent(agentId) : undefined
+    const agent = (typeof agentId === 'string') ? system.team.getAgent(agentId) : undefined
     wsManager.broadcast({
       type: 'turn_changed',
       roomName: room?.profile.name ?? roomId,

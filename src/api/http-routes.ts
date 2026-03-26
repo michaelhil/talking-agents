@@ -59,6 +59,22 @@ export const handleAPI = async (
     })
   }
 
+  // GET /api/models — available Ollama models (running first, then all)
+  if (method === 'GET' && pathname === '/api/models') {
+    try {
+      const [running, all] = await Promise.all([
+        system.ollama.runningModels().catch(() => [] as string[]),
+        system.ollama.models().catch(() => [] as string[]),
+      ])
+      // Running models first, then remaining models (deduplicated)
+      const runningSet = new Set(running)
+      const available = all.filter(m => !runningSet.has(m))
+      return json({ running, available })
+    } catch {
+      return json({ running: [], available: [] })
+    }
+  }
+
   // GET /api/house/prompts — all editable prompts
   if (method === 'GET' && pathname === '/api/house/prompts') {
     return json({
@@ -179,7 +195,9 @@ export const handleAPI = async (
         kind: agent.kind, state: agent.state.get(), rooms: system.house.getRoomsForAgent(agent.id).map(r => r.profile.id),
       }
       if (agent.kind === 'ai' && 'getSystemPrompt' in agent) {
-        detail.systemPrompt = (agent as AIAgent).getSystemPrompt()
+        const aiAgent = agent as AIAgent
+        detail.systemPrompt = aiAgent.getSystemPrompt()
+        detail.model = aiAgent.getModel()
       }
       return json(detail)
     }
@@ -193,8 +211,23 @@ export const handleAPI = async (
       if (!agent) return notFound(`Agent "${agentName}"`)
       if (agent.kind !== 'ai') return errorResponse('Only AI agents can be updated')
       const body = await parseBody(req)
-      if (body.systemPrompt) (agent as AIAgent).updateSystemPrompt(body.systemPrompt as string)
+      const aiAgent = agent as AIAgent
+      if (body.systemPrompt) aiAgent.updateSystemPrompt(body.systemPrompt as string)
+      if (body.model) aiAgent.updateModel(body.model as string)
       return json({ updated: true, name: agent.name })
+    }
+
+  }
+
+  // POST /api/agents/:name/cancel — cancel generation
+  if (method === 'POST') {
+    const cancelName = extractParam(pathname, '/api/agents/:name/cancel')
+    if (cancelName) {
+      const agent = system.team.getAgent(cancelName)
+      if (!agent) return notFound(`Agent "${cancelName}"`)
+      if (agent.kind !== 'ai') return errorResponse('Only AI agents can be cancelled')
+      ;(agent as AIAgent).cancelGeneration()
+      return json({ cancelled: true, name: agent.name })
     }
   }
 

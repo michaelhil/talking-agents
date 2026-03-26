@@ -20,7 +20,7 @@
 import type {
   DeliverFn, DeliveryMode, Flow, FlowExecution, Message,
   OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged,
-  PostParams, Room, RoomProfile, RoomState, StalenessState,
+  PostParams, ResolveAgentName, Room, RoomProfile, RoomState, StalenessState,
 } from './types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './types.ts'
 import { parseAddressedAgents } from './addressing.ts'
@@ -30,6 +30,7 @@ import {
 
 export interface RoomCallbacks {
   readonly deliver?: DeliverFn
+  readonly resolveAgentName?: ResolveAgentName
   readonly onMessagePosted?: OnMessagePosted
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
@@ -62,15 +63,8 @@ export const createRoom = (
   const flows = new Map<string, Flow>()
   let flowExecution: FlowExecution | undefined
 
-  // --- Name resolution from message history ---
-
-  const resolveNameToId = (name: string): string | undefined => {
-    const lower = name.toLowerCase()
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i]!.senderName?.toLowerCase() === lower) return messages[i]!.senderId
-    }
-    return undefined
-  }
+  // Agent name → ID resolution (injected from Team via callbacks)
+  const resolveAgentName = callbacks?.resolveAgentName
 
   // --- Eligible set: members minus user-muted ---
 
@@ -178,9 +172,9 @@ export const createRoom = (
 
     // [[AgentName]] addressing override — works in ALL modes, even when paused
     const addressedNames = parseAddressedAgents(message.content)
-    if (addressedNames.length > 0) {
+    if (addressedNames.length > 0 && resolveAgentName) {
       const addressedIds = addressedNames
-        .map(resolveNameToId)
+        .map(resolveAgentName)
         .filter((id): id is string => id !== undefined && members.has(id) && !muted.has(id))
 
       if (addressedIds.length > 0) {
@@ -220,7 +214,7 @@ export const createRoom = (
         if (!flowExecution?.active) break
         const result = deliverFlow(
           message, messages, flowExecution, eligible,
-          params.senderId, resolveNameToId, deliver,
+          params.senderId, deliver,
         )
         if (result.advanced) {
           if (result.completed) {
@@ -259,9 +253,8 @@ export const createRoom = (
       clearStalenessState()
     }
 
-    if (prevMode !== newMode) {
-      notifyModeChanged()
-    }
+    // Notify even if mode unchanged — pause state may have changed
+    notifyModeChanged()
 
     // If switching to staleness, kickstart from stalest
     if (newMode === 'staleness' && messages.length > 0) {
@@ -312,15 +305,15 @@ export const createRoom = (
     // If muted agent is the current flow step, skip via advanceFlowStep
     if (mode === 'flow' && flowExecution?.active && isMuted) {
       const currentStep = flowExecution.flow.steps[flowExecution.stepIndex]
-      if (currentStep && resolveNameToId(currentStep.agentName) === agentId) {
+      if (currentStep && currentStep.agentId === agentId) {
         const eligible = computeEligible()
-        const result = advanceFlowStep(flowExecution, eligible, resolveNameToId)
+        const result = advanceFlowStep(flowExecution, eligible)
         if (result.completed) {
           endFlow(flowExecution.flow.id, 'completed')
-        } else if (result.nextAgentName) {
+        } else if (result.nextAgentId) {
           flowExecution.stepIndex = result.nextStepIndex
-          const nextAgentId = resolveNameToId(result.nextAgentName)
-          if (nextAgentId && deliver) {
+          if (deliver) {
+            const nextAgentId = result.nextAgentId
             const lastMsg = messages[messages.length - 1]!
             const nextStep = flowExecution.flow.steps[result.nextStepIndex]!
             const enriched = nextStep.stepPrompt
@@ -407,8 +400,8 @@ export const createRoom = (
     // Deliver trigger message to first eligible step agent
     const eligible = computeEligible()
     const firstStep = flow.steps[0]!
-    const agentId = resolveNameToId(firstStep.agentName)
-    if (agentId && eligible.has(agentId)) {
+    if (eligible.has(firstStep.agentId)) {
+      const agentId = firstStep.agentId
       const enriched = firstStep.stepPrompt
         ? { ...lastMsg, metadata: { ...lastMsg.metadata, stepPrompt: firstStep.stepPrompt } }
         : lastMsg

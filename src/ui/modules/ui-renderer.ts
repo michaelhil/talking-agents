@@ -2,6 +2,8 @@
 // UI Renderer — DOM rendering functions for rooms, agents, and messages.
 // ============================================================================
 
+import { createModal, createButtonRow, createTextarea } from './modal.ts'
+
 // === Types (mirror of server-side, minimal) ===
 
 export interface UIMessage {
@@ -36,7 +38,6 @@ export const renderRooms = (
   selectedRoomId: string,
   pausedRooms: Set<string>,
   onSelect: (roomId: string) => void,
-  onTogglePause: (roomId: string, paused: boolean) => void,
 ): void => {
   container.innerHTML = ''
   for (const room of rooms.values()) {
@@ -47,9 +48,7 @@ export const renderRooms = (
 
     const dot = document.createElement('span')
     dot.className = `inline-block w-2 h-2 rounded-full flex-shrink-0 ${isPaused ? 'bg-gray-300' : 'bg-green-400'}`
-    dot.style.cursor = 'pointer'
-    dot.title = isPaused ? 'Resume room' : 'Pause room'
-    dot.onclick = (e) => { e.stopPropagation(); onTogglePause(room.id, !isPaused) }
+    dot.title = isPaused ? 'Paused' : 'Active'
 
     const nameSpan = document.createElement('span')
     nameSpan.textContent = `${room.visibility === 'private' ? '🔒 ' : ''}${room.name}`
@@ -69,6 +68,7 @@ export const renderAgents = (
   onEditPrompt: (agentName: string) => void,
   onRemove: (agentId: string, agentName: string) => void,
   onToggleMute: (agentName: string, muted: boolean) => void,
+  onCancelGeneration: (agentName: string) => void,
 ): void => {
   container.innerHTML = ''
   for (const agent of agents.values()) {
@@ -142,12 +142,21 @@ export const renderAgents = (
       nameRow.appendChild(promptWrapper)
     }
 
-    const kindSpan = document.createElement('div')
-    kindSpan.className = 'text-xs text-gray-400'
-    kindSpan.textContent = `${agent.kind}${isGenerating ? ' — thinking...' : ''}`
+    const kindRow = document.createElement('div')
+    kindRow.className = 'text-xs text-gray-400 flex items-center gap-1'
+    kindRow.textContent = `${agent.kind}${isGenerating ? ' — thinking...' : ''}`
+
+    if (isGenerating && agent.kind === 'ai') {
+      const stopBtn = document.createElement('button')
+      stopBtn.className = 'text-red-400 hover:text-red-600 text-xs font-medium ml-1'
+      stopBtn.textContent = '■ stop'
+      stopBtn.title = `Cancel ${agent.name}'s generation`
+      stopBtn.onclick = (e) => { e.stopPropagation(); onCancelGeneration(agent.name) }
+      kindRow.appendChild(stopBtn)
+    }
 
     div.appendChild(nameRow)
-    div.appendChild(kindSpan)
+    div.appendChild(kindRow)
 
     // Mute toggle is handled via the status dot — no separate button needed
 
@@ -256,46 +265,15 @@ export const openPromptEditor = (
     .then(res => res.ok ? res.json() : null)
     .then(data => {
       if (!data) return
-      const currentPrompt = data.systemPrompt ?? ''
-
-      const overlay = document.createElement('div')
-      overlay.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'
-      overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
-
-      const modal = document.createElement('div')
-      modal.className = 'bg-white rounded-lg shadow-xl p-6 w-full max-w-lg mx-4'
-
-      const title = document.createElement('h3')
-      title.className = 'text-lg font-semibold mb-3'
-      title.textContent = `System Prompt — ${agentName}`
-
-      const textarea = document.createElement('textarea')
-      textarea.className = 'w-full h-48 border rounded p-3 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-300'
-      textarea.value = currentPrompt
-
-      const btnRow = document.createElement('div')
-      btnRow.className = 'flex justify-end gap-2 mt-3'
-
-      const cancelBtn = document.createElement('button')
-      cancelBtn.className = 'px-4 py-2 text-sm text-gray-600 hover:text-gray-800'
-      cancelBtn.textContent = 'Cancel'
-      cancelBtn.onclick = () => overlay.remove()
-
-      const saveBtn = document.createElement('button')
-      saveBtn.className = 'px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600'
-      saveBtn.textContent = 'Save'
-      saveBtn.onclick = () => {
-        send({ type: 'update_agent', name: agentName, systemPrompt: textarea.value })
-        overlay.remove()
-      }
-
-      btnRow.appendChild(cancelBtn)
-      btnRow.appendChild(saveBtn)
-      modal.appendChild(title)
-      modal.appendChild(textarea)
-      modal.appendChild(btnRow)
-      overlay.appendChild(modal)
-      document.body.appendChild(overlay)
+      const modal = createModal({ title: `System Prompt — ${agentName}` })
+      const textarea = createTextarea(data.systemPrompt ?? '')
+      const buttons = createButtonRow(
+        modal.close,
+        () => { send({ type: 'update_agent', name: agentName, systemPrompt: textarea.value }); modal.close() },
+      )
+      modal.body.appendChild(textarea)
+      modal.body.appendChild(buttons)
+      document.body.appendChild(modal.overlay)
       textarea.focus()
     })
 }
@@ -305,6 +283,7 @@ export const openPromptEditor = (
 // toggle loop, reorder with up/down buttons. Saves via callback.
 
 interface FlowStepInput {
+  agentId: string
   agentName: string
   stepPrompt: string
 }
@@ -312,7 +291,7 @@ interface FlowStepInput {
 export const openFlowEditorModal = (
   agents: Map<string, AgentInfo>,
   myAgentId: string,
-  onSave: (name: string, steps: ReadonlyArray<{ agentName: string; stepPrompt?: string }>, loop: boolean) => void,
+  onSave: (name: string, steps: ReadonlyArray<{ agentId: string; agentName: string; stepPrompt?: string }>, loop: boolean) => void,
   existingName?: string,
   existingSteps?: ReadonlyArray<FlowStepInput>,
   existingLoop?: boolean,
@@ -321,20 +300,12 @@ export const openFlowEditorModal = (
     ? existingSteps.map(s => ({ ...s }))
     : []
 
-  const agentNames = [...agents.values()].map(a => a.name)
-
-  const overlay = document.createElement('div')
-  overlay.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
-
-  const modal = document.createElement('div')
+  const { overlay, body: modal, close } = createModal({
+    title: existingName ? `Edit Flow: ${existingName}` : 'Create Flow',
+  })
+  // Override card style for scrollable flow content
   modal.className = 'bg-white rounded-lg shadow-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] flex flex-col'
   modal.onclick = (e) => e.stopPropagation()
-
-  // Title
-  const title = document.createElement('h3')
-  title.className = 'text-lg font-semibold mb-3'
-  title.textContent = existingName ? `Edit Flow: ${existingName}` : 'Create Flow'
 
   // Flow name
   const nameInput = document.createElement('input')
@@ -369,14 +340,18 @@ export const openFlowEditorModal = (
       // Agent selector
       const select = document.createElement('select')
       select.className = 'text-sm border rounded px-2 py-1 bg-white shrink-0'
-      for (const name of agentNames) {
+      for (const agent of agents.values()) {
+        if (agent.id === myAgentId) continue
         const opt = document.createElement('option')
-        opt.value = name
-        opt.textContent = name
-        if (name === step.agentName) opt.selected = true
+        opt.value = agent.id
+        opt.textContent = agent.name
+        if (agent.id === step.agentId) opt.selected = true
         select.appendChild(opt)
       }
-      select.onchange = () => { step.agentName = select.value }
+      select.onchange = () => {
+        const selectedAgent = [...agents.values()].find(a => a.id === select.value)
+        if (selectedAgent) { step.agentId = selectedAgent.id; step.agentName = selectedAgent.name }
+      }
 
       // Step prompt
       const promptInput = document.createElement('input')
@@ -436,42 +411,31 @@ export const openFlowEditorModal = (
   addStepBtn.className = 'text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded hover:bg-purple-200 mb-3'
   addStepBtn.textContent = '+ Add Step'
   addStepBtn.onclick = () => {
-    const defaultName = agentNames[0] ?? ''
-    steps.push({ agentName: defaultName, stepPrompt: '' })
+    const defaultAgent = [...agents.values()].find(a => a.id !== myAgentId)
+    if (!defaultAgent) return
+    steps.push({ agentId: defaultAgent.id, agentName: defaultAgent.name, stepPrompt: '' })
     renderSteps()
     stepsContainer.scrollTop = stepsContainer.scrollHeight
   }
 
   // Bottom buttons
-  const btnRow = document.createElement('div')
-  btnRow.className = 'flex justify-end gap-2'
+  const btnRow = createButtonRow(
+    close,
+    () => {
+      const flowName = nameInput.value.trim()
+      if (!flowName) { nameInput.focus(); return }
+      if (steps.length === 0) return
+      const cleanSteps = steps.map(s => ({
+        agentName: s.agentName,
+        ...(s.stepPrompt.trim() ? { stepPrompt: s.stepPrompt.trim() } : {}),
+      }))
+      onSave(flowName, cleanSteps, loopCheckbox.checked)
+      close()
+    },
+    'Save Flow',
+    'bg-purple-500 hover:bg-purple-600',
+  )
 
-  const cancelBtn = document.createElement('button')
-  cancelBtn.type = 'button'
-  cancelBtn.className = 'px-4 py-2 text-sm text-gray-600 hover:text-gray-800'
-  cancelBtn.textContent = 'Cancel'
-  cancelBtn.onclick = () => overlay.remove()
-
-  const saveBtn = document.createElement('button')
-  saveBtn.type = 'button'
-  saveBtn.className = 'px-4 py-2 text-sm bg-purple-500 text-white rounded hover:bg-purple-600'
-  saveBtn.textContent = 'Save Flow'
-  saveBtn.onclick = () => {
-    const flowName = nameInput.value.trim()
-    if (!flowName) { nameInput.focus(); return }
-    if (steps.length === 0) return
-    const cleanSteps = steps.map(s => ({
-      agentName: s.agentName,
-      ...(s.stepPrompt.trim() ? { stepPrompt: s.stepPrompt.trim() } : {}),
-    }))
-    onSave(flowName, cleanSteps, loopCheckbox.checked)
-    overlay.remove()
-  }
-
-  btnRow.appendChild(cancelBtn)
-  btnRow.appendChild(saveBtn)
-
-  modal.appendChild(title)
   modal.appendChild(nameInput)
   modal.appendChild(loopRow)
   modal.appendChild(stepsContainer)

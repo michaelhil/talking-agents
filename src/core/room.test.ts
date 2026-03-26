@@ -20,6 +20,10 @@ const trackDeliveries = () => {
   return { delivered, deliver }
 }
 
+// Test helper: name→ID resolver from a static mapping
+const makeResolver = (mapping: Record<string, string>) =>
+  (name: string): string | undefined => mapping[name]
+
 // ============================================================================
 // Basic Room Tests
 // ============================================================================
@@ -654,9 +658,11 @@ describe('Room — Staleness mode', () => {
 // ============================================================================
 
 describe('Room — Directed Addressing [[AgentName]]', () => {
+  const nameMap = makeResolver({ Alice: 'a', Bob: 'b', Charlie: 'c' })
+
   test('broadcast mode: [[AgentName]] delivers only to addressed agent', () => {
     const { delivered, deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
+    const room = createRoom(makeProfile(), { deliver, resolveAgentName: nameMap })
 
     room.addMember('a')
     room.addMember('b')
@@ -674,7 +680,7 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
 
   test('broadcast mode: [[AgentName]] with multiple targets', () => {
     const { delivered, deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
+    const room = createRoom(makeProfile(), { deliver, resolveAgentName: nameMap })
 
     room.addMember('a')
     room.addMember('b')
@@ -692,7 +698,7 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
 
   test('unresolvable [[Name]] falls through to broadcast', () => {
     const { delivered, deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
+    const room = createRoom(makeProfile(), { deliver, resolveAgentName: nameMap })
 
     room.addMember('a')
     room.addMember('b')
@@ -707,7 +713,7 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
 
   test('staleness mode: [[AgentName]] overrides staleness', () => {
     const { delivered, deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
+    const room = createRoom(makeProfile(), { deliver, resolveAgentName: nameMap })
 
     room.addMember('a')
     room.addMember('b')
@@ -735,7 +741,7 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
 
   test('message with [[AgentName]] is always stored regardless of delivery', () => {
     const { deliver } = trackDeliveries()
-    const room = createRoom(makeProfile(), { deliver })
+    const room = createRoom(makeProfile(), { deliver, resolveAgentName: nameMap })
 
     room.addMember('a')
     room.addMember('b')
@@ -758,7 +764,7 @@ describe('Room — Flow mode', () => {
     const room = createRoom(makeProfile())
     const flow = room.addFlow({
       name: 'Test Flow',
-      steps: [{ agentName: 'Alice' }, { agentName: 'Bob' }],
+      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
       loop: false,
     })
 
@@ -770,7 +776,7 @@ describe('Room — Flow mode', () => {
 
   test('removeFlow deletes a flow', () => {
     const room = createRoom(makeProfile())
-    const flow = room.addFlow({ name: 'F', steps: [{ agentName: 'A' }], loop: false })
+    const flow = room.addFlow({ name: 'F', steps: [{ agentId: 'a-id', agentName: 'A' }], loop: false })
     expect(room.removeFlow(flow.id)).toBe(true)
     expect(room.getFlows()).toHaveLength(0)
   })
@@ -789,7 +795,7 @@ describe('Room — Flow mode', () => {
 
     const flow = room.addFlow({
       name: 'Pipeline',
-      steps: [{ agentName: 'Alice' }, { agentName: 'Bob' }],
+      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
       loop: false,
     })
 
@@ -812,7 +818,7 @@ describe('Room — Flow mode', () => {
 
     const flow = room.addFlow({
       name: 'Pipeline',
-      steps: [{ agentName: 'Alice' }, { agentName: 'Bob' }],
+      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
       loop: false,
     })
     room.startFlow(flow.id)
@@ -836,7 +842,7 @@ describe('Room — Flow mode', () => {
 
     const flow = room.addFlow({
       name: 'Pipeline',
-      steps: [{ agentName: 'Alice' }, { agentName: 'Bob' }],
+      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
       loop: false,
     })
     room.startFlow(flow.id)
@@ -868,7 +874,7 @@ describe('Room — Flow mode', () => {
 
     const flow = room.addFlow({
       name: 'Loop',
-      steps: [{ agentName: 'Alice' }, { agentName: 'Bob' }],
+      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
       loop: true,
     })
     room.startFlow(flow.id)
@@ -901,8 +907,8 @@ describe('Room — Flow mode', () => {
     const flow = room.addFlow({
       name: 'Prompted',
       steps: [
-        { agentName: 'Alice', stepPrompt: 'Focus on risks' },
-        { agentName: 'Bob', stepPrompt: 'Summarize findings' },
+        { agentId: 'a', agentName: 'Alice', stepPrompt: 'Focus on risks' },
+        { agentId: 'b', agentName: 'Bob', stepPrompt: 'Summarize findings' },
       ],
       loop: false,
     })
@@ -925,7 +931,7 @@ describe('Room — Flow mode', () => {
     room.addMember('a')
     room.post({ senderId: 'a', senderName: 'Alice', content: 'hi', type: 'chat' })
 
-    const flow = room.addFlow({ name: 'F', steps: [{ agentName: 'Alice' }], loop: true })
+    const flow = room.addFlow({ name: 'F', steps: [{ agentId: 'a', agentName: 'Alice' }], loop: true })
     room.startFlow(flow.id)
     expect(room.deliveryMode).toBe('flow')
 
@@ -948,7 +954,7 @@ describe('Room — Flow mode', () => {
 
     const flow = room.addFlow({
       name: 'F',
-      steps: [{ agentName: 'Alice' }, { agentName: 'Bob' }],
+      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
       loop: false,
     })
     room.startFlow(flow.id)

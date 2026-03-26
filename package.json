@@ -1,6 +1,6 @@
 {
   "name": "samsinn",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "Multi-agent room communication system with delivery modes, flows, muting, directed addressing, and MCP server",
   "module": "src/index.ts",
   "type": "module",

@@ -6,7 +6,7 @@
 // createRoomSafe auto-renames on collision and returns CreateResult.
 // ============================================================================
 
-import type { CreateResult, DeliverFn, House, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged, Room, RoomConfig, RoomProfile } from './types.ts'
+import type { CreateResult, DeliverFn, House, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged, ResolveAgentName, Room, RoomConfig, RoomProfile } from './types.ts'
 import { createRoom, type RoomCallbacks } from './room.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
@@ -29,7 +29,7 @@ const DEFAULT_RESPONSE_FORMAT_TOOLS = `\n- To use a tool, write ONLY ::TOOL:: fo
 
 export { DEFAULT_RESPONSE_FORMAT_TOOLS }
 
-export const createHouse = (deliver?: DeliverFn, onMessagePosted?: OnMessagePosted, onTurnChanged?: OnTurnChanged, onDeliveryModeChanged?: OnDeliveryModeChanged, onFlowEvent?: OnFlowEvent): House => {
+export const createHouse = (deliver?: DeliverFn, resolveAgentName?: ResolveAgentName, onMessagePosted?: OnMessagePosted, onTurnChanged?: OnTurnChanged, onDeliveryModeChanged?: OnDeliveryModeChanged, onFlowEvent?: OnFlowEvent): House => {
   const rooms = new Map<string, Room>()
   let housePrompt = DEFAULT_HOUSE_PROMPT
   let responseFormat = DEFAULT_RESPONSE_FORMAT
@@ -52,7 +52,7 @@ export const createHouse = (deliver?: DeliverFn, onMessagePosted?: OnMessagePost
       createdBy: config.createdBy,
       createdAt: Date.now(),
     }
-    const roomCallbacks: RoomCallbacks = { deliver, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent }
+    const roomCallbacks: RoomCallbacks = { deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent }
     const room = createRoom(profile, roomCallbacks)
     rooms.set(id, room)
     return room

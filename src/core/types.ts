@@ -74,7 +74,8 @@ export interface StalenessState {
 // --- Flow types ---
 
 export interface FlowStep {
-  readonly agentName: string       // human-readable name (resolved at execution time)
+  readonly agentId: string         // agent UUID (resolved once at flow creation)
+  readonly agentName: string       // human-readable name (for display and LLM context)
   readonly stepPrompt?: string     // per-step instruction for this agent
 }
 
@@ -107,6 +108,10 @@ export interface RoomState {
 }
 
 export type AgentDeliveryStatus = 'active' | 'waiting' | 'muted'
+
+// --- Room dependencies ---
+
+export type ResolveAgentName = (name: string) => string | undefined  // agent name → UUID
 
 // --- Room event callbacks ---
 
@@ -221,6 +226,9 @@ export interface AIAgent extends Agent {
   readonly query: (question: string, askerId: string, askerName?: string) => Promise<string>
   readonly updateSystemPrompt: (prompt: string) => void
   readonly getSystemPrompt: () => string
+  readonly updateModel: (model: string) => void
+  readonly getModel: () => string
+  readonly cancelGeneration: () => void
 }
 
 // === Team — agent collection (AI + human) ===
@@ -335,6 +343,7 @@ export interface ChatResponse {
 export interface LLMProvider {
   readonly chat: (request: ChatRequest) => Promise<ChatResponse>
   readonly models: () => Promise<string[]>
+  readonly runningModels: () => Promise<string[]>
 }
 
 // === WebSocket Protocol — typed inbound/outbound messages ===
@@ -355,7 +364,7 @@ export type WSInbound =
   // Staleness controls
   | { readonly type: 'set_staleness_paused'; readonly roomName: string; readonly paused: boolean }
   | { readonly type: 'set_participating'; readonly roomName: string; readonly agentName: string; readonly participating: boolean }
-  // Flow management
+  // Flow management (callers provide agentId — no server-side resolution)
   | { readonly type: 'add_flow'; readonly roomName: string; readonly name: string; readonly steps: ReadonlyArray<FlowStep>; readonly loop?: boolean }
   | { readonly type: 'remove_flow'; readonly roomName: string; readonly flowId: string }
   | { readonly type: 'start_flow'; readonly roomName: string; readonly flowId: string; readonly content: string }

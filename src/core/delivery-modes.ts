@@ -95,7 +95,6 @@ export const deliverFlow = (
   execution: FlowExecution,
   eligible: ReadonlySet<string>,
   senderId: string,
-  resolveNameToId: (name: string) => string | undefined,
   deliver: DeliverFn,
 ): FlowResult => {
   const currentStep = execution.flow.steps[execution.stepIndex]
@@ -103,45 +102,39 @@ export const deliverFlow = (
     return { advanced: false, completed: true, looped: false, nextStepIndex: execution.stepIndex }
   }
 
-  const currentAgentId = resolveNameToId(currentStep.agentName)
-
   // Only the expected step agent's response advances the flow
-  if (senderId !== currentAgentId) {
+  if (senderId !== currentStep.agentId) {
     return { advanced: false, completed: false, looped: false, nextStepIndex: execution.stepIndex }
   }
 
   // Advance to next step — find next eligible agent
-  const result = advanceFlowStep(execution, eligible, resolveNameToId)
+  const result = advanceFlowStep(execution, eligible)
 
-  if (!result.completed && result.nextAgentName) {
-    const nextAgentId = resolveNameToId(result.nextAgentName)
-    if (nextAgentId) {
-      const nextStep = execution.flow.steps[result.nextStepIndex]!
-      const enriched = nextStep.stepPrompt
-        ? { ...message, metadata: { ...message.metadata, stepPrompt: nextStep.stepPrompt } }
-        : message
-      deliverToAgent(nextAgentId, enriched, allMessages, deliver)
-    }
+  if (!result.completed && result.nextAgentId) {
+    const nextStep = execution.flow.steps[result.nextStepIndex]!
+    const enriched = nextStep.stepPrompt
+      ? { ...message, metadata: { ...message.metadata, stepPrompt: nextStep.stepPrompt } }
+      : message
+    deliverToAgent(result.nextAgentId, enriched, allMessages, deliver)
   }
 
   return { advanced: true, ...result }
 }
 
 // --- Flow step advancement (pure, no delivery side effects) ---
-// Used by deliverFlow for normal advancement, and by room.ts when
-// muting the current step agent (skip without fake senderId).
+// Uses agentId directly from FlowStep — no name resolution needed.
 
 export interface FlowAdvanceResult {
   readonly completed: boolean
   readonly looped: boolean
   readonly nextStepIndex: number
+  readonly nextAgentId?: string
   readonly nextAgentName?: string
 }
 
 export const advanceFlowStep = (
   execution: FlowExecution,
   eligible: ReadonlySet<string>,
-  resolveNameToId: (name: string) => string | undefined,
 ): FlowAdvanceResult => {
   let nextIndex = execution.stepIndex + 1
   let looped = false
@@ -160,10 +153,9 @@ export const advanceFlowStep = (
   let attempts = 0
   while (attempts < stepsLength) {
     const nextStep = execution.flow.steps[nextIndex]!
-    const nextAgentId = resolveNameToId(nextStep.agentName)
 
-    if (nextAgentId && eligible.has(nextAgentId)) {
-      return { completed: false, looped, nextStepIndex: nextIndex, nextAgentName: nextStep.agentName }
+    if (eligible.has(nextStep.agentId)) {
+      return { completed: false, looped, nextStepIndex: nextIndex, nextAgentId: nextStep.agentId, nextAgentName: nextStep.agentName }
     }
 
     // Skip ineligible agent

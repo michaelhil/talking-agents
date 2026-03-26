@@ -18,6 +18,10 @@ interface OllamaTagsResponse {
   readonly models: ReadonlyArray<{ readonly name: string }>
 }
 
+interface OllamaPsResponse {
+  readonly models: ReadonlyArray<{ readonly name: string; readonly size: number }>
+}
+
 const CHAT_TIMEOUT_MS = 300_000 // 5 minutes — large models can be slow
 const TAGS_TIMEOUT_MS = 10_000
 
@@ -124,5 +128,21 @@ export const createOllamaProvider = (baseUrl: string): LLMProvider => {
     return data.models.map(m => m.name)
   }
 
-  return { chat, models }
+  const runningModels = async (): Promise<string[]> => {
+    const response = await fetchWithTimeout(
+      `${baseUrl}/api/ps`,
+      {},
+      TAGS_TIMEOUT_MS,
+    )
+
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`Ollama API error ${response.status}: ${text}`)
+    }
+
+    const data = (await response.json()) as OllamaPsResponse
+    return data.models.map(m => m.name)
+  }
+
+  return { chat, models, runningModels }
 }

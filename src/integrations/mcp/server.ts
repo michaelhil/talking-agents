@@ -4,7 +4,7 @@
 // Symmetric with client.ts: the client consumes external MCP tools, the server
 // exposes Samsinn as MCP tools for external LLMs/agents to orchestrate.
 //
-// 22 tools mirror the REST API surface. 3 resources provide read-only access.
+// 23 tools mirror the REST API surface. 3 resources provide read-only access.
 // Event notifications via logging messages for real-time updates.
 //
 // Usage:

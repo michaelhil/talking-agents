@@ -17,6 +17,7 @@ import {
   type RoomProfile,
   type AgentInfo,
 } from './ui-renderer.ts'
+import { openTextEditorModal } from './modal.ts'
 
 // === WS Protocol Types ===
 
@@ -64,8 +65,9 @@ const roomName = $('#room-name') as HTMLElement
 const typingIndicators = $('#typing-indicators') as HTMLElement
 const connectionStatus = $('#connection-status') as HTMLElement
 const modeSelector = $('#mode-selector') as HTMLSelectElement
+const pauseToggle = $('#btn-pause-toggle') as HTMLButtonElement
 const roomModeInfo = $('#room-mode-info') as HTMLElement
-const flowSelector = $('#flow-selector') as HTMLSelectElement
+// flowSelector removed — flows are now in the mode selector dropdown
 const nameModal = $('#name-modal') as HTMLDialogElement
 const nameForm = $('#name-form') as HTMLFormElement
 const roomModal = $('#room-modal') as HTMLDialogElement
@@ -77,13 +79,7 @@ const agentForm = $('#agent-form') as HTMLFormElement
 
 const send = (data: unknown) => client?.send(data)
 
-const onTogglePause = (roomId: string, paused: boolean): void => {
-  const room = rooms.get(roomId)
-  if (!room) return
-  send({ type: 'set_paused', roomName: room.name, paused })
-}
-
-const refreshRooms = () => renderRooms(roomList, rooms, selectedRoomId, pausedRooms, selectRoom, onTogglePause)
+const refreshRooms = () => renderRooms(roomList, rooms, selectedRoomId, pausedRooms, selectRoom)
 
 const refreshAgents = () => renderAgents(
   agentList, agents, agentStates, mutedAgents,
@@ -93,21 +89,59 @@ const refreshAgents = () => renderAgents(
     const room = rooms.get(selectedRoomId)
     if (room) send({ type: 'set_muted', roomName: room.name, agentName: name, muted })
   },
+  (name) => { send({ type: 'cancel_generation', name }) },
 )
 
-const refreshFlowSelector = (): void => {
-  flowSelector.innerHTML = '<option value="">Flow...</option><option value="__create__">+ Create Flow</option>'
+const refreshModeSelector = (): void => {
+  modeSelector.innerHTML = ''
+
+  // Delivery modes
+  const modes = [
+    { value: 'broadcast', label: 'Broadcast' },
+    { value: 'staleness', label: 'Staleness' },
+  ]
+  for (const m of modes) {
+    const opt = document.createElement('option')
+    opt.value = m.value
+    opt.textContent = m.label
+    modeSelector.appendChild(opt)
+  }
+
+  // Flow options
   const room = rooms.get(selectedRoomId)
-  if (!room) return
-  const flows = roomFlows.get(room.name) ?? []
+  const flows = room ? (roomFlows.get(room.name) ?? []) : []
+  // Flow separator and options — always shown
+  const sep = document.createElement('option')
+  sep.disabled = true
+  sep.textContent = '── Flows ──'
+  modeSelector.appendChild(sep)
+
   for (const flow of flows) {
     const opt = document.createElement('option')
-    opt.value = flow.id
+    opt.value = `flow:${flow.id}`
     opt.textContent = `▶ ${flow.name}${flow.loop ? ' ↻' : ''}`
-    flowSelector.appendChild(opt)
+    modeSelector.appendChild(opt)
   }
-  // Show flow selector if there are flows or we have agents
-  flowSelector.classList.toggle('hidden', agents.size <= 1)
+
+  const createOpt = document.createElement('option')
+  createOpt.value = '__create_flow__'
+  createOpt.textContent = '+ Create Flow'
+  modeSelector.appendChild(createOpt)
+
+  // Set selected value
+  if (currentDeliveryMode === 'flow') {
+    const activeFlowOpt = Array.from(modeSelector.options).find(o => o.value.startsWith('flow:'))
+    if (activeFlowOpt) modeSelector.value = activeFlowOpt.value
+  } else {
+    modeSelector.value = currentDeliveryMode
+  }
+
+  // Pause toggle state
+  pauseToggle.textContent = roomPaused ? '▶' : '⏸'
+  pauseToggle.title = roomPaused ? 'Resume delivery' : 'Pause delivery'
+  pauseToggle.className = `w-6 h-6 flex items-center justify-center text-sm rounded hover:bg-gray-200 ${roomPaused ? 'text-green-600' : 'text-gray-400'}`
+  modeSelector.disabled = roomPaused
+  modeSelector.classList.toggle('opacity-50', roomPaused)
 }
 
 const fetchFlowsForRoom = async (roomName: string): Promise<void> => {
@@ -116,20 +150,19 @@ const fetchFlowsForRoom = async (roomName: string): Promise<void> => {
     if (!res.ok) return
     const flows = await res.json() as FlowInfo[]
     roomFlows.set(roomName, flows)
-    refreshFlowSelector()
+    refreshModeSelector()
   } catch { /* ignore */ }
 }
 
 const updateModeUI = () => {
-  modeSelector.value = currentDeliveryMode
-  const isFlow = currentDeliveryMode === 'flow'
+  refreshModeSelector()
 
-  if (isFlow) {
+  if (currentDeliveryMode === 'flow') {
     roomModeInfo.textContent = 'Flow active'
     roomModeInfo.className = 'text-xs text-purple-500 h-4'
   } else if (currentDeliveryMode === 'staleness') {
-    roomModeInfo.textContent = 'Staleness turn-taking active'
-    roomModeInfo.className = 'text-xs text-blue-500 h-4'
+    roomModeInfo.textContent = ''
+    roomModeInfo.className = 'text-xs text-gray-400 h-4'
   } else {
     roomModeInfo.textContent = ''
     roomModeInfo.className = 'text-xs text-gray-400 h-4'
@@ -337,12 +370,12 @@ chatForm.onsubmit = (e) => {
   const room = rooms.get(selectedRoomId)
   if (!room) return
 
-  // If a flow is selected, start it with this message
-  const selectedFlow = flowSelector.value
-  if (selectedFlow && selectedFlow !== '__create__') {
-    send({ type: 'start_flow', roomName: room.name, flowId: selectedFlow, content })
+  // If a flow is selected in the mode dropdown, start it with this message
+  const selectedMode = modeSelector.value
+  if (selectedMode.startsWith('flow:')) {
+    const flowId = selectedMode.slice(5)
+    send({ type: 'start_flow', roomName: room.name, flowId, content })
     chatInput.value = ''
-    flowSelector.value = ''
     chatInput.placeholder = 'Type a message...'
     return
   }
@@ -352,45 +385,83 @@ chatForm.onsubmit = (e) => {
 }
 
 document.getElementById('btn-create-room')!.onclick = () => roomModal.showModal()
-document.getElementById('btn-create-agent')!.onclick = () => agentModal.showModal()
+document.getElementById('btn-create-agent')!.onclick = async () => {
+  // Populate model dropdown before showing modal
+  const modelSelect = agentForm.querySelector('select[name="model"]') as HTMLSelectElement
+  modelSelect.innerHTML = '<option value="">Loading...</option>'
+  agentModal.showModal()
+  try {
+    const res = await fetch('/api/models')
+    const data = await res.json() as { running: string[]; available: string[] }
+    modelSelect.innerHTML = ''
+    if (data.running.length > 0) {
+      const group = document.createElement('optgroup')
+      group.label = 'Running'
+      for (const m of data.running) {
+        const opt = document.createElement('option')
+        opt.value = m; opt.textContent = m; opt.selected = data.running.indexOf(m) === 0
+        group.appendChild(opt)
+      }
+      modelSelect.appendChild(group)
+    }
+    if (data.available.length > 0) {
+      const group = document.createElement('optgroup')
+      group.label = 'Available'
+      for (const m of data.available) {
+        const opt = document.createElement('option')
+        opt.value = m; opt.textContent = m
+        group.appendChild(opt)
+      }
+      modelSelect.appendChild(group)
+    }
+    if (data.running.length === 0 && data.available.length === 0) {
+      modelSelect.innerHTML = '<option value="">No models found</option>'
+    }
+  } catch {
+    modelSelect.innerHTML = '<option value="">Failed to load models</option>'
+  }
+}
 
-// Mode selector
+// Pause toggle
+pauseToggle.onclick = () => {
+  const room = rooms.get(selectedRoomId)
+  if (!room) return
+  send({ type: 'set_paused', roomName: room.name, paused: !roomPaused })
+}
+
+// Mode selector — controls delivery mode and flows
 modeSelector.onchange = () => {
   const room = rooms.get(selectedRoomId)
   if (!room) return
-  roomPaused = false  // switching mode clears pause
-  send({ type: 'set_delivery_mode', roomName: room.name, mode: modeSelector.value })
-}
+  const val = modeSelector.value
 
-// Flow selector
-flowSelector.onchange = () => {
-  const room = rooms.get(selectedRoomId)
-  if (!room) return
-  const val = flowSelector.value
-
-  if (val === '__create__') {
-    flowSelector.value = ''
+  // Create flow
+  if (val === '__create_flow__') {
+    refreshModeSelector()  // revert selector to current state
     openFlowEditorModal(agents, myAgentId, (name, steps, loop) => {
       send({ type: 'add_flow', roomName: room.name, name, steps, loop })
-      // Refresh flows after a short delay to pick up the new flow
       setTimeout(() => fetchFlowsForRoom(room.name), 200)
     })
     return
   }
 
-  if (val) {
+  // Start a flow
+  if (val.startsWith('flow:')) {
+    const flowId = val.slice(5)
     const content = chatInput.value.trim()
     if (!content) {
       chatInput.placeholder = 'Type a message to start the flow...'
       chatInput.focus()
-      flowSelector.value = val // keep selection
       return
     }
-    // Start the flow with the message
-    send({ type: 'start_flow', roomName: room.name, flowId: val, content })
+    send({ type: 'start_flow', roomName: room.name, flowId, content })
     chatInput.value = ''
-    flowSelector.value = ''
+    chatInput.placeholder = 'Type a message...'
+    return
   }
+
+  // Base delivery mode (broadcast, staleness) — also unpauses
+  send({ type: 'set_delivery_mode', roomName: room.name, mode: val })
 }
 
 roomForm.onsubmit = (e) => {
@@ -422,86 +493,21 @@ agentForm.onsubmit = (e) => {
 
 // === Prompt editing — house, room, response format ===
 
-const openTextEditor = (
-  title: string,
-  fetchUrl: string,
-  fieldName: string,
-  saveUrl: string,
-  method = 'PUT',
-  extractValue?: (data: Record<string, unknown>) => string,
-): void => {
-  fetch(fetchUrl)
-    .then(res => res.ok ? res.json() : null)
-    .then(data => {
-      if (!data) return
-      const currentValue = extractValue
-        ? extractValue(data as Record<string, unknown>)
-        : ((data[fieldName] ?? '') as string)
-
-      const overlay = document.createElement('div')
-      overlay.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'
-      overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
-
-      const modal = document.createElement('div')
-      modal.className = 'bg-white rounded-lg shadow-xl p-6 w-full max-w-lg mx-4'
-
-      const heading = document.createElement('h3')
-      heading.className = 'text-lg font-semibold mb-3'
-      heading.textContent = title
-
-      const textarea = document.createElement('textarea')
-      textarea.className = 'w-full h-48 border rounded p-3 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-300'
-      textarea.value = currentValue
-
-      const btnRow = document.createElement('div')
-      btnRow.className = 'flex justify-end gap-2 mt-3'
-
-      const cancelBtn = document.createElement('button')
-      cancelBtn.className = 'px-4 py-2 text-sm text-gray-600 hover:text-gray-800'
-      cancelBtn.textContent = 'Cancel'
-      cancelBtn.onclick = () => overlay.remove()
-
-      const saveBtn = document.createElement('button')
-      saveBtn.className = 'px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600'
-      saveBtn.textContent = 'Save'
-      saveBtn.onclick = () => {
-        fetch(saveUrl, {
-          method,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [fieldName]: textarea.value }),
-        }).catch(() => {})
-        overlay.remove()
-      }
-
-      btnRow.appendChild(cancelBtn)
-      btnRow.appendChild(saveBtn)
-      modal.appendChild(heading)
-      modal.appendChild(textarea)
-      modal.appendChild(btnRow)
-      overlay.appendChild(modal)
-      document.body.appendChild(overlay)
-      textarea.focus()
-    })
-    .catch(() => {})
-}
-
 const btnHousePrompt = $('#btn-house-prompt') as HTMLButtonElement
-btnHousePrompt.onclick = () => openTextEditor(
-  'House Rules',
-  '/api/house/prompts', 'housePrompt', '/api/house/prompts',
+btnHousePrompt.onclick = () => openTextEditorModal(
+  'House Rules', '/api/house/prompts', 'housePrompt', '/api/house/prompts',
 )
 
 const btnResponseFormat = $('#btn-response-format') as HTMLButtonElement
-btnResponseFormat.onclick = () => openTextEditor(
-  'Response Format',
-  '/api/house/prompts', 'responseFormat', '/api/house/prompts',
+btnResponseFormat.onclick = () => openTextEditorModal(
+  'Response Format', '/api/house/prompts', 'responseFormat', '/api/house/prompts',
 )
 
 const btnRoomPrompt = $('#btn-room-prompt') as HTMLButtonElement
 btnRoomPrompt.onclick = () => {
   const room = rooms.get(selectedRoomId)
   if (!room) return
-  openTextEditor(
+  openTextEditorModal(
     `Room Prompt — ${room.name}`,
     `/api/rooms/${encodeURIComponent(room.name)}`,
     'roomPrompt',
