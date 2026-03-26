@@ -61,6 +61,11 @@ export const createServer = (system: System, config?: ServerConfig) => {
   const wsManager = createWSManager(system)
 
   // Wire room event callbacks to WebSocket broadcast
+  // All messages posted to any room are broadcast to all WS clients (UI always sees everything)
+  system.setOnMessagePosted((_roomId, message) => {
+    wsManager.broadcast({ type: 'message', message })
+  })
+
   system.setOnTurnChanged((roomId, agentId, waitingForHuman) => {
     const room = system.house.getRoom(roomId)
     const agent = agentId ? system.team.getAgent(agentId) : undefined

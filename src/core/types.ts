@@ -110,6 +110,7 @@ export type AgentDeliveryStatus = 'active' | 'waiting' | 'muted'
 
 // --- Room event callbacks ---
 
+export type OnMessagePosted = (roomId: string, message: Message) => void
 export type OnDeliveryModeChanged = (roomId: string, mode: DeliveryMode) => void
 export type OnTurnChanged = (roomId: string, agentId?: string, waitingForHuman?: boolean) => void
 export type OnFlowEvent = (roomId: string, event: 'started' | 'step' | 'completed' | 'cancelled', detail?: Record<string, unknown>) => void

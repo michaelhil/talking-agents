@@ -19,7 +19,7 @@
 
 import type {
   DeliverFn, DeliveryMode, Flow, FlowExecution, Message,
-  OnDeliveryModeChanged, OnFlowEvent, OnTurnChanged,
+  OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged,
   PostParams, Room, RoomProfile, RoomState, StalenessState,
 } from './types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './types.ts'
@@ -30,6 +30,7 @@ import {
 
 export interface RoomCallbacks {
   readonly deliver?: DeliverFn
+  readonly onMessagePosted?: OnMessagePosted
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
   readonly onFlowEvent?: OnFlowEvent
@@ -147,6 +148,9 @@ export const createRoom = (
       metadata: params.metadata,
     }
     messages.push(message)
+
+    // Notify observers (e.g. WS broadcast to UI) — always, regardless of delivery mode
+    callbacks?.onMessagePosted?.(profile.id, message)
 
     // Sender becomes a member implicitly
     if (params.senderId !== SYSTEM_SENDER_ID) {

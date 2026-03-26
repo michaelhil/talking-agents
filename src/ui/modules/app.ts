@@ -210,6 +210,20 @@ const handleMessage = (raw: unknown) => {
       if (!selectedRoomId && rooms.size > 0) {
         selectRoom(rooms.values().next().value!.id)
       }
+      // Apply room state AFTER selectRoom sets selectedRoomId
+      if (msg.roomStates && selectedRoomId && msg.roomStates[selectedRoomId]) {
+        const rs2 = msg.roomStates[selectedRoomId] as { mode: string; paused: boolean; muted: string[] }
+        currentDeliveryMode = rs2.mode
+        roomPaused = rs2.paused
+        mutedAgents.clear()
+        for (const id of rs2.muted) {
+          const agent = agents.get(id)
+          if (agent) mutedAgents.add(agent.name)
+        }
+        updateModeUI()
+        refreshRooms()
+        refreshAgents()
+      }
       break
     }
     case 'message': {

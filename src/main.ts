@@ -5,7 +5,7 @@
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
 // ============================================================================
 
-import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, OnDeliveryModeChanged, OnFlowEvent, OnTurnChanged, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
+import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './core/types.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
@@ -28,6 +28,7 @@ export interface System {
   readonly removeAgent: (id: string) => boolean
   readonly spawnAIAgent: (config: AIAgentConfig) => Promise<Agent>
   readonly spawnHumanAgent: (config: HumanAgentConfig, send: TransportSend) => Promise<HumanAgent>
+  readonly setOnMessagePosted: (callback: OnMessagePosted) => void
   readonly setOnTurnChanged: (callback: OnTurnChanged) => void
   readonly setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => void
   readonly setOnFlowEvent: (callback: OnFlowEvent) => void
@@ -42,10 +43,14 @@ export const createSystem = (ollamaUrl?: string): System => {
   }
 
   // Late-binding callbacks — set by server after wsManager is created
+  let messagePostedCallback: OnMessagePosted | undefined
   let turnChangedCallback: OnTurnChanged | undefined
   let deliveryModeChangedCallback: OnDeliveryModeChanged | undefined
   let flowEventCallback: OnFlowEvent | undefined
 
+  const onMessagePosted: OnMessagePosted = (roomId, message) => {
+    messagePostedCallback?.(roomId, message)
+  }
   const onTurnChanged: OnTurnChanged = (roomId, agentId, waitingForHuman) => {
     turnChangedCallback?.(roomId, agentId, waitingForHuman)
   }
@@ -56,7 +61,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     flowEventCallback?.(roomId, event, detail)
   }
 
-  const house = createHouse(deliver, onTurnChanged, onDeliveryModeChanged, onFlowEvent)
+  const house = createHouse(deliver, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent)
   const routeMessage = createMessageRouter(house, team, deliver)
   const ollama = createOllamaProvider(ollamaUrl ?? DEFAULTS.ollamaBaseUrl)
   const toolRegistry = createToolRegistry()
@@ -97,6 +102,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     house, team, routeMessage, ollama, toolRegistry, introRoom, removeAgent,
     spawnAIAgent: boundSpawnAIAgent,
     spawnHumanAgent: boundSpawnHumanAgent,
+    setOnMessagePosted: (callback: OnMessagePosted) => { messagePostedCallback = callback },
     setOnTurnChanged: (callback: OnTurnChanged) => { turnChangedCallback = callback },
     setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => { deliveryModeChangedCallback = callback },
     setOnFlowEvent: (callback: OnFlowEvent) => { flowEventCallback = callback },
