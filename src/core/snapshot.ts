@@ -21,6 +21,7 @@ export interface RoomSnapshot {
   readonly messages: ReadonlyArray<Message>
   readonly members: ReadonlyArray<string>
   readonly deliveryMode: DeliveryMode
+  readonly paused: boolean
   readonly muted: ReadonlyArray<string>
   readonly flows: ReadonlyArray<Flow>
   readonly todos: ReadonlyArray<TodoItem>
@@ -75,6 +76,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       messages: room.getRecent(room.getMessageCount()),
       members: [...room.getParticipantIds()],
       deliveryMode: state.mode,
+      paused: state.paused,
       muted: [...state.muted],
       flows: room.getFlows(),
       todos: room.getTodos(),
@@ -163,8 +165,8 @@ export const restoreFromSnapshot = async (
     room.restoreState({
       members: roomSnap.members,
       muted: roomSnap.muted,
-      mode: roomSnap.deliveryMode,
-      paused: true,  // always start paused
+      mode: (roomSnap.deliveryMode === 'broadcast' || roomSnap.deliveryMode === 'flow') ? roomSnap.deliveryMode : 'broadcast',
+      paused: true,  // always start paused on restore
       flows: roomSnap.flows,
       todos: roomSnap.todos ?? [],
     })
