@@ -19,8 +19,8 @@
 
 import type {
   DeliverFn, DeliveryMode, Flow, FlowExecution, FlowStep, Message,
-  OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged,
-  PostParams, ResolveAgentName, Room, RoomProfile, RoomState,
+  OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTodoChanged, OnTurnChanged,
+  PostParams, ResolveAgentName, Room, RoomProfile, RoomState, TodoItem, TodoStatus,
 } from './types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './types.ts'
 import { parseAddressedAgents } from './addressing.ts'
@@ -35,6 +35,7 @@ export interface RoomCallbacks {
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
   readonly onFlowEvent?: OnFlowEvent
+  readonly onTodoChanged?: OnTodoChanged
 }
 
 export const createRoom = (
@@ -57,6 +58,9 @@ export const createRoom = (
   // Flow state
   const flows = new Map<string, Flow>()
   let flowExecution: FlowExecution | undefined
+
+  // Todo state
+  const todos = new Map<string, TodoItem>()
 
   // Agent name → ID resolution (injected from Team via callbacks)
   const resolveAgentName = callbacks?.resolveAgentName
@@ -333,6 +337,56 @@ export const createRoom = (
     endFlow(flowExecution.flow.id, 'cancelled')
   }
 
+  // --- Todo management ---
+
+  const notifyTodoChanged = (action: 'added' | 'updated' | 'removed', todo: TodoItem): void => {
+    callbacks?.onTodoChanged?.(profile.id, action, todo)
+  }
+
+  const addTodo = (config: { content: string; assignee?: string; assigneeId?: string; dependencies?: ReadonlyArray<string>; createdBy: string }): TodoItem => {
+    const now = Date.now()
+    const todo: TodoItem = {
+      id: crypto.randomUUID(),
+      content: config.content,
+      status: 'pending',
+      assignee: config.assignee,
+      assigneeId: config.assigneeId,
+      dependencies: config.dependencies,
+      createdBy: config.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    }
+    todos.set(todo.id, todo)
+    notifyTodoChanged('added', todo)
+    return todo
+  }
+
+  const updateTodo = (todoId: string, updates: { status?: TodoStatus; assignee?: string; assigneeId?: string; content?: string; result?: string }): TodoItem | undefined => {
+    const existing = todos.get(todoId)
+    if (!existing) return undefined
+    // Filter out undefined values so we don't overwrite existing fields
+    const defined = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined))
+    const updated: TodoItem = {
+      ...existing,
+      ...defined,
+      updatedAt: Date.now(),
+    }
+    todos.set(todoId, updated)
+    notifyTodoChanged('updated', updated)
+    return updated
+  }
+
+  const removeTodo = (todoId: string): boolean => {
+    const existing = todos.get(todoId)
+    if (!existing) return false
+    todos.delete(todoId)
+    notifyTodoChanged('removed', existing)
+    return true
+  }
+
+  const getTodos = (): ReadonlyArray<TodoItem> =>
+    [...todos.values()].sort((a, b) => a.createdAt - b.createdAt)
+
   // --- Room interface ---
 
   return {
@@ -387,6 +441,12 @@ export const createRoom = (
     cancelFlow,
     get flowExecution() { return flowExecution },
 
+    // Todo management
+    addTodo,
+    updateTodo,
+    removeTodo,
+    getTodos,
+
     // Snapshot restore — bypass delivery pipeline entirely
     injectMessages: (msgs: ReadonlyArray<Message>): void => {
       for (const msg of msgs) {
@@ -400,6 +460,7 @@ export const createRoom = (
       readonly mode: DeliveryMode
       readonly paused: boolean
       readonly flows: ReadonlyArray<Flow>
+      readonly todos: ReadonlyArray<TodoItem>
     }): void => {
       members.clear()
       for (const id of state.members) members.add(id)
@@ -409,6 +470,8 @@ export const createRoom = (
       paused = state.paused
       flows.clear()
       for (const flow of state.flows) flows.set(flow.id, flow)
+      todos.clear()
+      for (const todo of state.todos) todos.set(todo.id, todo)
     },
   }
 }

@@ -9,7 +9,7 @@
 // ============================================================================
 
 import type {
-  AIAgentConfig, AIAgent, DeliveryMode, Flow, Message, Room, RoomProfile,
+  AIAgentConfig, AIAgent, DeliveryMode, Flow, Message, Room, RoomProfile, TodoItem,
 } from './types.ts'
 import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -23,6 +23,7 @@ export interface RoomSnapshot {
   readonly deliveryMode: DeliveryMode
   readonly muted: ReadonlyArray<string>
   readonly flows: ReadonlyArray<Flow>
+  readonly todos: ReadonlyArray<TodoItem>
 }
 
 export interface AgentSnapshot {
@@ -76,6 +77,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       deliveryMode: state.mode,
       muted: [...state.muted],
       flows: room.getFlows(),
+      todos: room.getTodos(),
     })
   }
 
@@ -164,6 +166,7 @@ export const restoreFromSnapshot = async (
       mode: roomSnap.deliveryMode,
       paused: true,  // always start paused
       flows: roomSnap.flows,
+      todos: roomSnap.todos ?? [],
     })
     roomMap.set(room.profile.id, room)
   }

@@ -28,6 +28,7 @@ import type {
   RoomProfile,
   StateSubscriber,
   StateValue,
+  TodoItem,
   ToolExecutor,
 } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
@@ -45,6 +46,7 @@ export interface AIAgentOptions {
   readonly toolDescriptions?: string
   readonly getHousePrompt?: () => string
   readonly getResponseFormat?: () => string
+  readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
 }
 
 // === Factory ===
@@ -84,6 +86,7 @@ export const createAIAgent = (
   const toolDescriptions = options?.toolDescriptions
   const getHousePrompt = options?.getHousePrompt
   const getResponseFormat = options?.getResponseFormat
+  const getRoomTodos = options?.getRoomTodos
 
   // --- State observability ---
 
@@ -165,6 +168,7 @@ export const createAIAgent = (
     historyLimit,
     resolveName,
     getDMMessagesForPeer,
+    getRoomTodos,
   })
 
   // --- Evaluation loop: per-context generation with pending queue ---

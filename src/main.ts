@@ -5,7 +5,7 @@
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
 // ============================================================================
 
-import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged, ResolveAgentName, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
+import type { Agent, AIAgentConfig, DeliverFn, House, LLMProvider, Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTodoChanged, OnTurnChanged, ResolveAgentName, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
 import { DEFAULTS } from './core/types.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
@@ -16,7 +16,7 @@ import { spawnAIAgent, spawnHumanAgent, type SpawnOptions } from './agents/spawn
 import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
-import { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from './tools/built-in.ts'
+import { createListRoomsTool, createGetTimeTool, createQueryAgentTool, createListTodosTool, createAddTodoTool, createUpdateTodoTool } from './tools/built-in.ts'
 
 export interface System {
   readonly house: House
@@ -31,6 +31,7 @@ export interface System {
   readonly setOnTurnChanged: (callback: OnTurnChanged) => void
   readonly setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => void
   readonly setOnFlowEvent: (callback: OnFlowEvent) => void
+  readonly setOnTodoChanged: (callback: OnTodoChanged) => void
 }
 
 export const createSystem = (ollamaUrl?: string): System => {
@@ -53,11 +54,12 @@ export const createSystem = (ollamaUrl?: string): System => {
   const turnChanged = lateBinding<OnTurnChanged>()
   const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>()
   const flowEvent = lateBinding<OnFlowEvent>()
+  const todoChanged = lateBinding<OnTodoChanged>()
 
   // Agent name → ID resolver for [[AgentName]] addressing in rooms
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
 
-  const house = createHouse(deliver, resolveAgentName, messagePosted.proxy, turnChanged.proxy, deliveryModeChanged.proxy, flowEvent.proxy)
+  const house = createHouse(deliver, resolveAgentName, messagePosted.proxy, turnChanged.proxy, deliveryModeChanged.proxy, flowEvent.proxy, todoChanged.proxy)
   const routeMessage = createMessageRouter(house, team, deliver)
   const ollama = createOllamaProvider(ollamaUrl ?? DEFAULTS.ollamaBaseUrl)
   const toolRegistry = createToolRegistry()
@@ -66,6 +68,9 @@ export const createSystem = (ollamaUrl?: string): System => {
   toolRegistry.register(createListRoomsTool(house))
   toolRegistry.register(createGetTimeTool())
   toolRegistry.register(createQueryAgentTool(team))
+  toolRegistry.register(createListTodosTool(house))
+  toolRegistry.register(createAddTodoTool(house))
+  toolRegistry.register(createUpdateTodoTool(house))
 
   // Default intro room — created only when no snapshot is being restored.
   // Callers that restore from snapshot should NOT rely on this field.
@@ -101,6 +106,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     setOnTurnChanged: turnChanged.set,
     setOnDeliveryModeChanged: deliveryModeChanged.set,
     setOnFlowEvent: flowEvent.set,
+    setOnTodoChanged: todoChanged.set,
   }
 }
 

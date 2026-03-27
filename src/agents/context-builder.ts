@@ -11,6 +11,7 @@ import type {
   ChatRequest,
   Message,
   RoomProfile,
+  TodoItem,
 } from '../core/types.ts'
 import { SYSTEM_SENDER_ID } from '../core/types.ts'
 import { DEFAULT_RESPONSE_FORMAT_TOOLS } from '../core/house.ts'
@@ -122,6 +123,7 @@ export interface BuildContextDeps {
   readonly historyLimit: number
   readonly resolveName: (senderId: string) => string
   readonly getDMMessagesForPeer: (peerId: string) => ReadonlyArray<Message>
+  readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
 }
 
 export const buildContext = (
@@ -166,6 +168,22 @@ export const buildContext = (
         typeof p === 'string' ? `- ${p}` : `- ${p.name} (${p.kind})`,
       )
       contextLines.push(`Other participants:\n${lines.join('\n')}`)
+    }
+
+    // Room todos
+    if (deps.getRoomTodos) {
+      const todos = deps.getRoomTodos(triggerRoomId)
+      if (todos.length > 0) {
+        const todoLines = todos.map(t => {
+          const check = t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : t.status === 'blocked' ? '!' : ' '
+          let line = `- [${check}] ${t.content}`
+          if (t.assignee) line += ` (assigned to: ${t.assignee})`
+          line += ` [${t.status}]`
+          if (t.result) line += ` → Result: ${t.result}`
+          return line
+        })
+        contextLines.push(`Room todos:\n${todoLines.join('\n')}`)
+      }
     }
   } else if (triggerPeerId) {
     const peerProfile = deps.agentProfiles.get(triggerPeerId)

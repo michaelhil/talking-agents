@@ -10,12 +10,14 @@ import {
   renderRooms,
   renderAgents,
   renderMessage,
+  renderTodos,
   renderTypingIndicators,
   openPromptEditor,
   openFlowEditorModal,
   type UIMessage,
   type RoomProfile,
   type AgentInfo,
+  type TodoInfo,
 } from './ui-renderer.ts'
 import { openTextEditorModal } from './modal.ts'
 
@@ -33,6 +35,7 @@ type WSOutbound =
   | { type: 'mute_changed'; roomName: string; agentName: string; muted: boolean }
   | { type: 'turn_changed'; roomName: string; agentName?: string; waitingForHuman?: boolean }
   | { type: 'flow_event'; roomName: string; event: string; detail?: Record<string, unknown> }
+  | { type: 'todo_changed'; roomName: string; action: string; todo: TodoInfo }
 
 // === State ===
 
@@ -53,12 +56,21 @@ const pausedRooms = new Set<string>()  // room IDs that are paused
 interface FlowInfo { id: string; name: string; steps: Array<{ agentName: string; stepPrompt?: string }>; loop: boolean }
 const roomFlows = new Map<string, FlowInfo[]>()  // roomName → flows
 
+// Todo state per room
+const roomTodos = new Map<string, TodoInfo[]>()  // roomName → todos
+
 // === DOM refs ===
 
 const $ = (sel: string) => document.querySelector(sel)!
 const roomList = $('#room-list') as HTMLElement
 const agentList = $('#agent-list') as HTMLElement
 const noRoomState = $('#no-room-state') as HTMLElement
+const todoPanel = $('#todo-panel') as HTMLElement
+const todoToggle = $('#todo-toggle') as HTMLElement
+const todoHeader = $('#todo-header') as HTMLElement
+const todoCount = $('#todo-count') as HTMLElement
+const todoListEl = $('#todo-list') as HTMLElement
+const btnAddTodo = $('#btn-add-todo') as HTMLElement
 const roomHeader = $('#room-header') as HTMLElement
 const messagesDiv = $('#messages') as HTMLElement
 const chatForm = $('#chat-form') as HTMLFormElement
@@ -155,6 +167,57 @@ const fetchFlowsForRoom = async (roomName: string): Promise<void> => {
   } catch { /* ignore */ }
 }
 
+const fetchTodosForRoom = async (roomName: string): Promise<void> => {
+  try {
+    const res = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/todos`)
+    if (!res.ok) return
+    const todos = await res.json() as TodoInfo[]
+    roomTodos.set(roomName, todos)
+    refreshTodoPanel(roomName)
+  } catch { /* ignore */ }
+}
+
+let todoExpanded = false
+
+const refreshTodoPanel = (roomName: string): void => {
+  const todos = roomTodos.get(roomName) ?? []
+  const hasTodos = todos.length > 0
+
+  todoPanel.classList.toggle('hidden', !selectedRoomId)
+  todoCount.textContent = hasTodos ? `(${todos.length})` : ''
+  todoListEl.classList.toggle('hidden', !todoExpanded || !hasTodos)
+  todoToggle.textContent = todoExpanded && hasTodos ? '▼' : '▶'
+
+  if (todoExpanded && hasTodos) {
+    renderTodos(
+      todoListEl,
+      todos,
+      (todoId, currentStatus) => {
+        const newStatus = currentStatus === 'completed' ? 'pending' : 'completed'
+        send({ type: 'update_todo', roomName, todoId, status: newStatus })
+      },
+      (todoId) => {
+        send({ type: 'remove_todo', roomName, todoId })
+      },
+    )
+  }
+}
+
+todoHeader.onclick = () => {
+  todoExpanded = !todoExpanded
+  const room = rooms.get(selectedRoomId)
+  if (room) refreshTodoPanel(room.name)
+}
+
+btnAddTodo.onclick = (e) => {
+  e.stopPropagation()
+  const room = rooms.get(selectedRoomId)
+  if (!room) return
+  const content = prompt('New todo:')
+  if (!content?.trim()) return
+  send({ type: 'add_todo', roomName: room.name, content: content.trim() })
+}
+
 const updateModeUI = () => {
   refreshModeSelector()
 
@@ -186,6 +249,7 @@ const selectRoom = (roomId: string) => {
   refreshRooms()
   updateModeUI()
   fetchFlowsForRoom(room.name)
+  fetchTodosForRoom(room.name)
 
   messagesDiv.innerHTML = ''
   const cached = roomMessages.get(roomId)
@@ -348,6 +412,23 @@ const handleMessage = (raw: unknown) => {
         currentDeliveryMode = 'broadcast'
         roomPaused = true
         updateModeUI()
+      }
+      break
+    }
+    case 'todo_changed': {
+      // Refresh todos for the affected room
+      const todoRoom = [...rooms.values()].find(r => r.name === msg.roomName)
+      if (todoRoom) {
+        // Update local cache
+        const current = roomTodos.get(msg.roomName) ?? []
+        if (msg.action === 'added') {
+          roomTodos.set(msg.roomName, [...current, msg.todo as TodoInfo])
+        } else if (msg.action === 'updated') {
+          roomTodos.set(msg.roomName, current.map(t => t.id === msg.todo.id ? msg.todo as TodoInfo : t))
+        } else if (msg.action === 'removed') {
+          roomTodos.set(msg.roomName, current.filter(t => t.id !== msg.todo.id))
+        }
+        refreshTodoPanel(msg.roomName)
       }
       break
     }

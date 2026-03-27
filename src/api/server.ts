@@ -6,7 +6,7 @@
 // ============================================================================
 
 import type { System } from '../main.ts'
-import type { Message, WSOutbound } from '../core/types.ts'
+import type { Message, TodoItem, WSOutbound } from '../core/types.ts'
 import { DEFAULTS } from '../core/types.ts'
 import { ensureUniqueName } from '../core/names.ts'
 import { handleAPI } from './http-routes.ts'
@@ -99,6 +99,17 @@ export const createServer = (system: System, config?: ServerConfig) => {
       roomName: room?.profile.name ?? roomId,
       event,
       detail,
+    })
+    triggerAutoSave()
+  })
+
+  system.setOnTodoChanged((roomId, action, todo) => {
+    const room = system.house.getRoom(roomId)
+    wsManager.broadcast({
+      type: 'todo_changed',
+      roomName: room?.profile.name ?? roomId,
+      action,
+      todo,
     })
     triggerAutoSave()
   })

@@ -372,5 +372,64 @@ export const handleAPI = async (
     return json({ cancelled: true, mode: room.deliveryMode })
   }
 
+  // GET /api/rooms/:name/todos
+  const todosRoom = extractParam(pathname, '/api/rooms/:name/todos')
+  if (method === 'GET' && todosRoom) {
+    const room = system.house.getRoom(todosRoom)
+    if (!room) return notFound('Room')
+    return json(room.getTodos())
+  }
+
+  // POST /api/rooms/:name/todos
+  if (method === 'POST' && todosRoom) {
+    const room = system.house.getRoom(todosRoom)
+    if (!room) return notFound('Room')
+    const body = await parseBody(req)
+    if (!body.content || typeof body.content !== 'string') return errorResponse('content is required')
+    const todo = room.addTodo({
+      content: body.content,
+      assignee: body.assignee as string | undefined,
+      assigneeId: body.assigneeId as string | undefined,
+      dependencies: body.dependencies as ReadonlyArray<string> | undefined,
+      createdBy: (body.createdBy as string) ?? SYSTEM_SENDER_ID,
+    })
+    return json(todo, 201)
+  }
+
+  // PUT /api/rooms/:name/todos/:todoId — need two-param extraction
+  if (method === 'PUT') {
+    const todoMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/todos\/([^/]+)$/)
+    if (todoMatch) {
+      const roomName = decodeURIComponent(todoMatch[1]!)
+      const todoId = decodeURIComponent(todoMatch[2]!)
+      const room = system.house.getRoom(roomName)
+      if (!room) return notFound('Room')
+      const body = await parseBody(req)
+      const updated = room.updateTodo(todoId, {
+        status: body.status as Parameters<typeof room.updateTodo>[1]['status'],
+        assignee: body.assignee as string | undefined,
+        assigneeId: body.assigneeId as string | undefined,
+        content: body.content as string | undefined,
+        result: body.result as string | undefined,
+      })
+      if (!updated) return notFound(`Todo "${todoId}"`)
+      return json(updated)
+    }
+  }
+
+  // DELETE /api/rooms/:name/todos/:todoId
+  if (method === 'DELETE') {
+    const todoMatch = pathname.match(/^\/api\/rooms\/([^/]+)\/todos\/([^/]+)$/)
+    if (todoMatch) {
+      const roomName = decodeURIComponent(todoMatch[1]!)
+      const todoId = decodeURIComponent(todoMatch[2]!)
+      const room = system.house.getRoom(roomName)
+      if (!room) return notFound('Room')
+      const removed = room.removeTodo(todoId)
+      if (!removed) return notFound(`Todo "${todoId}"`)
+      return json({ removed: true })
+    }
+  }
+
   return null
 }

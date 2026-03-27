@@ -149,6 +149,10 @@ export const spawnAIAgent = async (
     toolDescriptions,
     getHousePrompt: () => house.getHousePrompt(),
     getResponseFormat: () => house.getResponseFormat(),
+    getRoomTodos: (roomId: string) => {
+      const room = house.getRoom(roomId)
+      return room ? room.getTodos() : []
+    },
   }, spawnOptions?.overrideId)
   team.addAgent(agent)
 

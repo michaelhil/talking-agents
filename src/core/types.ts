@@ -85,6 +85,27 @@ export interface FlowExecution {
   active: boolean
 }
 
+// --- Todo types ---
+
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
+
+export interface TodoItem {
+  readonly id: string              // crypto.randomUUID()
+  readonly content: string         // task description
+  readonly status: TodoStatus
+  readonly assignee?: string       // agent name (for LLM readability)
+  readonly assigneeId?: string     // agent UUID (for internal lookups)
+  readonly result?: string         // outcome when completed (persists as context for dependent todos)
+  readonly dependencies?: ReadonlyArray<string>  // other todo IDs
+  readonly createdBy: string       // agent name
+  readonly createdAt: number
+  readonly updatedAt: number
+}
+
+// --- Room event callbacks ---
+
+export type OnTodoChanged = (roomId: string, action: 'added' | 'updated' | 'removed', todo: TodoItem) => void
+
 // --- Room state snapshot (for UI sync on connect/reconnect) ---
 
 export interface RoomState {
@@ -148,6 +169,12 @@ export interface Room {
   readonly cancelFlow: () => void
   readonly flowExecution: FlowExecution | undefined
 
+  // Todo management — shared task list, any member can CRUD
+  readonly addTodo: (config: { content: string; assignee?: string; assigneeId?: string; dependencies?: ReadonlyArray<string>; createdBy: string }) => TodoItem
+  readonly updateTodo: (todoId: string, updates: { status?: TodoStatus; assignee?: string; assigneeId?: string; content?: string; result?: string }) => TodoItem | undefined
+  readonly removeTodo: (todoId: string) => boolean
+  readonly getTodos: () => ReadonlyArray<TodoItem>
+
   // Snapshot restore — bypass delivery, populate state directly
   readonly injectMessages: (msgs: ReadonlyArray<Message>) => void
   readonly restoreState: (state: {
@@ -156,6 +183,7 @@ export interface Room {
     readonly mode: DeliveryMode
     readonly paused: boolean
     readonly flows: ReadonlyArray<Flow>
+    readonly todos: ReadonlyArray<TodoItem>
   }) => void
 }
 
@@ -363,6 +391,10 @@ export type WSInbound =
   | { readonly type: 'remove_flow'; readonly roomName: string; readonly flowId: string }
   | { readonly type: 'start_flow'; readonly roomName: string; readonly flowId: string; readonly content: string }
   | { readonly type: 'cancel_flow'; readonly roomName: string }
+  // Todo management
+  | { readonly type: 'add_todo'; readonly roomName: string; readonly content: string; readonly assignee?: string; readonly assigneeId?: string; readonly dependencies?: ReadonlyArray<string> }
+  | { readonly type: 'update_todo'; readonly roomName: string; readonly todoId: string; readonly status?: TodoStatus; readonly assignee?: string; readonly assigneeId?: string; readonly content?: string; readonly result?: string }
+  | { readonly type: 'remove_todo'; readonly roomName: string; readonly todoId: string }
 
 export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
@@ -376,6 +408,7 @@ export type WSOutbound =
   | { readonly type: 'mute_changed'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
   | { readonly type: 'turn_changed'; readonly roomName: string; readonly agentName?: string; readonly waitingForHuman?: boolean }
   | { readonly type: 'flow_event'; readonly roomName: string; readonly event: 'started' | 'step' | 'completed' | 'cancelled'; readonly detail?: Record<string, unknown> }
+  | { readonly type: 'todo_changed'; readonly roomName: string; readonly action: 'added' | 'updated' | 'removed'; readonly todo: TodoItem }
 
 // === System Constants ===
 

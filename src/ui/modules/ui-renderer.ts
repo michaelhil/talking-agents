@@ -30,6 +30,14 @@ export interface AgentInfo {
   state?: string
 }
 
+export interface TodoInfo {
+  id: string
+  content: string
+  status: string
+  assignee?: string
+  result?: string
+}
+
 // === Rendering ===
 
 export const renderRooms = (
@@ -57,6 +65,78 @@ export const renderRooms = (
     div.appendChild(nameSpan)
     div.onclick = () => onSelect(room.id)
     container.appendChild(div)
+  }
+}
+
+export const renderTodos = (
+  container: HTMLElement,
+  todos: ReadonlyArray<TodoInfo>,
+  onToggleStatus: (todoId: string, currentStatus: string) => void,
+  onRemove: (todoId: string) => void,
+): void => {
+  container.innerHTML = ''
+  for (const todo of todos) {
+    const row = document.createElement('div')
+    row.className = 'flex items-center gap-2 text-xs group'
+
+    // Status checkbox
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    checkbox.checked = todo.status === 'completed'
+    checkbox.className = 'rounded flex-shrink-0'
+    checkbox.onchange = () => onToggleStatus(todo.id, todo.status)
+
+    // Content
+    const content = document.createElement('span')
+    content.className = `flex-1 ${todo.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-700'}`
+    content.textContent = todo.content
+
+    // Result (if completed)
+    if (todo.result) {
+      const result = document.createElement('span')
+      result.className = 'text-green-600 text-xs truncate max-w-[120px]'
+      result.title = todo.result
+      result.textContent = `→ ${todo.result}`
+      content.appendChild(document.createTextNode(' '))
+      content.appendChild(result)
+    }
+
+    // Assignee badge
+    if (todo.assignee) {
+      const badge = document.createElement('span')
+      badge.className = 'text-xs bg-blue-100 text-blue-600 px-1 rounded flex-shrink-0'
+      badge.textContent = todo.assignee
+      row.appendChild(checkbox)
+      row.appendChild(content)
+      row.appendChild(badge)
+    } else {
+      row.appendChild(checkbox)
+      row.appendChild(content)
+    }
+
+    // Status indicator for blocked/in_progress
+    if (todo.status === 'blocked') {
+      const blocked = document.createElement('span')
+      blocked.className = 'text-xs text-red-400 flex-shrink-0'
+      blocked.textContent = '⊘'
+      blocked.title = 'Blocked'
+      row.appendChild(blocked)
+    } else if (todo.status === 'in_progress') {
+      const progress = document.createElement('span')
+      progress.className = 'text-xs text-yellow-500 flex-shrink-0'
+      progress.textContent = '◉'
+      progress.title = 'In progress'
+      row.appendChild(progress)
+    }
+
+    // Remove button (visible on hover)
+    const removeBtn = document.createElement('button')
+    removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
+    removeBtn.textContent = '✕'
+    removeBtn.onclick = () => onRemove(todo.id)
+    row.appendChild(removeBtn)
+
+    container.appendChild(row)
   }
 }
 
