@@ -271,10 +271,10 @@ export const createMCPServer = (system: System): McpServer => {
 
   mcpServer.tool(
     'set_delivery_mode',
-    'Set the delivery mode for a room: broadcast (all agents) or staleness (round-robin). Use muting to control which agents respond.',
+    'Set the delivery mode for a room: broadcast (all agents). Use muting to control which agents respond.',
     {
       roomName: z.string().describe('Room name'),
-      mode: z.enum(['broadcast', 'staleness']).describe('Delivery mode'),
+      mode: z.enum(['broadcast']).describe('Delivery mode'),
     },
     async ({ roomName, mode }) => {
       try {
@@ -321,46 +321,6 @@ export const createMCPServer = (system: System): McpServer => {
         return textResult({ muted: room.isMuted(agent.id) })
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to set mute')
-      }
-    },
-  )
-
-  // --- Staleness controls ---
-
-  mcpServer.tool(
-    'set_staleness_paused',
-    'Pause or resume staleness-based turn-taking',
-    {
-      roomName: z.string().describe('Room name'),
-      paused: z.boolean().describe('True to pause, false to resume'),
-    },
-    async ({ roomName, paused }) => {
-      try {
-        const room = resolveRoom(system, roomName)
-        room.setStalenessPaused(paused)
-        return textResult({ paused: room.staleness.paused })
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : 'Failed to set staleness paused')
-      }
-    },
-  )
-
-  mcpServer.tool(
-    'set_participating',
-    'Add or remove an agent from staleness turn-taking rotation',
-    {
-      roomName: z.string().describe('Room name'),
-      agentName: z.string().describe('Agent name'),
-      participating: z.boolean().describe('True to include, false to exclude'),
-    },
-    async ({ roomName, agentName, participating }) => {
-      try {
-        const room = resolveRoom(system, roomName)
-        const agent = resolveAgent(system, agentName)
-        room.setParticipating(agent.id, participating)
-        return textResult({ participating: room.staleness.participating.has(agent.id) })
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : 'Failed to set participating')
       }
     },
   )

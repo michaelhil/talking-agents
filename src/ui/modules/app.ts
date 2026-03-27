@@ -100,7 +100,6 @@ const refreshModeSelector = (): void => {
   // Delivery modes
   const modes = [
     { value: 'broadcast', label: 'Broadcast' },
-    { value: 'staleness', label: 'Staleness' },
   ]
   for (const m of modes) {
     const opt = document.createElement('option')
@@ -162,9 +161,6 @@ const updateModeUI = () => {
   if (currentDeliveryMode === 'flow') {
     roomModeInfo.textContent = 'Flow active'
     roomModeInfo.className = 'text-xs text-purple-500 h-4'
-  } else if (currentDeliveryMode === 'staleness') {
-    roomModeInfo.textContent = ''
-    roomModeInfo.className = 'text-xs text-gray-400 h-4'
   } else {
     roomModeInfo.textContent = ''
     roomModeInfo.className = 'text-xs text-gray-400 h-4'
@@ -472,7 +468,7 @@ modeSelector.onchange = () => {
     return
   }
 
-  // Base delivery mode (broadcast, staleness) — also unpauses
+  // Base delivery mode (broadcast) — also unpauses
   send({ type: 'set_delivery_mode', roomName: room.name, mode: val })
 }
 

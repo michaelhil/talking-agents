@@ -290,9 +290,9 @@ export const handleAPI = async (
     const room = system.house.getRoom(dmRoomName)
     if (!room) return notFound('Room')
     const body = await parseBody(req)
-    const newMode = body.mode as 'broadcast' | 'staleness'
-    if (!['broadcast', 'staleness'].includes(newMode)) {
-      return errorResponse('mode must be broadcast or staleness')
+    const newMode = body.mode as 'broadcast'
+    if (newMode !== 'broadcast') {
+      return errorResponse('mode must be broadcast')
     }
     room.setDeliveryMode(newMode)
     return json({ mode: room.deliveryMode })
@@ -320,28 +320,6 @@ export const handleAPI = async (
     room.setMuted(agent.id, body.muted as boolean)
     broadcast({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: body.muted as boolean })
     return json({ muted: room.isMuted(agent.id) })
-  }
-
-  // PUT /api/rooms/:name/staleness/pause
-  const stalenessPauseRoom = extractParam(pathname, '/api/rooms/:name/staleness/pause')
-  if (method === 'PUT' && stalenessPauseRoom) {
-    const room = system.house.getRoom(stalenessPauseRoom)
-    if (!room) return notFound('Room')
-    const body = await parseBody(req)
-    room.setStalenessPaused(body.paused as boolean)
-    return json({ paused: room.staleness.paused })
-  }
-
-  // PUT /api/rooms/:name/staleness/participating
-  const stalenessPartRoom = extractParam(pathname, '/api/rooms/:name/staleness/participating')
-  if (method === 'PUT' && stalenessPartRoom) {
-    const room = system.house.getRoom(stalenessPartRoom)
-    if (!room) return notFound('Room')
-    const body = await parseBody(req)
-    const agent = system.team.getAgent(body.agentName as string)
-    if (!agent) return notFound('Agent')
-    room.setParticipating(agent.id, body.participating as boolean)
-    return json({ participating: room.staleness.participating.has(agent.id) })
   }
 
   // POST /api/rooms/:name/flows

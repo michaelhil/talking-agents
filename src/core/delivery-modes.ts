@@ -7,12 +7,10 @@
 //
 // Modes:
 //   broadcast  — deliver to all eligible members
-//   staleness  — deliver to stalest eligible participating agent
 //   flow       — deliver to current step agent (if eligible)
 // ============================================================================
 
 import type { DeliverFn, FlowExecution, Message } from './types.ts'
-import { findStalestAgent } from './staleness.ts'
 
 // --- Shared delivery helper ---
 
@@ -39,44 +37,6 @@ export const deliverBroadcast = (
   for (const id of eligible) {
     deliverToAgent(id, message, allMessages, deliver)
   }
-}
-
-// --- Staleness mode ---
-
-export interface StalenessResult {
-  readonly nextTurn: string | undefined
-}
-
-export const deliverStaleness = (
-  message: Message,
-  allMessages: ReadonlyArray<Message>,
-  activeParticipants: ReadonlySet<string>,
-  currentTurn: string | undefined,
-  senderId: string,
-  deliver: DeliverFn,
-): StalenessResult => {
-  if (senderId === currentTurn) {
-    // Current turn holder responded — advance to next stalest
-    const next = findStalestAgent(allMessages, activeParticipants, senderId)
-    if (next) {
-      deliverToAgent(next, message, allMessages, deliver)
-    }
-    return { nextTurn: next }
-  }
-
-  if (!currentTurn) {
-    // Chain is idle — kickstart from stalest
-    const next = findStalestAgent(allMessages, activeParticipants)
-    if (next) {
-      deliverToAgent(next, message, allMessages, deliver)
-    }
-    return { nextTurn: next }
-  }
-
-  // Someone posted while another agent has the floor.
-  // Message is stored but not delivered — current turn holder
-  // will see it in history when the chain reaches them.
-  return { nextTurn: currentTurn }
 }
 
 // --- Flow mode ---

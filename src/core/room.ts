@@ -8,7 +8,7 @@
 //   1. Store message
 //   2. Compute eligible = members - userMuted
 //   3. Check paused flag (paused rooms store but don't deliver)
-//   4. Apply mode filter (broadcast / staleness / flow)
+//   4. Apply mode filter (broadcast / flow)
 //
 // User muting and mode filtering are independent concerns applied in sequence.
 // System code NEVER modifies the muted set — only explicit setMuted() calls do.
@@ -18,14 +18,14 @@
 // ============================================================================
 
 import type {
-  DeliverFn, DeliveryMode, Flow, FlowExecution, Message,
+  DeliverFn, DeliveryMode, Flow, FlowExecution, FlowStep, Message,
   OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTurnChanged,
-  PostParams, ResolveAgentName, Room, RoomProfile, RoomState, StalenessState,
+  PostParams, ResolveAgentName, Room, RoomProfile, RoomState,
 } from './types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './types.ts'
 import { parseAddressedAgents } from './addressing.ts'
 import {
-  advanceFlowStep, deliverBroadcast, deliverFlow, deliverStaleness, deliverToAgent,
+  advanceFlowStep, deliverBroadcast, deliverFlow, deliverToAgent,
 } from './delivery-modes.ts'
 
 export interface RoomCallbacks {
@@ -53,11 +53,6 @@ export const createRoom = (
   // --- State ---
   let mode: DeliveryMode = 'broadcast'
   let paused = false
-
-  // Staleness state
-  let stalenessPaused = false
-  const stalenessParticipating = new Set<string>()
-  let stalenessCurrentTurn: string | undefined
 
   // Flow state
   const flows = new Map<string, Flow>()
@@ -90,27 +85,8 @@ export const createRoom = (
     callbacks?.onFlowEvent?.(profile.id, event, detail)
   }
 
-  const clearStalenessState = (): void => {
-    stalenessCurrentTurn = undefined
-    stalenessPaused = false
-  }
-
   const clearFlowExecution = (): void => {
     flowExecution = undefined
-  }
-
-  const kickstartStaleness = (message: Message): void => {
-    if (!deliver || stalenessPaused) return
-    const eligible = computeEligible()
-    const activeParticipants = new Set(
-      [...stalenessParticipating].filter(id => eligible.has(id)),
-    )
-    const { nextTurn } = deliverStaleness(
-      message, messages, activeParticipants,
-      undefined, '', deliver,
-    )
-    stalenessCurrentTurn = nextTurn
-    notifyTurnChanged(nextTurn)
   }
 
   // Handle flow completion or cancellation: switch to broadcast + pause
@@ -181,7 +157,7 @@ export const createRoom = (
         for (const id of addressedIds) {
           deliverToOne(id, message)
         }
-        // Addressing is a one-off override — does NOT change staleness turn or flow state
+        // Addressing is a one-off override — does NOT change flow state
         return message
       }
       // If no addressed agents resolved, fall through to mode dispatch
@@ -195,20 +171,6 @@ export const createRoom = (
       case 'broadcast':
         deliverBroadcast(message, eligible, messages, deliver)
         break
-
-      case 'staleness': {
-        if (stalenessPaused) break
-        const activeParticipants = new Set(
-          [...stalenessParticipating].filter(id => eligible.has(id)),
-        )
-        const result = deliverStaleness(
-          message, messages, activeParticipants,
-          stalenessCurrentTurn, params.senderId, deliver,
-        )
-        stalenessCurrentTurn = result.nextTurn
-        notifyTurnChanged(result.nextTurn)
-        break
-      }
 
       case 'flow': {
         if (!flowExecution?.active) break
@@ -245,30 +207,11 @@ export const createRoom = (
       notifyFlowEvent('cancelled', { flowId })
     }
 
-    const prevMode = mode
     mode = newMode
     paused = false  // switching mode clears pause
 
-    if (newMode !== 'staleness') {
-      clearStalenessState()
-    }
-
     // Notify even if mode unchanged — pause state may have changed
     notifyModeChanged()
-
-    // If switching to staleness, auto-populate participating with all eligible members
-    if (newMode === 'staleness') {
-      if (stalenessParticipating.size === 0) {
-        const eligible = computeEligible()
-        for (const id of eligible) {
-          stalenessParticipating.add(id)
-        }
-      }
-      if (messages.length > 0) {
-        const lastMsg = messages[messages.length - 1]!
-        kickstartStaleness(lastMsg)
-      }
-    }
   }
 
   // --- Muting (user-controlled, never modified by system/mode logic) ---
@@ -304,12 +247,6 @@ export const createRoom = (
     }
     messages.push(muteMessage)
 
-    // If muted agent had the staleness turn, advance
-    if (mode === 'staleness' && stalenessCurrentTurn === agentId && isMuted) {
-      const lastMsg = messages[messages.length - 1]!
-      kickstartStaleness(lastMsg)
-    }
-
     // If muted agent is the current flow step, skip via advanceFlowStep
     if (mode === 'flow' && flowExecution?.active && isMuted) {
       const currentStep = flowExecution.flow.steps[flowExecution.stepIndex]
@@ -341,32 +278,6 @@ export const createRoom = (
 
   // --- Staleness controls ---
 
-  const setStalenessPaused = (p: boolean): void => {
-    stalenessPaused = p
-    if (!p && mode === 'staleness' && messages.length > 0) {
-      const lastMsg = messages[messages.length - 1]!
-      kickstartStaleness(lastMsg)
-    } else if (p) {
-      stalenessCurrentTurn = undefined
-      notifyTurnChanged(undefined)
-    }
-  }
-
-  const setParticipating = (agentId: string, participating: boolean): void => {
-    if (participating) {
-      stalenessParticipating.add(agentId)
-    } else {
-      stalenessParticipating.delete(agentId)
-      if (stalenessCurrentTurn === agentId) {
-        stalenessCurrentTurn = undefined
-        if (mode === 'staleness' && !stalenessPaused && messages.length > 0) {
-          const lastMsg = messages[messages.length - 1]!
-          kickstartStaleness(lastMsg)
-        }
-      }
-    }
-  }
-
   // --- Flow management ---
 
   const addFlow = (config: Omit<Flow, 'id'>): Flow => {
@@ -391,7 +302,6 @@ export const createRoom = (
       notifyFlowEvent('cancelled', { flowId: flowExecution.flow.id })
     }
 
-    clearStalenessState()
     paused = false
     const lastMsg = messages[messages.length - 1]
     if (!lastMsg || !deliver) return
@@ -434,13 +344,7 @@ export const createRoom = (
       return messages.slice(-n)
     },
     getParticipantIds: (): ReadonlyArray<string> => [...members],
-    addMember: (id: string): void => {
-      members.add(id)
-      // Auto-add to staleness participation when mode is active
-      if (mode === 'staleness') {
-        stalenessParticipating.add(id)
-      }
-    },
+    addMember: (id: string): void => { members.add(id) },
     removeMember: (id: string): void => { members.delete(id) },
     hasMember: (id: string): boolean => members.has(id),
     getMessageCount: (): number => messages.length,
@@ -461,11 +365,6 @@ export const createRoom = (
       mode,
       paused,
       muted: [...muted],
-      staleness: {
-        paused: stalenessPaused,
-        participating: new Set(stalenessParticipating),
-        currentTurn: stalenessCurrentTurn,
-      },
       ...(flowExecution ? {
         flowExecution: {
           flowId: flowExecution.flow.id,
@@ -479,17 +378,6 @@ export const createRoom = (
     setMuted,
     isMuted: (agentId: string): boolean => muted.has(agentId),
     getMutedIds: (): ReadonlySet<string> => new Set(muted),
-
-    // Staleness
-    get staleness(): StalenessState {
-      return {
-        paused: stalenessPaused,
-        participating: new Set(stalenessParticipating),
-        currentTurn: stalenessCurrentTurn,
-      }
-    },
-    setStalenessPaused,
-    setParticipating,
 
     // Flow management
     addFlow,
@@ -511,8 +399,6 @@ export const createRoom = (
       readonly muted: ReadonlyArray<string>
       readonly mode: DeliveryMode
       readonly paused: boolean
-      readonly stalenessPaused: boolean
-      readonly stalenessParticipating: ReadonlyArray<string>
       readonly flows: ReadonlyArray<Flow>
     }): void => {
       members.clear()
@@ -521,9 +407,6 @@ export const createRoom = (
       for (const id of state.muted) muted.add(id)
       mode = state.mode
       paused = state.paused
-      stalenessPaused = state.stalenessPaused
-      stalenessParticipating.clear()
-      for (const id of state.stalenessParticipating) stalenessParticipating.add(id)
       flows.clear()
       for (const flow of state.flows) flows.set(flow.id, flow)
     },

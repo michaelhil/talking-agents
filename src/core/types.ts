@@ -61,15 +61,7 @@ export type DeliverFn = (agentId: string, message: Message, history: ReadonlyArr
 // === Delivery Modes — room has exactly one active mode ===
 // [[AgentName]] addressing and muting work as universal overrides in all modes.
 
-export type DeliveryMode = 'broadcast' | 'staleness' | 'flow'
-
-// --- Staleness state (active when mode === 'staleness') ---
-
-export interface StalenessState {
-  readonly paused: boolean
-  readonly participating: ReadonlySet<string>  // agent IDs in rotation
-  readonly currentTurn?: string                // agent ID with the floor
-}
+export type DeliveryMode = 'broadcast' | 'flow'
 
 // --- Flow types ---
 
@@ -99,7 +91,6 @@ export interface RoomState {
   readonly mode: DeliveryMode
   readonly paused: boolean
   readonly muted: ReadonlyArray<string>
-  readonly staleness: StalenessState
   readonly flowExecution?: {
     readonly flowId: string
     readonly stepIndex: number
@@ -149,11 +140,6 @@ export interface Room {
   readonly isMuted: (agentId: string) => boolean
   readonly getMutedIds: () => ReadonlySet<string>
 
-  // Staleness controls (active when mode === 'staleness')
-  readonly staleness: StalenessState
-  readonly setStalenessPaused: (paused: boolean) => void
-  readonly setParticipating: (agentId: string, participating: boolean) => void
-
   // Flow management
   readonly addFlow: (config: Omit<Flow, 'id'>) => Flow
   readonly removeFlow: (flowId: string) => boolean
@@ -169,8 +155,6 @@ export interface Room {
     readonly muted: ReadonlyArray<string>
     readonly mode: DeliveryMode
     readonly paused: boolean
-    readonly stalenessPaused: boolean
-    readonly stalenessParticipating: ReadonlyArray<string>
     readonly flows: ReadonlyArray<Flow>
   }) => void
 }
@@ -369,14 +353,11 @@ export type WSInbound =
   | { readonly type: 'remove_agent'; readonly name: string }
   | { readonly type: 'update_agent'; readonly name: string; readonly systemPrompt: string }
   // Delivery mode
-  | { readonly type: 'set_delivery_mode'; readonly roomName: string; readonly mode: 'broadcast' | 'staleness' }
+  | { readonly type: 'set_delivery_mode'; readonly roomName: string; readonly mode: 'broadcast' }
   // Pause
   | { readonly type: 'set_paused'; readonly roomName: string; readonly paused: boolean }
   // Muting
   | { readonly type: 'set_muted'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
-  // Staleness controls
-  | { readonly type: 'set_staleness_paused'; readonly roomName: string; readonly paused: boolean }
-  | { readonly type: 'set_participating'; readonly roomName: string; readonly agentName: string; readonly participating: boolean }
   // Flow management (callers provide agentId — no server-side resolution)
   | { readonly type: 'add_flow'; readonly roomName: string; readonly name: string; readonly steps: ReadonlyArray<FlowStep>; readonly loop?: boolean }
   | { readonly type: 'remove_flow'; readonly roomName: string; readonly flowId: string }

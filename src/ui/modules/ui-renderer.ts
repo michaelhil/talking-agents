@@ -298,7 +298,7 @@ export const openFlowEditorModal = (
 ): void => {
   const steps: FlowStepInput[] = existingSteps
     ? existingSteps.map(s => ({ ...s }))
-    : []
+    : [...agents.values()].map(a => ({ agentId: a.id, agentName: a.name, stepPrompt: '' }))
 
   const { overlay, body: modal, close } = createModal({
     title: existingName ? `Edit Flow: ${existingName}` : 'Create Flow',
@@ -341,7 +341,6 @@ export const openFlowEditorModal = (
       const select = document.createElement('select')
       select.className = 'text-sm border rounded px-2 py-1 bg-white shrink-0'
       for (const agent of agents.values()) {
-        if (agent.id === myAgentId) continue
         const opt = document.createElement('option')
         opt.value = agent.id
         opt.textContent = agent.name
@@ -380,6 +379,13 @@ export const openFlowEditorModal = (
         if (i < steps.length - 1) { [steps[i]!, steps[i + 1]!] = [steps[i + 1]!, steps[i]!]; renderSteps() }
       }
 
+      const dupBtn = document.createElement('button')
+      dupBtn.type = 'button'
+      dupBtn.className = 'text-xs text-purple-400 hover:text-purple-600 leading-none'
+      dupBtn.title = 'Duplicate step'
+      dupBtn.textContent = '⧉'
+      dupBtn.onclick = () => { steps.splice(i + 1, 0, { ...step, stepPrompt: step.stepPrompt }); renderSteps() }
+
       const removeBtn = document.createElement('button')
       removeBtn.type = 'button'
       removeBtn.className = 'text-xs text-red-400 hover:text-red-600 leading-none'
@@ -388,6 +394,7 @@ export const openFlowEditorModal = (
 
       controls.appendChild(upBtn)
       controls.appendChild(downBtn)
+      controls.appendChild(dupBtn)
       controls.appendChild(removeBtn)
 
       row.appendChild(num)
@@ -411,7 +418,7 @@ export const openFlowEditorModal = (
   addStepBtn.className = 'text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded hover:bg-purple-200 mb-3'
   addStepBtn.textContent = '+ Add Step'
   addStepBtn.onclick = () => {
-    const defaultAgent = [...agents.values()].find(a => a.id !== myAgentId)
+    const defaultAgent = [...agents.values()].find(a => a.kind === 'ai') ?? [...agents.values()][0]
     if (!defaultAgent) return
     steps.push({ agentId: defaultAgent.id, agentName: defaultAgent.name, stepPrompt: '' })
     renderSteps()

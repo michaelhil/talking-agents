@@ -64,12 +64,11 @@ describe('Snapshot', () => {
 
       room.addMember('agent-1')
       room.setMuted('agent-1', true)
-      room.setDeliveryMode('staleness')
 
       const snapshot = serializeSystem(system)
       const roomSnap = snapshot.rooms[0]!
 
-      expect(roomSnap.deliveryMode).toBe('staleness')
+      expect(roomSnap.deliveryMode).toBe('broadcast')
       expect(roomSnap.muted).toContain('agent-1')
       expect(roomSnap.members).toContain('agent-1')
     })
@@ -209,26 +208,5 @@ describe('Snapshot', () => {
       expect(flows[0]!.name).toBe('Pipeline')
     })
 
-    test('restores staleness state', async () => {
-      const original = createTestSystem()
-      const origRoom = original.house.getRoom('Introductions')!
-      origRoom.addMember('a1')
-      origRoom.addMember('a2')
-      origRoom.setDeliveryMode('staleness')
-
-      const snapshot = serializeSystem(original)
-
-      const fresh = createTestSystem()
-      const defaultIntro = fresh.house.getRoom('Introductions')
-      if (defaultIntro) fresh.house.removeRoom(defaultIntro.profile.id)
-
-      await restoreFromSnapshot({ house: fresh.house, spawnAIAgent: async () => {} }, snapshot)
-
-      const restoredRoom = fresh.house.getRoom('Introductions')!
-      // Note: mode is restored but room starts paused
-      expect(restoredRoom.deliveryMode).toBe('staleness')
-      expect(restoredRoom.paused).toBe(true)
-      expect(restoredRoom.staleness.participating.size).toBeGreaterThan(0)
-    })
   })
 })

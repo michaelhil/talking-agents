@@ -218,19 +218,6 @@ export const handleWSMessage = async (
         wsManager.broadcast({ type: 'mute_changed', roomName: room.profile.name, agentName: agent.name, muted: msg.muted })
         break
       }
-      case 'set_staleness_paused': {
-        const room = requireRoom(ws, system, msg.roomName)
-        if (!room) break
-        room.setStalenessPaused(msg.paused)
-        break
-      }
-      case 'set_participating': {
-        const room = requireRoom(ws, system, msg.roomName)
-        const agent = requireAgent(ws, system, msg.agentName)
-        if (!room || !agent) break
-        room.setParticipating(agent.id, msg.participating)
-        break
-      }
       case 'add_flow': {
         const room = requireRoom(ws, system, msg.roomName)
         if (!room) break

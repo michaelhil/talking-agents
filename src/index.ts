@@ -80,4 +80,4 @@ export { createServer } from './api/server.ts'
 export { createMCPServer, wireEventNotifications, startMCPServerStdio } from './integrations/mcp/server.ts'
 
 // Delivery modes
-export type { DeliveryMode, StalenessState, Flow, FlowStep, FlowExecution } from './core/types.ts'
+export type { DeliveryMode, Flow, FlowStep, FlowExecution } from './core/types.ts'

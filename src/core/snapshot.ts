@@ -22,10 +22,6 @@ export interface RoomSnapshot {
   readonly members: ReadonlyArray<string>
   readonly deliveryMode: DeliveryMode
   readonly muted: ReadonlyArray<string>
-  readonly staleness: {
-    readonly paused: boolean
-    readonly participating: ReadonlyArray<string>
-  }
   readonly flows: ReadonlyArray<Flow>
 }
 
@@ -79,10 +75,6 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       members: [...room.getParticipantIds()],
       deliveryMode: state.mode,
       muted: [...state.muted],
-      staleness: {
-        paused: state.staleness.paused,
-        participating: [...state.staleness.participating],
-      },
       flows: room.getFlows(),
     })
   }
@@ -171,8 +163,6 @@ export const restoreFromSnapshot = async (
       muted: roomSnap.muted,
       mode: roomSnap.deliveryMode,
       paused: true,  // always start paused
-      stalenessPaused: roomSnap.staleness.paused,
-      stalenessParticipating: roomSnap.staleness.participating,
       flows: roomSnap.flows,
     })
     roomMap.set(room.profile.id, room)
