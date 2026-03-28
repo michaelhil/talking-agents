@@ -147,6 +147,9 @@ interface RestorableSystem {
     readonly setResponseFormat: (format: string) => void
   }
   readonly spawnAIAgent: (config: AIAgentConfig, options?: { overrideId?: string; skipAutoJoin?: boolean }) => Promise<unknown>
+  readonly team?: {
+    readonly getAgent: (idOrName: string) => { readonly id: string } | undefined
+  }
 }
 
 export const restoreFromSnapshot = async (
@@ -158,6 +161,8 @@ export const restoreFromSnapshot = async (
   system.house.setResponseFormat(snapshot.house.responseFormat)
 
   // 2. Restore rooms
+  // Flow mode is NOT restored — no active flow execution is persisted.
+  // Rooms are always restored in broadcast mode (paused state is preserved).
   const roomMap = new Map<string, Room>()
   for (const roomSnap of snapshot.rooms) {
     const room = system.house.restoreRoom(roomSnap.profile)
@@ -165,7 +170,7 @@ export const restoreFromSnapshot = async (
     room.restoreState({
       members: roomSnap.members,
       muted: roomSnap.muted,
-      mode: (roomSnap.deliveryMode === 'broadcast' || roomSnap.deliveryMode === 'flow') ? roomSnap.deliveryMode : 'broadcast',
+      mode: 'broadcast',
       paused: roomSnap.paused,
       flows: roomSnap.flows,
       todos: roomSnap.todos ?? [],
@@ -185,6 +190,27 @@ export const restoreFromSnapshot = async (
       const room = roomMap.get(roomId)
       if (room) {
         room.addMember(agentSnap.id)
+      }
+    }
+  }
+
+  // 5. Patch flow steps that are missing agentId (backward compat with old snapshots).
+  // agentId was added after some flows were already saved — resolve by agent name.
+  if (system.team) {
+    const team = system.team
+    for (const room of roomMap.values()) {
+      for (const flow of room.getFlows()) {
+        if (flow.steps.some(s => !s.agentId)) {
+          room.removeFlow(flow.id)
+          room.addFlow({
+            name: flow.name,
+            loop: flow.loop,
+            steps: flow.steps.map(s => ({
+              ...s,
+              agentId: s.agentId || (team.getAgent(s.agentName)?.id ?? ''),
+            })),
+          })
+        }
       }
     }
   }

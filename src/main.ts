@@ -139,7 +139,7 @@ if (import.meta.main) {
   const snapshot = await loadSnapshot(snapshotPath)
   if (snapshot) {
     await restoreFromSnapshot(system, snapshot)
-    console.log(`Restored from snapshot: ${snapshot.rooms.length} rooms, ${snapshot.agents.length} agents (all rooms paused)`)
+    console.log(`Restored from snapshot: ${snapshot.rooms.length} rooms, ${snapshot.agents.length} agents`)
   } else {
     console.log('Fresh start — no snapshot found. Create rooms and agents from the UI.')
   }
