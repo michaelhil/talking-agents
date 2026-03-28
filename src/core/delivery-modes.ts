@@ -10,7 +10,7 @@
 //   flow       — deliver to current step agent (if eligible)
 // ============================================================================
 
-import type { DeliverFn, FlowExecution, Message } from './types.ts'
+import type { DeliverFn, FlowDeliveryContext, FlowExecution, Message } from './types.ts'
 
 // --- Shared delivery helper ---
 
@@ -73,9 +73,21 @@ export const deliverFlow = (
 
   if (!result.completed && result.nextAgentId) {
     const nextStep = execution.flow.steps[result.nextStepIndex]!
-    const enriched = nextStep.stepPrompt
-      ? { ...message, metadata: { ...message.metadata, stepPrompt: nextStep.stepPrompt } }
-      : message
+    const flowContext: FlowDeliveryContext = {
+      flowName: execution.flow.name,
+      stepIndex: result.nextStepIndex,
+      totalSteps: execution.flow.steps.length,
+      loop: execution.flow.loop,
+      steps: execution.flow.steps.map(s => ({ agentName: s.agentName })),
+    }
+    const enriched = {
+      ...message,
+      metadata: {
+        ...message.metadata,
+        ...(nextStep.stepPrompt ? { stepPrompt: nextStep.stepPrompt } : {}),
+        flowContext,
+      },
+    }
     deliverToAgent(result.nextAgentId, enriched, allMessages, deliver)
   }
 

@@ -18,7 +18,7 @@
 // ============================================================================
 
 import type {
-  DeliverFn, DeliveryMode, Flow, FlowExecution, FlowStep, Message,
+  DeliverFn, DeliveryMode, Flow, FlowDeliveryContext, FlowExecution, FlowStep, Message,
   OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTodoChanged, OnTurnChanged,
   PostParams, ResolveAgentName, Room, RoomProfile, RoomState, TodoItem, TodoStatus,
 } from './types.ts'
@@ -323,11 +323,22 @@ export const createRoom = (
     const eligible = computeEligible()
     const firstStep = flow.steps[0]!
     if (eligible.has(firstStep.agentId)) {
-      const agentId = firstStep.agentId
-      const enriched = firstStep.stepPrompt
-        ? { ...lastMsg, metadata: { ...lastMsg.metadata, stepPrompt: firstStep.stepPrompt } }
-        : lastMsg
-      deliverToOne(agentId, enriched)
+      const flowContext: FlowDeliveryContext = {
+        flowName: flow.name,
+        stepIndex: 0,
+        totalSteps: flow.steps.length,
+        loop: flow.loop,
+        steps: flow.steps.map(s => ({ agentName: s.agentName })),
+      }
+      const enriched = {
+        ...lastMsg,
+        metadata: {
+          ...lastMsg.metadata,
+          ...(firstStep.stepPrompt ? { stepPrompt: firstStep.stepPrompt } : {}),
+          flowContext,
+        },
+      }
+      deliverToOne(firstStep.agentId, enriched)
       notifyFlowEvent('started', { flowId: flow.id, agentName: firstStep.agentName })
     }
   }

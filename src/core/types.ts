@@ -86,6 +86,16 @@ export interface FlowExecution {
   active: boolean
 }
 
+// Carried in message.metadata when delivering in flow mode.
+// Gives the receiving agent structural awareness of the flow.
+export interface FlowDeliveryContext {
+  readonly flowName: string
+  readonly stepIndex: number                                    // 0-based index of this step
+  readonly totalSteps: number
+  readonly loop: boolean
+  readonly steps: ReadonlyArray<{ readonly agentName: string }>
+}
+
 // --- Todo types ---
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'

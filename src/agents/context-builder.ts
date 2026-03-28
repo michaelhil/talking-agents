@@ -9,6 +9,7 @@
 import type {
   AgentProfile,
   ChatRequest,
+  FlowDeliveryContext,
   Message,
   RoomProfile,
   TodoItem,
@@ -158,6 +159,25 @@ export const buildContext = (
     const roomProfile = deps.roomProfiles.get(triggerRoomId)
     if (roomProfile) {
       contextLines.push(`You are in room "${roomProfile.name}".`)
+    }
+
+    // Flow context — injected via message metadata when agent is triggered in a flow
+    const freshForRoom = deps.incoming.filter(m => m.roomId === triggerRoomId)
+    const latestWithFlow = [...freshForRoom].reverse().find(
+      m => (m.metadata as Record<string, unknown> | undefined)?.flowContext,
+    )
+    if (latestWithFlow) {
+      const fc = (latestWithFlow.metadata as Record<string, unknown>).flowContext as FlowDeliveryContext
+      const stepNum = fc.stepIndex + 1
+      const loopTag = fc.loop ? ' · loop on' : ''
+      const sequenceParts = fc.steps.map((s, i) => {
+        const isYou = i === fc.stepIndex
+        return isYou ? `${s.agentName} (you)` : s.agentName
+      })
+      if (fc.loop) sequenceParts.push('(repeats)')
+      contextLines.push(
+        `Flow: "${fc.flowName}" · step ${stepNum} of ${fc.totalSteps}${loopTag}\nSequence: ${sequenceParts.join(' → ')}`,
+      )
     }
 
     const participants = getParticipantsForRoom(
