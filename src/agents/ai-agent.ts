@@ -195,11 +195,10 @@ export const createAIAgent = (
 
         // Only flush incoming when the LLM actually responded.
         // On pass, keep messages in incoming so they stay [NEW] on re-eval.
-        const didRespond = decision?.response.action === 'respond'
-        if (didRespond) {
+        if (decision.response.action === 'respond') {
           flushIncoming(flushInfo, incoming, roomHistory, addDMMessage)
         }
-        if (decision) onDecision(decision)
+        onDecision(decision)
       })
       .catch(err => {
         if (epochAtStart !== generationEpoch) return  // cancelled, ignore error

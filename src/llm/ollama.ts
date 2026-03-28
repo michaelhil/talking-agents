@@ -55,6 +55,17 @@ const validateChatResponse = (data: unknown): OllamaChatResponse => {
   return data as OllamaChatResponse
 }
 
+// Strip chat-template tokens that some Ollama models leak into their output.
+// This is an Ollama-specific concern — the provider contract is clean text out.
+const TEMPLATE_TOKEN_RE = /(<\|[^|>]*\|>|\[INST\]|\[\/INST\]|<<SYS>>|<<\/SYS>>|<\|start_header_id\|>.*?<\|end_header_id\|>)/g
+
+const sanitizeContent = (raw: string): string => {
+  let s = raw.replace(TEMPLATE_TOKEN_RE, '')
+  // Strip spurious role-label prefix the model sometimes emits before its response
+  s = s.replace(/^(assistant|user|system)\s*[:\n]/i, '')
+  return s.trim()
+}
+
 export const createOllamaProvider = (baseUrl: string): LLMProvider => {
   const chat = async (request: ChatRequest): Promise<ChatResponse> => {
     const startMs = performance.now()
@@ -103,7 +114,7 @@ export const createOllamaProvider = (baseUrl: string): LLMProvider => {
     const generationMs = Math.round(performance.now() - startMs)
 
     return {
-      content: data.message.content,
+      content: sanitizeContent(data.message.content),
       generationMs,
       tokensUsed: {
         prompt: data.prompt_eval_count ?? 0,

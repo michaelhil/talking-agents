@@ -235,7 +235,7 @@ describe('AI Agent — unit tests', () => {
     expect(chatCalled).toBe(false)
   })
 
-  test('LLM error is caught — agent does not crash', async () => {
+  test('LLM error is caught — agent does not crash, emits pass', async () => {
     const errorProvider: LLMProvider = {
       chat: async () => { throw new Error('LLM is down') },
       models: async () => [],
@@ -247,7 +247,10 @@ describe('AI Agent — unit tests', () => {
     agent.receive(makeMessage({ senderId: 'alice' }))
     await agent.whenIdle()
 
-    expect(decisions).toHaveLength(0) // no decision made
+    // LLM error produces a pass decision so the failure is not silently swallowed
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.response.action).toBe('pass')
+    expect((decisions[0]!.response as { reason?: string }).reason).toMatch(/LLM error/)
   })
 
   test('whenIdle resolves immediately when no work pending', async () => {

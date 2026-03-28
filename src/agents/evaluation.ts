@@ -17,6 +17,7 @@ import type {
   LLMProvider,
   ToolCall,
   ToolExecutor,
+  ToolResult,
 } from '../core/types.ts'
 import type { ContextResult, FlushInfo } from './context-builder.ts'
 
@@ -37,28 +38,13 @@ type InternalResponse =
   | AgentResponse
   | { readonly action: 'tool_call'; readonly toolCalls: ReadonlyArray<ToolCall> }
 
-// === LLM output sanitization ===
-// Some Ollama models leak their chat-template tokens into the response
-// (e.g. <|im_start|>assistant, <|im_end|>, [/INST], <<SYS>>, etc.).
-// Strip these before any further parsing so they never appear in chat.
-
-const TEMPLATE_TOKEN_RE = /(<\|[^|>]*\|>|\[INST\]|\[\/INST\]|<<SYS>>|<<\/SYS>>|<\|start_header_id\|>.*?<\|end_header_id\|>)/g
-
-const sanitizeResponse = (raw: string): string => {
-  // Remove template tokens
-  let s = raw.replace(TEMPLATE_TOKEN_RE, '')
-  // If the model prefixed with a role label like "Assistant\n" or "assistant:", strip it
-  s = s.replace(/^(assistant|user|system)\s*[:\n]/i, '')
-  return s.trim()
-}
-
 // === Plain text response parsing ===
 
 const PASS_PREFIX = '::PASS::'
 const TOOL_LINE_RE = /^::TOOL::\s+(\S+)\s*(.*)/
 
 export const parseResponse = (raw: string): InternalResponse => {
-  const trimmed = sanitizeResponse(raw)
+  const trimmed = raw.trim()
 
   // ::PASS:: — agent declines to respond
   if (trimmed.startsWith(PASS_PREFIX)) {
@@ -76,8 +62,12 @@ export const parseResponse = (raw: string): InternalResponse => {
     if (match) {
       const toolName = match[1]!
       let args: Record<string, unknown> = {}
-      if (match[2]) {
-        try { args = JSON.parse(match[2]) as Record<string, unknown> } catch { /* no args or malformed */ }
+      if (match[2]?.trim()) {
+        try {
+          args = JSON.parse(match[2]) as Record<string, unknown>
+        } catch {
+          console.warn(`[parseResponse] Malformed JSON args for tool "${toolName}": ${match[2]}`)
+        }
       }
       toolCalls.push({ tool: toolName, arguments: args })
     } else {
@@ -86,6 +76,10 @@ export const parseResponse = (raw: string): InternalResponse => {
   }
 
   if (toolCalls.length > 0) {
+    const discarded = contentLines.join('\n').trim()
+    if (discarded.length > 0) {
+      console.debug(`[parseResponse] Discarding mixed content alongside tool call: "${discarded.slice(0, 80)}"`)
+    }
     return { action: 'tool_call', toolCalls }
   }
 
@@ -98,10 +92,22 @@ export const parseResponse = (raw: string): InternalResponse => {
   return { action: 'respond', content }
 }
 
+// === Tool result injection ===
+
+const formatToolResults = (
+  calls: ReadonlyArray<ToolCall>,
+  results: ReadonlyArray<ToolResult>,
+): string => {
+  const lines = results.map((r, i) =>
+    `- ${calls[i]?.tool}: ${r.success ? JSON.stringify(r.data) : `Error: ${r.error}`}`,
+  )
+  return `Tool results:\n${lines.join('\n')}\n\nNow respond to the conversation using these results. Write your response as natural text.`
+}
+
 // === Evaluate — single LLM call with tool loop ===
 
 export interface EvalResult {
-  readonly decision: Decision | null
+  readonly decision: Decision
   readonly flushInfo: FlushInfo
 }
 
@@ -138,11 +144,7 @@ export const evaluate = async (
         const results = await toolExecutor(parsed.toolCalls, triggerRoomId)
 
         context.push({ role: 'assistant' as const, content: chatResponse.content })
-
-        const resultLines = results
-          .map((r, i) => `- ${parsed.toolCalls[i]?.tool}: ${r.success ? JSON.stringify(r.data) : `Error: ${r.error}`}`)
-          .join('\n')
-        context.push({ role: 'user' as const, content: `Tool results:\n${resultLines}\n\nNow respond to the conversation using these results. Write your response as natural text.` })
+        context.push({ role: 'user' as const, content: formatToolResults(parsed.toolCalls, results) })
 
         continue
       }
@@ -175,6 +177,11 @@ export const evaluate = async (
     })
   } catch (err) {
     console.error(`[${config.name}] LLM call failed:`, err)
-    return makeResult(null)
+    return makeResult({
+      response: { action: 'pass', reason: `LLM error: ${err instanceof Error ? err.message : 'unknown'}` },
+      generationMs: totalGenerationMs,
+      triggerRoomId,
+      triggerPeerId,
+    })
   }
 }
