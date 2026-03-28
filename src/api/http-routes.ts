@@ -60,6 +60,11 @@ export const handleAPI = async (
     })
   }
 
+  // GET /api/tools — all registered tools (name + description)
+  if (method === 'GET' && pathname === '/api/tools') {
+    return json(system.toolRegistry.list().map(t => ({ name: t.name, description: t.description })))
+  }
+
   // GET /api/models — available Ollama models (running first, then all)
   if (method === 'GET' && pathname === '/api/models') {
     try {

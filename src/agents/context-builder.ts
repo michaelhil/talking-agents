@@ -15,7 +15,7 @@ import type {
   TodoItem,
 } from '../core/types.ts'
 import { SYSTEM_SENDER_ID } from '../core/types.ts'
-import { DEFAULT_RESPONSE_FORMAT_TOOLS } from '../core/house.ts'
+import { TOOL_RESPONSE_FORMAT_SUFFIX } from '../tools/format.ts'
 
 // === Flush info — describes which incoming messages were consumed ===
 
@@ -234,7 +234,7 @@ export const buildContext = (
   if (deps.responseFormat) {
     let format = deps.responseFormat
     if (deps.toolDescriptions) {
-      format += DEFAULT_RESPONSE_FORMAT_TOOLS
+      format += TOOL_RESPONSE_FORMAT_SUFFIX
     }
     sections.push(`=== RESPONSE FORMAT ===\n${format}`)
   }

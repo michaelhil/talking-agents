@@ -312,6 +312,7 @@ export interface Tool {
 export interface ToolRegistry {
   readonly register: (tool: Tool) => void
   readonly get: (name: string) => Tool | undefined
+  readonly has: (name: string) => boolean
   readonly list: () => ReadonlyArray<Tool>
 }
 

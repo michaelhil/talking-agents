@@ -30,19 +30,9 @@ import type { Decision } from './ai-agent.ts'
 import { addAgentToRoom } from './actions.ts'
 import { createToolCapabilityCache, toolsToDefinitions } from '../llm/tool-capability.ts'
 import type { ToolCapabilityCache } from '../llm/tool-capability.ts'
+import { formatToolDescriptions } from '../tools/format.ts'
 
-// --- Tool support ---
-
-const formatToolDescriptions = (tools: ReadonlyArray<Tool>): string => {
-  if (tools.length === 0) return ''
-  const lines = tools.map(t => {
-    const params = Object.keys(t.parameters).length > 0
-      ? ` Parameters: ${JSON.stringify(t.parameters)}`
-      : ' No parameters.'
-    return `- ${t.name}: ${t.description}${params}`
-  })
-  return `Available tools:\n${lines.join('\n')}`
-}
+// --- Tool executor ---
 
 const createToolExecutor = (
   registry: ToolRegistry,
@@ -77,6 +67,56 @@ const createToolExecutor = (
 
     return results
   }
+}
+
+// --- Tool support resolution ---
+// Extracted so it is independently named and testable.
+// Uses an agentRef (filled after agent creation) so the lazy ToolContext
+// captures the agent's id/name without a circular dependency.
+
+interface AgentToolSupport {
+  readonly toolExecutor?: ToolExecutor
+  readonly toolDescriptions?: string
+  readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
+}
+
+const resolveAgentTools = async (
+  config: AIAgentConfig,
+  toolRegistry: ToolRegistry | undefined,
+  capabilityCache: ToolCapabilityCache | undefined,
+  agentRef: { id: string; name: string },
+): Promise<AgentToolSupport> => {
+  const requestedTools = config.tools ?? toolRegistry?.list().map(t => t.name) ?? []
+  if (!toolRegistry || requestedTools.length === 0) return {}
+
+  const availableTools = requestedTools
+    .map(name => toolRegistry.get(name))
+    .filter((t): t is Tool => t !== undefined)
+
+  // Warn about tools named in config that aren't in the registry
+  if (availableTools.length < requestedTools.length) {
+    const missing = requestedTools.filter(n => !toolRegistry.has(n))
+    if (missing.length > 0)
+      console.warn(`[spawn] Agent "${config.name}": tools not found in registry: ${missing.join(', ')}`)
+  }
+
+  if (availableTools.length === 0) return {}
+
+  // Late-binding context: agentRef is filled after createAIAgent returns
+  const lazyContext: ToolContext = {
+    get callerId() { return agentRef.id },
+    get callerName() { return agentRef.name },
+  }
+  const toolExecutor = createToolExecutor(toolRegistry, requestedTools, lazyContext)
+
+  const useNativeTools = capabilityCache
+    ? await capabilityCache.probe(config.model)
+    : false
+
+  if (useNativeTools) {
+    return { toolExecutor, toolDefinitions: toolsToDefinitions(availableTools) }
+  }
+  return { toolExecutor, toolDescriptions: formatToolDescriptions(availableTools) }
 }
 
 // --- Spawn AI Agent ---
@@ -127,45 +167,12 @@ export const spawnAIAgent = async (
     }
   }
 
-  // Build tool support — auto-assign all registered tools when none specified
-  const agentTools = config.tools ?? toolRegistry?.list().map(t => t.name) ?? []
-  let toolExecutor: ToolExecutor | undefined
-  let toolDescriptions: string | undefined
-  let toolDefinitions: ReadonlyArray<ToolDefinition> | undefined
-
-  if (toolRegistry && agentTools.length > 0) {
-    const availableTools = agentTools
-      .map(name => toolRegistry.get(name))
-      .filter((t): t is Tool => t !== undefined)
-
-    if (availableTools.length > 0) {
-      // Late-binding context: agent is created after this, but executor is called later
-      const lazyContext: ToolContext = {
-        get callerId() { return agent.id },
-        get callerName() { return agent.name },
-      }
-      toolExecutor = createToolExecutor(toolRegistry, agentTools, lazyContext)
-
-      // Probe whether this model supports native tool calling
-      const useNativeTools = spawnOptions?.toolCapabilityCache
-        ? await spawnOptions.toolCapabilityCache.probe(config.model)
-        : false
-
-      if (useNativeTools) {
-        // Native: pass tool definitions directly in the LLM request
-        toolDefinitions = toolsToDefinitions(availableTools)
-        // toolDescriptions intentionally left undefined — no text-protocol instructions needed
-      } else {
-        // Text protocol: inject tool descriptions into the system prompt
-        toolDescriptions = formatToolDescriptions(availableTools)
-      }
-    }
-  }
+  // Resolve tool support — agentRef filled after agent creation (lazy context)
+  const agentRef = { id: '', name: '' }
+  const toolSupport = await resolveAgentTools(config, toolRegistry, spawnOptions?.toolCapabilityCache, agentRef)
 
   const agent = createAIAgent(config, llmProvider, onDecision, {
-    toolExecutor,
-    toolDescriptions,
-    toolDefinitions,
+    ...toolSupport,
     getHousePrompt: () => house.getHousePrompt(),
     getResponseFormat: () => house.getResponseFormat(),
     getRoomTodos: (roomId: string) => {
@@ -173,6 +180,11 @@ export const spawnAIAgent = async (
       return room ? room.getTodos() : []
     },
   }, spawnOptions?.overrideId)
+
+  // Fill agentRef so the lazy ToolContext in resolveAgentTools resolves correctly
+  agentRef.id = agent.id
+  agentRef.name = agent.name
+
   team.addAgent(agent)
 
   return agent

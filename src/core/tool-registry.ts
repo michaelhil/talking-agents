@@ -15,6 +15,7 @@ export const createToolRegistry = (): ToolRegistry => {
       tools.set(tool.name, tool)
     },
     get: (name: string): Tool | undefined => tools.get(name),
+    has: (name: string): boolean => tools.has(name),
     list: (): ReadonlyArray<Tool> => [...tools.values()],
   }
 }

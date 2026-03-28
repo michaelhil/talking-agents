@@ -21,13 +21,6 @@ const DEFAULT_RESPONSE_FORMAT = `- By default, just write your message as natura
   You can address multiple agents: [[Analyst-1]] [[Researcher-2]] compare notes.
 - Never wrap your response in JSON or data structures.`
 
-const DEFAULT_RESPONSE_FORMAT_TOOLS = `\n- To use a tool, write ONLY ::TOOL:: followed by the tool name on its own line. Do not write anything else — just the tool call. Add JSON arguments after the name if needed.
-  Example: ::TOOL:: get_time
-  Example: ::TOOL:: query_agent {"target": "Alice", "question": "status?"}
-  You may call multiple tools, one ::TOOL:: per line. After tools run you will receive results and should then write a normal response.
-- IMPORTANT: You do NOT have access to real-time information like the current time or date. When asked about these, you MUST use the appropriate tool. Never guess or make up values for information a tool can provide.`
-
-export { DEFAULT_RESPONSE_FORMAT_TOOLS }
 
 export const createHouse = (deliver?: DeliverFn, resolveAgentName?: ResolveAgentName, onMessagePosted?: OnMessagePosted, onTurnChanged?: OnTurnChanged, onDeliveryModeChanged?: OnDeliveryModeChanged, onFlowEvent?: OnFlowEvent, onTodoChanged?: OnTodoChanged, onRoomCreated?: OnRoomCreated, onRoomDeleted?: OnRoomDeleted): House => {
   const rooms = new Map<string, Room>()

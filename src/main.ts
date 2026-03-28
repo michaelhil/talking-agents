@@ -187,6 +187,10 @@ if (import.meta.main) {
   console.log(`Samsinn v${pkg.version}${headless ? ' (headless)' : ''}`)
   console.log(`Ollama: ${ollamaUrl}`)
 
+  // Load filesystem tools before snapshot restore so restored agents get them
+  const { loadExternalTools } = await import('./tools/loader.ts')
+  await loadExternalTools(system.toolRegistry)
+
   // Restore from snapshot if available
   const snapshotPath = resolve(import.meta.dir, '../data/snapshot.json')
   const snapshot = await loadSnapshot(snapshotPath)
