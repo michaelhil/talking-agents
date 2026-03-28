@@ -17,6 +17,7 @@ import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
 import { createListRoomsTool, createGetTimeTool, createQueryAgentTool, createListTodosTool, createAddTodoTool, createUpdateTodoTool } from './tools/built-in.ts'
+import { createToolCapabilityCache } from './llm/tool-capability.ts'
 
 export interface System {
   readonly house: House
@@ -61,7 +62,9 @@ export const createSystem = (ollamaUrl?: string): System => {
 
   const house = createHouse(deliver, resolveAgentName, messagePosted.proxy, turnChanged.proxy, deliveryModeChanged.proxy, flowEvent.proxy, todoChanged.proxy)
   const routeMessage = createMessageRouter(house, team, deliver)
-  const ollama = createOllamaProvider(ollamaUrl ?? DEFAULTS.ollamaBaseUrl)
+  const resolvedOllamaUrl = ollamaUrl ?? DEFAULTS.ollamaBaseUrl
+  const ollama = createOllamaProvider(resolvedOllamaUrl)
+  const toolCapabilityCache = createToolCapabilityCache(resolvedOllamaUrl)
   const toolRegistry = createToolRegistry()
 
   // Register built-in tools
@@ -89,7 +92,10 @@ export const createSystem = (ollamaUrl?: string): System => {
 
   // Bound spawn methods — close over system dependencies
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
-    spawnAIAgent(config, ollama, house, team, routeMessage, toolRegistry, options)
+    spawnAIAgent(config, ollama, house, team, routeMessage, toolRegistry, {
+      ...options,
+      toolCapabilityCache,
+    })
 
   const boundSpawnHumanAgent = async (config: HumanAgentConfig, send: TransportSend): Promise<HumanAgent> => {
     const agent = createHumanAgent(config, send)

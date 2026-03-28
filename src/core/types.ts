@@ -357,6 +357,24 @@ export type AgentAction =
 
 // === LLM Provider ===
 
+// OpenAI/Ollama-compatible tool definition (used in native tool calling)
+export interface ToolDefinition {
+  readonly type: 'function'
+  readonly function: {
+    readonly name: string
+    readonly description: string
+    readonly parameters: Record<string, unknown>
+  }
+}
+
+// Tool call returned by native tool-calling models
+export interface NativeToolCall {
+  readonly function: {
+    readonly name: string
+    readonly arguments: Record<string, unknown>
+  }
+}
+
 export interface ChatRequest {
   readonly model: string
   readonly messages: ReadonlyArray<{
@@ -366,6 +384,7 @@ export interface ChatRequest {
   readonly temperature?: number
   readonly maxTokens?: number
   readonly jsonMode?: boolean
+  readonly tools?: ReadonlyArray<ToolDefinition>
 }
 
 export interface ChatResponse {
@@ -375,6 +394,7 @@ export interface ChatResponse {
     readonly prompt: number
     readonly completion: number
   }
+  readonly toolCalls?: ReadonlyArray<NativeToolCall>
 }
 
 export interface LLMProvider {

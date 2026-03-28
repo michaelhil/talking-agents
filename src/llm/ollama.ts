@@ -1,8 +1,16 @@
 import type { LLMProvider, ChatRequest, ChatResponse } from '../core/types.ts'
 
+interface OllamaToolCall {
+  readonly function: {
+    readonly name: string
+    readonly arguments: Record<string, unknown>
+  }
+}
+
 interface OllamaMessage {
   readonly role: string
   readonly content: string
+  readonly tool_calls?: ReadonlyArray<OllamaToolCall>
 }
 
 interface OllamaChatResponse {
@@ -94,6 +102,10 @@ export const createOllamaProvider = (baseUrl: string): LLMProvider => {
       body.format = 'json'
     }
 
+    if (request.tools && request.tools.length > 0) {
+      body.tools = request.tools
+    }
+
     const response = await fetchWithTimeout(
       `${baseUrl}/api/chat`,
       {
@@ -113,6 +125,12 @@ export const createOllamaProvider = (baseUrl: string): LLMProvider => {
     const data = validateChatResponse(raw)
     const generationMs = Math.round(performance.now() - startMs)
 
+    const nativeToolCalls = data.message.tool_calls?.length
+      ? data.message.tool_calls.map(tc => ({
+          function: { name: tc.function.name, arguments: tc.function.arguments },
+        }))
+      : undefined
+
     return {
       content: sanitizeContent(data.message.content),
       generationMs,
@@ -120,6 +138,7 @@ export const createOllamaProvider = (baseUrl: string): LLMProvider => {
         prompt: data.prompt_eval_count ?? 0,
         completion: data.eval_count ?? 0,
       },
+      toolCalls: nativeToolCalls,
     }
   }
 

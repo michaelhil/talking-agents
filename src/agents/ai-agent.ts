@@ -29,6 +29,7 @@ import type {
   StateSubscriber,
   StateValue,
   TodoItem,
+  ToolDefinition,
   ToolExecutor,
 } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
@@ -44,6 +45,7 @@ export type { Decision, OnDecision } from './evaluation.ts'
 export interface AIAgentOptions {
   readonly toolExecutor?: ToolExecutor
   readonly toolDescriptions?: string
+  readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
   readonly getHousePrompt?: () => string
   readonly getResponseFormat?: () => string
   readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
@@ -84,6 +86,7 @@ export const createAIAgent = (
   const maxToolIterations = config.maxToolIterations ?? 5
   const toolExecutor = options?.toolExecutor
   const toolDescriptions = options?.toolDescriptions
+  const toolDefinitions = options?.toolDefinitions
   const getHousePrompt = options?.getHousePrompt
   const getResponseFormat = options?.getResponseFormat
   const getRoomTodos = options?.getRoomTodos
@@ -188,7 +191,7 @@ export const createAIAgent = (
     const epochAtStart = generationEpoch
 
     const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt }
-    evaluate(contextResult, evalConfig, llmProvider, toolExecutor, maxToolIterations, triggerRoomId, triggerPeerId)
+    evaluate(contextResult, evalConfig, llmProvider, toolExecutor, maxToolIterations, triggerRoomId, triggerPeerId, toolDefinitions)
       .then(({ decision, flushInfo }) => {
         // Discard results if generation was cancelled
         if (epochAtStart !== generationEpoch) return

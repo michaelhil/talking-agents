@@ -15,7 +15,9 @@ import type {
   AgentResponse,
   AIAgentConfig,
   LLMProvider,
+  NativeToolCall,
   ToolCall,
+  ToolDefinition,
   ToolExecutor,
   ToolResult,
 } from '../core/types.ts'
@@ -92,6 +94,11 @@ export const parseResponse = (raw: string): InternalResponse => {
   return { action: 'respond', content }
 }
 
+// === Native tool call conversion ===
+
+const nativeCallsToToolCalls = (native: ReadonlyArray<NativeToolCall>): ReadonlyArray<ToolCall> =>
+  native.map(tc => ({ tool: tc.function.name, arguments: tc.function.arguments }))
+
 // === Tool result injection ===
 
 const formatToolResults = (
@@ -119,11 +126,12 @@ export const evaluate = async (
   maxToolIterations: number,
   triggerRoomId?: string,
   triggerPeerId?: string,
+  toolDefinitions?: ReadonlyArray<ToolDefinition>,
 ): Promise<EvalResult> => {
   const context = [...contextResult.messages]
   let totalGenerationMs = 0
 
-  const makeResult = (decision: Decision | null): EvalResult => ({
+  const makeResult = (decision: Decision): EvalResult => ({
     decision,
     flushInfo: contextResult.flushInfo,
   })
@@ -134,9 +142,29 @@ export const evaluate = async (
         model: config.model,
         messages: context,
         temperature: config.temperature,
+        tools: toolDefinitions,
       })
 
       totalGenerationMs += chatResponse.generationMs
+
+      // Native tool call path — model returned structured tool calls directly
+      if (chatResponse.toolCalls && chatResponse.toolCalls.length > 0) {
+        if (!toolExecutor) {
+          return makeResult({
+            response: { action: 'pass', reason: 'Tool calls not available' },
+            generationMs: totalGenerationMs,
+            triggerRoomId,
+            triggerPeerId,
+          })
+        }
+        const calls = nativeCallsToToolCalls(chatResponse.toolCalls)
+        const results = await toolExecutor(calls, triggerRoomId)
+        context.push({ role: 'assistant' as const, content: chatResponse.content })
+        context.push({ role: 'user' as const, content: formatToolResults(calls, results) })
+        continue
+      }
+
+      // Text protocol path — parse ::TOOL:: / ::PASS:: / natural language
       const parsed = parseResponse(chatResponse.content)
 
       // Tool call — execute and continue loop

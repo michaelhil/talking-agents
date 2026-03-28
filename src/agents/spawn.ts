@@ -20,6 +20,7 @@ import type {
   Tool,
   ToolCall,
   ToolContext,
+  ToolDefinition,
   ToolExecutor,
   ToolRegistry,
   ToolResult,
@@ -27,6 +28,8 @@ import type {
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import { addAgentToRoom } from './actions.ts'
+import { createToolCapabilityCache, toolsToDefinitions } from '../llm/tool-capability.ts'
+import type { ToolCapabilityCache } from '../llm/tool-capability.ts'
 
 // --- Tool support ---
 
@@ -81,6 +84,7 @@ const createToolExecutor = (
 export interface SpawnOptions {
   readonly overrideId?: string
   readonly skipAutoJoin?: boolean
+  readonly toolCapabilityCache?: ToolCapabilityCache
 }
 
 export const spawnAIAgent = async (
@@ -128,6 +132,7 @@ export const spawnAIAgent = async (
   const agentTools = config.tools ?? toolRegistry?.list().map(t => t.name) ?? []
   let toolExecutor: ToolExecutor | undefined
   let toolDescriptions: string | undefined
+  let toolDefinitions: ReadonlyArray<ToolDefinition> | undefined
 
   if (toolRegistry && agentTools.length > 0) {
     const availableTools = agentTools
@@ -141,13 +146,27 @@ export const spawnAIAgent = async (
         get callerName() { return agent.name },
       }
       toolExecutor = createToolExecutor(toolRegistry, agentTools, lazyContext)
-      toolDescriptions = formatToolDescriptions(availableTools)
+
+      // Probe whether this model supports native tool calling
+      const useNativeTools = spawnOptions?.toolCapabilityCache
+        ? await spawnOptions.toolCapabilityCache.probe(config.model)
+        : false
+
+      if (useNativeTools) {
+        // Native: pass tool definitions directly in the LLM request
+        toolDefinitions = toolsToDefinitions(availableTools)
+        // toolDescriptions intentionally left undefined — no text-protocol instructions needed
+      } else {
+        // Text protocol: inject tool descriptions into the system prompt
+        toolDescriptions = formatToolDescriptions(availableTools)
+      }
     }
   }
 
   const agent = createAIAgent(config, llmProvider, onDecision, {
     toolExecutor,
     toolDescriptions,
+    toolDefinitions,
     getHousePrompt: () => house.getHousePrompt(),
     getResponseFormat: () => house.getResponseFormat(),
     getRoomTodos: (roomId: string) => {
