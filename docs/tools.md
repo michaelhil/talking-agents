@@ -30,7 +30,7 @@ interface ToolContext {
 
 ## Built-in Tools
 
-Built-in tools are always available. They are registered at system startup in `src/main.ts`.
+Built-in tools are always available. They are registered at system startup in `src/main.ts` via `toolRegistry.registerAll()`. Implementations live in `src/tools/built-in/` (grouped by domain: room, agent, todo, utility).
 
 ---
 
@@ -535,11 +535,12 @@ export default myTool
 ```
 
 **Rules:**
-- Tool names must match `/^[a-zA-Z0-9_-]+$/` (no spaces)
-- Names that conflict with already-registered tools are skipped (built-ins always win)
-- Files starting with `_` are ignored (use for helpers)
+- Tool names must match `/^[a-zA-Z0-9_-]+$/` (no spaces; letters, digits, underscores, hyphens only)
+- Names that conflict with already-registered tools are skipped with a warning (built-ins always win)
+- Files starting with `_` are ignored (use for shared helpers)
 - Array default exports are supported: `export default [tool1, tool2]`
 - Set `SAMSINN_TOOLS_DIR` environment variable to load from a custom path
+- Tool results are truncated to 4,000 characters before being injected into LLM context; override per agent with `maxToolResultChars` in the agent config
 
 ---
 

@@ -2,7 +2,7 @@
 
 **A multi-agent collaboration system.** Spawn AI agents, put them in rooms, let them think together — or orchestrate them programmatically through the REST API, WebSocket protocol, or as an MCP server.
 
-> v0.5.13 — [Changelog](#changelog)
+> v0.5.14 — [Changelog](#changelog)
 
 ---
 
@@ -441,38 +441,59 @@ Models with native function-calling (e.g. `qwen2.5`, `llama3.1`) use the OpenAI 
 src/
   core/
     types.ts              — All type definitions (Message, Room, Agent, Flow, Todo, …)
-    room.ts               — Room: messages + member management + delivery dispatch
+    room.ts               — Room: messages, member management, delivery dispatch
+    room-todos.ts         — Per-room todo store (CRUD operations)
+    room-flows.ts         — Per-room flow store (flow lifecycle + step advancement)
     house.ts              — House: room collection + house-level prompts
     delivery.ts           — routeMessage(): routes to rooms and agent DMs
     delivery-modes.ts     — Broadcast and flow delivery implementations
     addressing.ts         — [[AgentName]] directed addressing parser
-    tool-registry.ts      — Tool store: register, get, list, has
-    snapshot.ts           — System serialisation + restore (JSON file)
+    tool-registry.ts      — Tool store: register, registerAll, get, list, has
+    snapshot.ts           — System serialisation + versioned restore (JSON file)
     names.ts              — Name uniqueness and case-insensitive lookups
   agents/
-    ai-agent.ts           — AI agent factory: two-buffer architecture, ReAct loop
+    ai-agent.ts           — AI agent factory: AgentHistory, ReAct loop
+    concurrency.ts        — Agent concurrency manager: generation tracking + idle detection
     human-agent.ts        — Human agent factory: WebSocket relay
     context-builder.ts    — LLM context assembly: history + prompts + tools + todos
-    evaluation.ts         — LLM call + tool execution loop
+    evaluation.ts         — LLM call + tool execution loop (with result truncation)
     team.ts               — Agent collection
     actions.ts            — Room join/leave with visible messages
     spawn.ts              — Agent creation + registration + tool wiring
     shared.ts             — Shared utilities (type guards, metadata helpers)
   llm/
     ollama.ts             — Ollama HTTP client with timing
-    tool-capability.ts    — Per-model native tool-calling detection + caching
+    tool-capability.ts    — Per-model native tool-calling detection + cache
   tools/
-    built-in.ts           — 19 built-in tools
+    built-in/             — 19 built-in tools, grouped by domain
+      room-tools.ts       — list_rooms, create/delete_room, set_room_prompt, pause_room, set_delivery_mode, add/remove_from_room
+      agent-tools.ts      — list_agents, query_agent, mute_agent, delegate, get_my_context
+      todo-tools.ts       — list_todos, add_todo, update_todo
+      utility-tools.ts    — get_time, post_to_room, get_room_history
     format.ts             — Text-protocol tool formatting for system prompts
     loader.ts             — Filesystem tool discovery (./tools/, ~/.samsinn/tools/)
   integrations/
     mcp/
       client.ts           — MCP client: consume external tool servers
       server.ts           — MCP server: expose Samsinn as 23 tools + 3 resources
+      tools/              — MCP tool implementations (room, agent, todo, message)
+      resources.ts        — MCP resource definitions (rooms, agents, messages)
   api/
     server.ts             — Bun.serve: HTTP + WebSocket + static file serving
-    http-routes.ts        — 30+ REST endpoint handlers
-    ws-handler.ts         — WebSocket session management + message dispatch
+    http-routes.ts        — REST dispatcher (routes to api/routes/ handlers)
+    ws-handler.ts         — WebSocket session management + command dispatch
+    routes/               — REST handlers grouped by resource
+      rooms.ts            — /api/rooms and sub-paths
+      agents.ts           — /api/agents and sub-paths
+      messages.ts         — /api/messages
+      todos.ts            — /api/rooms/:name/todos
+      house.ts            — /api/house/*, /api/models, /api/tools
+    ws-commands/          — WebSocket command handlers grouped by domain
+      room-commands.ts    — create/delete/join/leave room, delivery mode, pause, mute
+      agent-commands.ts   — spawn, remove, mute agent
+      flow-commands.ts    — add/remove/start/cancel flow
+      todo-commands.ts    — add/update/remove todo
+      message-commands.ts — post message
   ui/
     index.html            — Browser UI (Tailwind CSS + marked + DOMPurify)
     modules/
@@ -480,7 +501,8 @@ src/
       ws-client.ts        — WebSocket client with reconnect
       ui-renderer.ts      — DOM rendering (messages, agents, rooms, flows, todos)
       modal.ts            — Modal dialogs
-  main.ts                 — createSystem() factory + CLI entry point
+  main.ts                 — createSystem() factory + entry point
+  bootstrap.ts            — Startup orchestration (snapshot, tools, MCP, server)
   index.ts                — Library exports
 
 tools/                    — External filesystem tools (auto-loaded at startup)
@@ -499,9 +521,11 @@ docs/
 
 State is auto-saved to `data/snapshot.json` after each message (debounced 5 seconds). On next startup, rooms, agents, message history, flows, todos, mute state, and delivery modes are all restored exactly as they were.
 
-A graceful shutdown (`Ctrl+C`) flushes the snapshot immediately.
+A graceful shutdown (`Ctrl+C`) drains any in-flight agent evaluations, then flushes the snapshot immediately.
 
-The snapshot is a plain JSON file — readable, version-controlled, and portable.
+The snapshot is a plain JSON file — readable, version-controlled, and portable. It carries a version number; the system validates it on load and will refuse to start if the snapshot is from a newer build, preventing silent data corruption.
+
+**Note:** Active flow execution state (which step a flow is on) is not persisted. After a restart, rooms restore to broadcast mode and flows must be restarted manually.
 
 ---
 
@@ -526,13 +550,13 @@ Tests cover: room logic, delivery modes, agent behaviour, tool execution, snapsh
 
 **ID / name duality** — all entities have auto-generated UUIDs (internal) and human-readable names (LLM-facing). LLMs see and use names; the system resolves names to IDs at boundaries.
 
-**Tool protocol** — agents using text-protocol models produce `::TOOL::` lines which are parsed and executed in a ReAct loop. Agents using native-capable models use structured tool calls. The `ToolCapabilityCache` detects capability once per model and caches the result.
+**Tool protocol** — agents using text-protocol models produce `::TOOL::` lines which are parsed and executed in a ReAct loop. Agents using native-capable models use structured tool calls. The `ToolCapabilityCache` detects capability once per model and caches the result. Tool results are truncated to 4,000 characters by default to prevent context overflow; this limit is configurable per agent via `maxToolResultChars` in `AIAgentConfig`.
 
 **LLM context structure** — every agent evaluation assembles: house rules → room prompt → agent system prompt → auto-generated context (room, flow, participants, todos, tools) → response format → history (old + `[NEW]` tagged recent messages). The `context-builder.ts` is the single source of truth for what agents see.
 
 **External tools** — the `loadExternalTools()` function scans `./tools/`, `~/.samsinn/tools/`, and `SAMSINN_TOOLS_DIR` for `.ts` files with a default Tool or Tool[] export. Loaded before snapshot restore so restored agents have access to them. Conflicts with built-in tool names are silently skipped.
 
-**Agent memory** — two independent layers. Session memory lives in each agent's two-buffer architecture: a `roomHistory` snapshot of everything seen so far plus an `incoming` buffer of messages received since the last response. Persistent memory is filesystem-based (via `memory.ts` tools) and survives restarts. The two layers are deliberately separate: session context is automatic; persistent facts are intentional.
+**Agent memory** — two independent layers. Session memory is managed via a unified `AgentHistory` struct per agent: a `rooms` map (processed message history + room profile per room), a `dms` map (processed DMs per peer), and a shared `incoming` buffer of messages received since the last evaluation. When an agent evaluates a message — whether it responds or passes — the incoming buffer is flushed into the appropriate room or DM context. This flush-on-pass design means an agent never re-evaluates the same message twice. The `historyLimit` config caps how much history is sent to the LLM per evaluation (default 50 messages); the full history is preserved in memory indefinitely. Persistent memory is filesystem-based (via `memory.ts` tools) and survives restarts. The two layers are deliberately separate: session context is automatic; persistent facts are intentional.
 
 **Tool descriptions** — every `Tool` can declare a `usage` field (when to use / when not to) and a `returns` field (what to expect back). These are injected into the agent's system prompt alongside the parameter schema, giving the LLM the guidance it needs to pick the right tool and interpret its output.
 
@@ -542,6 +566,7 @@ Tests cover: room logic, delivery modes, agent behaviour, tool execution, snapsh
 
 | Version | Changes |
 |---|---|
+| v0.5.14 | Unified `AgentHistory` struct (rooms/DMs/incoming in one place); flush-on-pass (agents never re-evaluate passed messages); `ConcurrencyManager` extraction; snapshot migration framework; tool result truncation (4,000 char default, configurable); comprehensive file splitting (tools/built-in/, api/routes/, api/ws-commands/, mcp/tools/); config object consolidation; delivery-mode bug fix; graceful shutdown with eval drain |
 | v0.5.13 | 19 built-in tools, 16 external tools (memory/compute/web/research), structured tool descriptions with usage/returns fields, filesystem tool loader, `delegate` tool with todo integration |
 | v0.5.12 | Shared todo list per room: CRUD, WS sync, agent context injection, HTTP + MCP API |
 | v0.5.11 | Delivery modes simplified to broadcast + flow; room pause; [[AgentName]] addressing; muting; Markdown rendering |
