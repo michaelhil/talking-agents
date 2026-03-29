@@ -55,12 +55,6 @@ export const loadToolDirectory = async (dir: string, registry: ToolRegistry): Pr
 
   const entries = await readdir(dir)
 
-  for (const entry of entries) {
-    if (extname(entry) === '.js') {
-      console.warn(`[tools] ${dir}/${entry}: skipping .js file — only .ts files are supported`)
-    }
-  }
-
   const tsFiles = entries.filter(f => extname(f) === '.ts' && !basename(f, '.ts').startsWith('_'))
 
   // Import all files in parallel

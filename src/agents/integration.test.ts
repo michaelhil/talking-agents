@@ -9,7 +9,7 @@ import { spawnAIAgent, spawnHumanAgent } from './spawn.ts'
 import { addAgentToRoom } from './actions.ts'
 import { createOllamaProvider } from '../llm/ollama.ts'
 import { createToolRegistry } from '../core/tool-registry.ts'
-import { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from '../tools/built-in.ts'
+import { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from '../tools/built-in/index.ts'
 import type { AIAgentConfig, LLMProvider, Message } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
 
@@ -22,8 +22,8 @@ const createSystem = () => {
   const deliver = (agentId: string, message: Message) => {
     team.getAgent(agentId)?.receive(message)
   }
-  const house = createHouse(deliver)
-  const routeMessage = createMessageRouter(house, team, deliver)
+  const house = createHouse({ deliver })
+  const routeMessage = createMessageRouter({ house, team, deliver })
   const intro = house.createRoom({
     name: 'Introductions',
     

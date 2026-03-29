@@ -43,6 +43,8 @@ import { evaluate, type OnDecision } from './evaluation.ts'
 // Re-export Decision/OnDecision for consumers
 export type { Decision, OnDecision } from './evaluation.ts'
 
+const AGENT_TIMEOUT_MS = 30_000  // default timeout for whenIdle() and query()
+
 // === Factory Options ===
 
 export interface AIAgentOptions {
@@ -123,7 +125,7 @@ export const createAIAgent = (
     }
   }
 
-  const whenIdle = (timeoutMs = 30_000): Promise<void> => {
+  const whenIdle = (timeoutMs = AGENT_TIMEOUT_MS): Promise<void> => {
     if (generatingContexts.size === 0 && pendingContexts.size === 0) {
       return Promise.resolve()
     }
@@ -167,10 +169,11 @@ export const createAIAgent = (
     const epochAtStart = generationEpoch
 
     const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt }
+    // epoch guards: each cancelGeneration() increments generationEpoch so stale
+    // in-flight results from a prior generation cycle are silently discarded.
     evaluate(contextResult, evalConfig, llmProvider, toolExecutor, maxToolIterations, triggerRoomId, triggerPeerId, toolDefinitions)
       .then(({ decision, flushInfo }) => {
-        // Discard results if generation was cancelled
-        if (epochAtStart !== generationEpoch) return
+        if (epochAtStart !== generationEpoch) return  // cancelled — discard stale result
 
         // Flush incoming always — on both respond and pass.
         // On pass, the agent has consciously evaluated these messages; they belong in history.
@@ -284,7 +287,7 @@ export const createAIAgent = (
 
   // --- Query — synchronous side-channel for tool-based inter-agent communication ---
 
-  const QUERY_TIMEOUT_MS = 30_000
+  const QUERY_TIMEOUT_MS = AGENT_TIMEOUT_MS
   let queryActive = false
 
   const query = async (question: string, askerId: string, askerName?: string): Promise<string> => {
@@ -330,6 +333,9 @@ export const createAIAgent = (
     getSystemPrompt: () => currentSystemPrompt,
     updateModel: (model: string) => { currentModel = model },
     getModel: () => currentModel,
+    getTemperature: () => config.temperature,
+    getHistoryLimit: () => config.historyLimit,
+    getTools: () => config.tools,
     cancelGeneration: () => {
       // Increment epoch so in-flight LLM calls discard their results
       generationEpoch++

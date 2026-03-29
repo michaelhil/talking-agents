@@ -9,8 +9,9 @@
 // ============================================================================
 
 import type {
-  AIAgentConfig, AIAgent, DeliveryMode, Flow, Message, Room, RoomProfile, TodoItem,
+  AIAgentConfig, DeliveryMode, Flow, Message, Room, RoomProfile, TodoItem,
 } from './types.ts'
+import { asAIAgent } from '../agents/shared.ts'
 import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
@@ -29,7 +30,7 @@ export interface RoomSnapshot {
 
 export interface AgentSnapshot {
   readonly id: string
-  readonly config: AIAgentConfig
+  readonly config: AIAgentConfig  // includes temperature, historyLimit, tools
   readonly roomIds: ReadonlyArray<string>
 }
 
@@ -86,7 +87,8 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const agents: AgentSnapshot[] = []
   for (const agent of system.team.listAgents()) {
     if (agent.kind !== 'ai') continue
-    const aiAgent = agent as unknown as AIAgent
+    const aiAgent = asAIAgent(agent)
+    if (!aiAgent) continue
     const agentRooms = system.house.getRoomsForAgent(agent.id)
     agents.push({
       id: agent.id,
@@ -94,6 +96,9 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
         name: aiAgent.name,
         model: aiAgent.getModel(),
         systemPrompt: aiAgent.getSystemPrompt(),
+        temperature: aiAgent.getTemperature(),
+        historyLimit: aiAgent.getHistoryLimit(),
+        tools: aiAgent.getTools(),
       },
       roomIds: agentRooms.map(r => r.profile.id),
     })
@@ -140,6 +145,16 @@ export const loadSnapshot = async (path: string): Promise<SystemSnapshot | null>
 
 // --- Restore ---
 
+// Intermediate data shape used during room restore — maps snapshot fields to Room calls.
+interface RoomRestoreData {
+  readonly room: Room
+  readonly members: ReadonlyArray<string>
+  readonly muted: ReadonlyArray<string>
+  readonly paused: boolean
+  readonly flows: ReadonlyArray<Flow>
+  readonly todos: ReadonlyArray<TodoItem>
+}
+
 interface RestorableSystem {
   readonly house: {
     readonly restoreRoom: (profile: RoomProfile) => Room
@@ -167,13 +182,21 @@ export const restoreFromSnapshot = async (
   for (const roomSnap of snapshot.rooms) {
     const room = system.house.restoreRoom(roomSnap.profile)
     room.injectMessages(roomSnap.messages)
-    room.restoreState({
+    const data: RoomRestoreData = {
+      room,
       members: roomSnap.members,
       muted: roomSnap.muted,
-      mode: 'broadcast',
       paused: roomSnap.paused,
       flows: roomSnap.flows,
       todos: roomSnap.todos ?? [],
+    }
+    data.room.restoreState({
+      members: data.members,
+      muted: data.muted,
+      mode: 'broadcast',
+      paused: data.paused,
+      flows: data.flows,
+      todos: data.todos,
     })
     roomMap.set(room.profile.id, room)
   }

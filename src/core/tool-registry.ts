@@ -10,9 +10,17 @@ import type { Tool, ToolRegistry } from './types.ts'
 export const createToolRegistry = (): ToolRegistry => {
   const tools = new Map<string, Tool>()
 
+  const register = (tool: Tool): void => {
+    if (!tool.name || typeof tool.name !== 'string') {
+      throw new Error('Tool must have a non-empty string name')
+    }
+    tools.set(tool.name, tool)
+  }
+
   return {
-    register: (tool: Tool): void => {
-      tools.set(tool.name, tool)
+    register,
+    registerAll: (toolList: ReadonlyArray<Tool>): void => {
+      for (const tool of toolList) register(tool)
     },
     get: (name: string): Tool | undefined => tools.get(name),
     has: (name: string): boolean => tools.has(name),

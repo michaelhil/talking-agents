@@ -17,7 +17,7 @@ const noopDeliver: DeliverFn = () => {}
 // Helper: create a minimal system-like object with a default room
 const createTestSystem = () => {
   const team = createTeam()
-  const house = createHouse(noopDeliver)
+  const house = createHouse({ deliver: noopDeliver })
   // Create default room (main.ts does this in createSystem, but we're testing standalone)
   house.createRoom({ name: 'Introductions', createdBy: 'system' })
   return { house, team }

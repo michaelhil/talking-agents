@@ -51,13 +51,13 @@ export type { AIAgentOptions, Decision, OnDecision } from './agents/ai-agent.ts'
 export { createHumanAgent } from './agents/human-agent.ts'
 export type { HumanAgent, HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 
-// Agent internals (for advanced use)
+// Agent internals (for advanced use) — @internal, subject to change
 export { buildContext, flushIncoming, triggerKey, formatMessage } from './agents/context-builder.ts'
 export type { FlushInfo, ContextResult, BuildContextDeps } from './agents/context-builder.ts'
 export { evaluate, parseResponse } from './agents/evaluation.ts'
 export type { EvalResult } from './agents/evaluation.ts'
 
-// Agent wiring
+// Agent wiring — @internal helpers exposed for testing and custom runtimes
 export { spawnAIAgent, spawnHumanAgent } from './agents/spawn.ts'
 export { addAgentToRoom, removeAgentFromRoom } from './agents/actions.ts'
 export { extractAgentProfile, makeJoinMetadata } from './agents/shared.ts'
@@ -65,7 +65,7 @@ export { validateName, ensureUniqueName } from './core/names.ts'
 export { createToolRegistry } from './core/tool-registry.ts'
 
 // Built-in tools
-export { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from './tools/built-in.ts'
+export { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from './tools/built-in/index.ts'
 
 // LLM providers
 export { createOllamaProvider } from './llm/ollama.ts'

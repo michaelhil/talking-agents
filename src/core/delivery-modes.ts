@@ -115,7 +115,8 @@ export const advanceFlowStep = (
     }
   }
 
-  // Find next eligible step agent (skip ineligible)
+  // Find next eligible step agent (skip muted/non-members).
+  // Loop up to stepsLength times to avoid infinite cycle when all are ineligible.
   const stepsLength = execution.flow.steps.length
   let attempts = 0
   while (attempts < stepsLength) {

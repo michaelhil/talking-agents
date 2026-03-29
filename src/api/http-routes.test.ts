@@ -17,7 +17,7 @@ const noopBroadcast = (_msg: WSOutbound): void => {}
 const noopSubscribe = (_id: string, _name: string): void => {}
 
 const makeSystem = (): System => {
-  const house = createHouse(noopDeliver)
+  const house = createHouse({ deliver: noopDeliver })
   const team = createTeam()
   const toolRegistry = createToolRegistry()
   const ollama: LLMProvider = {

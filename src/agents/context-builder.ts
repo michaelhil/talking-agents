@@ -40,8 +40,10 @@ export interface ContextResult {
 // === Trigger key — unified string key for generatingContexts/pendingContexts sets ===
 // Kept here as it defines the canonical format used in state context strings.
 
-export const triggerKey = (roomId?: string, peerId?: string): string =>
-  roomId ? `room:${roomId}` : `dm:${peerId}`
+export const triggerKey = (roomId?: string, peerId?: string): string => {
+  if (roomId && peerId) throw new Error('triggerKey: roomId and peerId are mutually exclusive')
+  return roomId ? `room:${roomId}` : `dm:${peerId}`
+}
 
 // === Format a single message for LLM context ===
 
@@ -146,100 +148,50 @@ export interface BuildContextDeps {
   readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
 }
 
-// === Build full LLM context ===
+// === Private section builders ===
 
-export const buildContext = (
+const buildParticipantsSection = (
+  participants: ReadonlyArray<AgentProfile | string>,
+): string => {
+  const lines = participants.map(p =>
+    typeof p === 'string' ? `- ${p}` : `- ${p.name} (${p.kind})`,
+  )
+  return `Other participants:\n${lines.join('\n')}`
+}
+
+const buildTodosSection = (todos: ReadonlyArray<TodoItem>): string => {
+  const todoLines = todos.map(t => {
+    const check = t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : t.status === 'blocked' ? '!' : ' '
+    let line = `- [${check}] ${t.content} [id: ${t.id}]`
+    if (t.assignee) line += ` (assigned to: ${t.assignee})`
+    line += ` [${t.status}]`
+    if (t.result) line += ` → Result: ${t.result}`
+    return line
+  })
+  return `Room todos:\n${todoLines.join('\n')}`
+}
+
+const buildFlowSection = (fc: FlowDeliveryContext, stepIndex: number): string => {
+  const stepNum = stepIndex + 1
+  const loopTag = fc.loop ? ' · loop on' : ''
+  const sequenceParts = fc.steps.map((s, i) =>
+    i === stepIndex ? `${s.agentName} (you)` : s.agentName,
+  )
+  if (fc.loop) sequenceParts.push('(repeats)')
+  return `Flow: "${fc.flowName}" · step ${stepNum} of ${fc.totalSteps}${loopTag}\nSequence: ${sequenceParts.join(' → ')}`
+}
+
+const buildActivitySection = (
   deps: BuildContextDeps,
-  triggerRoomId?: string,
-  triggerPeerId?: string,
-): ContextResult => {
-  const flushIds = new Set<string>()
-  const flushDMs: Message[] = []
-  const sections: string[] = []
-
-  // === HOUSE RULES === (global behavioral guidance)
-  if (deps.housePrompt) {
-    sections.push(`=== HOUSE RULES ===\n${deps.housePrompt}`)
-  }
-
-  // === ROOM === (contextual instructions)
-  if (triggerRoomId) {
-    const roomCtx = deps.history.rooms.get(triggerRoomId)
-    if (roomCtx?.profile.roomPrompt) {
-      sections.push(`=== ROOM: ${roomCtx.profile.name} ===\n${roomCtx.profile.roomPrompt}`)
-    }
-  }
-
-  // === YOUR IDENTITY === (agent-specific personality/expertise)
-  sections.push(`=== YOUR IDENTITY ===\n${deps.systemPrompt}`)
-
-  // === CONTEXT === (auto-generated, not editable)
-  const contextLines: string[] = []
-
-  if (triggerRoomId) {
-    const roomCtx = deps.history.rooms.get(triggerRoomId)
-    if (roomCtx) {
-      contextLines.push(`You are in room "${roomCtx.profile.name}" [id: ${triggerRoomId}].`)
-    }
-
-    // Flow context — injected via message metadata when agent is triggered in a flow
-    const freshForRoom = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
-    const latestWithFlow = [...freshForRoom].reverse().find(
-      m => (m.metadata as Record<string, unknown> | undefined)?.flowContext,
-    )
-    if (latestWithFlow) {
-      const fc = (latestWithFlow.metadata as Record<string, unknown>).flowContext as FlowDeliveryContext
-      const stepNum = fc.stepIndex + 1
-      const loopTag = fc.loop ? ' · loop on' : ''
-      const sequenceParts = fc.steps.map((s, i) => {
-        const isYou = i === fc.stepIndex
-        return isYou ? `${s.agentName} (you)` : s.agentName
-      })
-      if (fc.loop) sequenceParts.push('(repeats)')
-      contextLines.push(
-        `Flow: "${fc.flowName}" · step ${stepNum} of ${fc.totalSteps}${loopTag}\nSequence: ${sequenceParts.join(' → ')}`,
-      )
-    }
-
-    const participants = getParticipantsForRoom(triggerRoomId, deps.history, deps.agentId)
-    if (participants.length > 0) {
-      const lines = participants.map(p =>
-        typeof p === 'string' ? `- ${p}` : `- ${p.name} (${p.kind})`,
-      )
-      contextLines.push(`Other participants:\n${lines.join('\n')}`)
-    }
-
-    // Room todos
-    if (deps.getRoomTodos) {
-      const todos = deps.getRoomTodos(triggerRoomId)
-      if (todos.length > 0) {
-        const todoLines = todos.map(t => {
-          const check = t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : t.status === 'blocked' ? '!' : ' '
-          let line = `- [${check}] ${t.content} [id: ${t.id}]`
-          if (t.assignee) line += ` (assigned to: ${t.assignee})`
-          line += ` [${t.status}]`
-          if (t.result) line += ` → Result: ${t.result}`
-          return line
-        })
-        contextLines.push(`Room todos:\n${todoLines.join('\n')}`)
-      }
-    }
-  } else if (triggerPeerId) {
-    const peerProfile = deps.history.agentProfiles.get(triggerPeerId)
-    const peerName = peerProfile?.name ?? triggerPeerId
-    contextLines.push(`This is a direct conversation with ${peerName} [id: ${triggerPeerId}].`)
-  }
-
-  // === YOUR CURRENT ACTIVITY (cross-context situation awareness) ===
-  // Shows all contexts OTHER than the triggering one, with IDs for tool use.
+  triggerRoomId: string | undefined,
+  triggerPeerId: string | undefined,
+): string => {
   const activityLines: string[] = []
 
   for (const [roomId, ctx] of deps.history.rooms) {
-    if (roomId === triggerRoomId) continue  // triggering room already fully contextualised above
+    if (roomId === triggerRoomId) continue
     const timeStr = relativeTime(ctx.lastActiveAt)
     let line = `- Room "${ctx.profile.name}" [id: ${roomId}]: ${timeStr}`
-
-    // Show in-progress todos for this room
     if (deps.getRoomTodos) {
       const inProgress = deps.getRoomTodos(roomId).filter(t => t.status === 'in_progress')
       if (inProgress.length > 0) {
@@ -251,14 +203,81 @@ export const buildContext = (
   }
 
   for (const [peerId, ctx] of deps.history.dms) {
-    if (peerId === triggerPeerId) continue  // triggering DM already contextualised above
-    if (ctx.history.length === 0 && !ctx.lastActiveAt) continue  // skip empty DM contexts
+    if (peerId === triggerPeerId) continue
+    if (ctx.history.length === 0 && !ctx.lastActiveAt) continue
     const peerName = deps.history.agentProfiles.get(peerId)?.name ?? peerId
     activityLines.push(`- DM with ${peerName} [peerId: ${peerId}]: ${relativeTime(ctx.lastActiveAt)}`)
   }
 
-  if (activityLines.length > 0) {
-    contextLines.push(`Your activity in other contexts:\n${activityLines.join('\n')}`)
+  return `Your activity in other contexts:\n${activityLines.join('\n')}`
+}
+
+const buildSystemMessage = (
+  deps: BuildContextDeps,
+  triggerRoomId: string | undefined,
+  triggerPeerId: string | undefined,
+): string => {
+  const sections: string[] = []
+
+  if (deps.housePrompt) {
+    sections.push(`=== HOUSE RULES ===\n${deps.housePrompt}`)
+  }
+
+  if (triggerRoomId) {
+    const roomCtx = deps.history.rooms.get(triggerRoomId)
+    if (roomCtx?.profile.roomPrompt) {
+      sections.push(`=== ROOM: ${roomCtx.profile.name} ===\n${roomCtx.profile.roomPrompt}`)
+    }
+  }
+
+  sections.push(`=== YOUR IDENTITY ===\n${deps.systemPrompt}`)
+
+  const contextLines: string[] = []
+
+  if (triggerRoomId) {
+    const roomCtx = deps.history.rooms.get(triggerRoomId)
+    if (roomCtx) {
+      contextLines.push(`You are in room "${roomCtx.profile.name}" [id: ${triggerRoomId}].`)
+    }
+
+    const freshForRoom = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
+    const latestWithFlow = [...freshForRoom].reverse().find(
+      m => (m.metadata as Record<string, unknown> | undefined)?.flowContext,
+    )
+    if (latestWithFlow) {
+      const fc = (latestWithFlow.metadata as Record<string, unknown>).flowContext as FlowDeliveryContext
+      const triggerMsg = latestWithFlow
+      const stepIndex = (triggerMsg.metadata as Record<string, unknown>)?.flowContext
+        ? fc.stepIndex
+        : 0
+      contextLines.push(buildFlowSection(fc, stepIndex))
+    }
+
+    const participants = getParticipantsForRoom(triggerRoomId, deps.history, deps.agentId)
+    if (participants.length > 0) {
+      contextLines.push(buildParticipantsSection(participants))
+    }
+
+    if (deps.getRoomTodos) {
+      const todos = deps.getRoomTodos(triggerRoomId)
+      if (todos.length > 0) {
+        contextLines.push(buildTodosSection(todos))
+      }
+    }
+  } else if (triggerPeerId) {
+    const peerProfile = deps.history.agentProfiles.get(triggerPeerId)
+    const peerName = peerProfile?.name ?? triggerPeerId
+    contextLines.push(`This is a direct conversation with ${peerName} [id: ${triggerPeerId}].`)
+  }
+
+  const activitySection = buildActivitySection(deps, triggerRoomId, triggerPeerId)
+  // Only include if there are actual other contexts listed
+  const hasActivity = deps.history.rooms.size > (triggerRoomId ? 1 : 0) ||
+    [...deps.history.dms].some(([peerId, ctx]) =>
+      peerId !== triggerPeerId && (ctx.history.length > 0 || ctx.lastActiveAt !== undefined),
+    )
+  if (hasActivity) {
+    contextLines.push(activitySection)
   }
 
   const knownAgents = [...deps.history.agentProfiles.values()].filter(a => a.id !== deps.agentId)
@@ -275,7 +294,6 @@ export const buildContext = (
 
   sections.push(`=== CONTEXT ===\n${contextLines.join('\n\n')}`)
 
-  // === RESPONSE FORMAT === (editable protocol conventions)
   if (deps.responseFormat) {
     let format = deps.responseFormat
     if (deps.toolDescriptions) {
@@ -284,9 +302,21 @@ export const buildContext = (
     sections.push(`=== RESPONSE FORMAT ===\n${format}`)
   }
 
-  const systemContent = sections.join('\n\n')
+  return sections.join('\n\n')
+}
 
-  // Build message array
+// === Build full LLM context ===
+
+export const buildContext = (
+  deps: BuildContextDeps,
+  triggerRoomId?: string,
+  triggerPeerId?: string,
+): ContextResult => {
+  const flushIds = new Set<string>()
+  const flushDMs: Message[] = []
+
+  const systemContent = buildSystemMessage(deps, triggerRoomId, triggerPeerId)
+
   const chatMessages: ChatRequest['messages'][number][] = [
     { role: 'system' as const, content: systemContent },
   ]

@@ -74,6 +74,8 @@ export interface MessageTarget {
 }
 
 // === Room Post Parameters — caller provides content, room stamps id/roomId/timestamp ===
+// FRAGILITY: PostParams is derived from Message via Omit. Adding fields to Message
+// automatically makes them optional here. Always review Message changes against PostParams callers.
 
 export type PostParams = Omit<Message, 'id' | 'roomId' | 'timestamp' | 'recipientId'>
 
@@ -234,6 +236,20 @@ export interface CreateResult<T> {
   readonly assignedName: string
 }
 
+// === HouseCallbacks — configuration object for createHouse ===
+
+export interface HouseCallbacks {
+  readonly deliver?: DeliverFn
+  readonly resolveAgentName?: ResolveAgentName
+  readonly onMessagePosted?: OnMessagePosted
+  readonly onTurnChanged?: OnTurnChanged
+  readonly onDeliveryModeChanged?: OnDeliveryModeChanged
+  readonly onFlowEvent?: OnFlowEvent
+  readonly onTodoChanged?: OnTodoChanged
+  readonly onRoomCreated?: OnRoomCreated
+  readonly onRoomDeleted?: OnRoomDeleted
+}
+
 // === House — room collection ===
 
 export interface House {
@@ -292,6 +308,9 @@ export interface AIAgent extends Agent {
   readonly updateModel: (model: string) => void
   readonly getModel: () => string
   readonly cancelGeneration: () => void
+  readonly getTemperature: () => number | undefined
+  readonly getHistoryLimit: () => number | undefined
+  readonly getTools: () => ReadonlyArray<string> | undefined
 }
 
 // === Team — agent collection (AI + human) ===
@@ -302,6 +321,14 @@ export interface Team {
   readonly removeAgent: (id: string) => boolean
   readonly listAgents: () => ReadonlyArray<Agent>
   readonly listByKind: (kind: 'ai' | 'human') => ReadonlyArray<Agent>
+}
+
+// === RouterDeps — configuration object for createMessageRouter ===
+
+export interface RouterDeps {
+  readonly house: House
+  readonly team: Team
+  readonly deliver: DeliverFn
 }
 
 // === RouteMessage — the single coordination function ===
@@ -338,6 +365,7 @@ export interface Tool {
 
 export interface ToolRegistry {
   readonly register: (tool: Tool) => void
+  readonly registerAll: (tools: ReadonlyArray<Tool>) => void
   readonly get: (name: string) => Tool | undefined
   readonly has: (name: string) => boolean
   readonly list: () => ReadonlyArray<Tool>

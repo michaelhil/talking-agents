@@ -6,7 +6,7 @@
 // createRoomSafe auto-renames on collision and returns CreateResult.
 // ============================================================================
 
-import type { CreateResult, DeliverFn, House, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnRoomCreated, OnRoomDeleted, OnTodoChanged, OnTurnChanged, ResolveAgentName, Room, RoomConfig, RoomProfile } from './types.ts'
+import type { CreateResult, House, HouseCallbacks, Room, RoomConfig, RoomProfile } from './types.ts'
 import { createRoom, type RoomCallbacks } from './room.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
@@ -22,7 +22,8 @@ const DEFAULT_RESPONSE_FORMAT = `- By default, just write your message as natura
 - Never wrap your response in JSON or data structures.`
 
 
-export const createHouse = (deliver?: DeliverFn, resolveAgentName?: ResolveAgentName, onMessagePosted?: OnMessagePosted, onTurnChanged?: OnTurnChanged, onDeliveryModeChanged?: OnDeliveryModeChanged, onFlowEvent?: OnFlowEvent, onTodoChanged?: OnTodoChanged, onRoomCreated?: OnRoomCreated, onRoomDeleted?: OnRoomDeleted): House => {
+export const createHouse = (callbacks: HouseCallbacks = {}): House => {
+  const { deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent, onTodoChanged, onRoomCreated, onRoomDeleted } = callbacks
   const rooms = new Map<string, Room>()
   const nameIndex = new Map<string, string>()  // lowercase name → room ID
   let housePrompt = DEFAULT_HOUSE_PROMPT
@@ -33,6 +34,11 @@ export const createHouse = (deliver?: DeliverFn, resolveAgentName?: ResolveAgent
 
   const isNameTaken = (name: string): boolean =>
     nameIndex.has(name.toLowerCase())
+
+  // Shared RoomCallbacks wiring — used by storeRoom and restoreRoom
+  const makeRoomCallbacks = (): RoomCallbacks => ({
+    deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent, onTodoChanged,
+  })
 
   // Internal: creates room without uniqueness check (caller guarantees).
   const storeRoom = (config: RoomConfig, name: string): Room => {
@@ -45,8 +51,7 @@ export const createHouse = (deliver?: DeliverFn, resolveAgentName?: ResolveAgent
       createdBy: config.createdBy,
       createdAt: Date.now(),
     }
-    const roomCallbacks: RoomCallbacks = { deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent, onTodoChanged }
-    const room = createRoom(profile, roomCallbacks)
+    const room = createRoom(profile, makeRoomCallbacks())
     rooms.set(id, room)
     nameIndex.set(name.toLowerCase(), id)
     onRoomCreated?.(profile)
@@ -104,8 +109,7 @@ export const createHouse = (deliver?: DeliverFn, resolveAgentName?: ResolveAgent
 
     // Snapshot restore — create room with preserved profile (existing ID)
     restoreRoom: (existingProfile: RoomProfile): Room => {
-      const roomCallbacks: RoomCallbacks = { deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent, onTodoChanged }
-      const room = createRoom(existingProfile, roomCallbacks)
+      const room = createRoom(existingProfile, makeRoomCallbacks())
       rooms.set(existingProfile.id, room)
       nameIndex.set(existingProfile.name.toLowerCase(), existingProfile.id)
       return room

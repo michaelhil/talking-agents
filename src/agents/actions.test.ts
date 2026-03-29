@@ -11,8 +11,8 @@ const createTestSystem = () => {
   const deliver = (agentId: string, message: Message, history: ReadonlyArray<Message>) => {
     team.getAgent(agentId)?.receive(message, history)
   }
-  const house = createHouse(deliver)
-  const routeMessage = createMessageRouter(house, team, deliver)
+  const house = createHouse({ deliver })
+  const routeMessage = createMessageRouter({ house, team, deliver })
   return { house, team, routeMessage }
 }
 

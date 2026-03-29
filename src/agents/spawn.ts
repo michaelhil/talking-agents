@@ -80,6 +80,28 @@ interface AgentToolSupport {
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
 }
 
+const warnMissingTools = (agentName: string, requested: ReadonlyArray<string>, registry: ToolRegistry): void => {
+  const missing = requested.filter(n => !registry.has(n))
+  if (missing.length > 0)
+    console.warn(`[spawn] Agent "${agentName}": tools not found in registry: ${missing.join(', ')}`)
+}
+
+// Chooses between native tool calling (definitions) and text-injected descriptions.
+// Native: model supports tool_use API — structured JSON calls.
+// Text: model does not — tools described in system prompt, parsed from response.
+const selectProtocol = async (
+  availableTools: ReadonlyArray<Tool>,
+  executor: ToolExecutor,
+  model: string,
+  capabilityCache: ToolCapabilityCache | undefined,
+): Promise<AgentToolSupport> => {
+  const useNativeTools = capabilityCache ? await capabilityCache.probe(model) : false
+  if (useNativeTools) {
+    return { toolExecutor: executor, toolDefinitions: toolsToDefinitions(availableTools) }
+  }
+  return { toolExecutor: executor, toolDescriptions: formatToolDescriptions(availableTools) }
+}
+
 const resolveAgentTools = async (
   config: AIAgentConfig,
   toolRegistry: ToolRegistry | undefined,
@@ -93,11 +115,8 @@ const resolveAgentTools = async (
     .map(name => toolRegistry.get(name))
     .filter((t): t is Tool => t !== undefined)
 
-  // Warn about tools named in config that aren't in the registry
   if (availableTools.length < requestedTools.length) {
-    const missing = requestedTools.filter(n => !toolRegistry.has(n))
-    if (missing.length > 0)
-      console.warn(`[spawn] Agent "${config.name}": tools not found in registry: ${missing.join(', ')}`)
+    warnMissingTools(config.name, requestedTools, toolRegistry)
   }
 
   if (availableTools.length === 0) return {}
@@ -109,14 +128,7 @@ const resolveAgentTools = async (
   }
   const toolExecutor = createToolExecutor(toolRegistry, requestedTools, lazyContext)
 
-  const useNativeTools = capabilityCache
-    ? await capabilityCache.probe(config.model)
-    : false
-
-  if (useNativeTools) {
-    return { toolExecutor, toolDefinitions: toolsToDefinitions(availableTools) }
-  }
-  return { toolExecutor, toolDescriptions: formatToolDescriptions(availableTools) }
+  return selectProtocol(availableTools, toolExecutor, config.model, capabilityCache)
 }
 
 // --- Spawn AI Agent ---

@@ -23,7 +23,7 @@ const makeLLMProvider = (): LLMProvider => ({
 })
 
 const makeSystem = (): System => {
-  const house = createHouse(noopDeliver)
+  const house = createHouse({ deliver: noopDeliver })
   const team = createTeam()
   house.createRoom({ name: 'TestRoom', createdBy: 'system' })
 

@@ -111,7 +111,7 @@ describe('House — room collection', () => {
 
   test('onRoomCreated fires when room is created (not restored)', () => {
     const created: string[] = []
-    const house = createHouse(undefined, undefined, undefined, undefined, undefined, undefined, undefined, (p) => created.push(p.name))
+    const house = createHouse({ onRoomCreated: (p) => created.push(p.name) })
 
     house.createRoom({ name: 'Alpha', createdBy: 'alice' })
     house.createRoomSafe({ name: 'Beta', createdBy: 'bob' })
@@ -120,7 +120,7 @@ describe('House — room collection', () => {
 
   test('onRoomCreated does NOT fire for restoreRoom', () => {
     const created: string[] = []
-    const house = createHouse(undefined, undefined, undefined, undefined, undefined, undefined, undefined, (p) => created.push(p.name))
+    const house = createHouse({ onRoomCreated: (p) => created.push(p.name) })
 
     const room = house.createRoom({ name: 'Original', createdBy: 'alice' })
     created.length = 0  // reset
@@ -131,7 +131,7 @@ describe('House — room collection', () => {
 
   test('onRoomDeleted fires when room is removed', () => {
     const deleted: string[] = []
-    const house = createHouse(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, (_id, name) => deleted.push(name))
+    const house = createHouse({ onRoomDeleted: (_id, name) => deleted.push(name) })
 
     const room = house.createRoom({ name: 'ToDelete', createdBy: 'alice' })
     house.removeRoom(room.profile.id)

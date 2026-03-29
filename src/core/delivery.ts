@@ -8,9 +8,9 @@
 // Team is used only for DM recipient resolution (name → ID) and self-DM prevention.
 // ============================================================================
 
-import type { DeliverFn, House, Message, MessageTarget, RouteMessage, Team } from './types.ts'
+import type { RouterDeps, Message, MessageTarget, RouteMessage } from './types.ts'
 
-export const createMessageRouter = (house: House, team: Team, deliver: DeliverFn): RouteMessage => {
+export const createMessageRouter = ({ house, team, deliver }: RouterDeps): RouteMessage => {
   return (target: MessageTarget, params) => {
     const correlationId = crypto.randomUUID()
     const delivered: Message[] = []
@@ -45,7 +45,7 @@ export const createMessageRouter = (house: House, team: Team, deliver: DeliverFn
         }
         delivered.push(dmMessage)
         deliver(recipient.id, dmMessage)
-        deliver(params.senderId, dmMessage)
+        deliver(params.senderId, dmMessage)  // sender also needs the DM in their context
       }
     }
 

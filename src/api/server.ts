@@ -63,12 +63,15 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
   const triggerAutoSave = config?.onAutoSave ?? (() => {})
 
+  // Wraps a callback to trigger auto-save after it runs
+  const withAutoSave = <T extends unknown[]>(fn: (...args: T) => void) =>
+    (...args: T): void => { fn(...args); triggerAutoSave() }
+
   // Wire room event callbacks to WebSocket broadcast
   // All messages posted to any room are broadcast to all WS clients (UI always sees everything)
-  system.setOnMessagePosted((_roomId, message) => {
+  system.setOnMessagePosted(withAutoSave((_roomId, message) => {
     wsManager.broadcast({ type: 'message', message })
-    triggerAutoSave()
-  })
+  }))
 
   system.setOnTurnChanged((roomId, agentId, waitingForHuman) => {
     const room = system.house.getRoom(roomId)
@@ -81,7 +84,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
     })
   })
 
-  system.setOnDeliveryModeChanged((roomId, mode) => {
+  system.setOnDeliveryModeChanged(withAutoSave((roomId, mode) => {
     const room = system.house.getRoom(roomId)
     wsManager.broadcast({
       type: 'delivery_mode_changed',
@@ -89,10 +92,9 @@ export const createServer = (system: System, config?: ServerConfig) => {
       mode,
       paused: room?.paused ?? false,
     })
-    triggerAutoSave()
-  })
+  }))
 
-  system.setOnFlowEvent((roomId, event, detail) => {
+  system.setOnFlowEvent(withAutoSave((roomId, event, detail) => {
     const room = system.house.getRoom(roomId)
     wsManager.broadcast({
       type: 'flow_event',
@@ -100,10 +102,9 @@ export const createServer = (system: System, config?: ServerConfig) => {
       event,
       detail,
     })
-    triggerAutoSave()
-  })
+  }))
 
-  system.setOnTodoChanged((roomId, action, todo) => {
+  system.setOnTodoChanged(withAutoSave((roomId, action, todo) => {
     const room = system.house.getRoom(roomId)
     wsManager.broadcast({
       type: 'todo_changed',
@@ -111,8 +112,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
       action,
       todo,
     })
-    triggerAutoSave()
-  })
+  }))
 
   const server = Bun.serve<WSData>({
     port,

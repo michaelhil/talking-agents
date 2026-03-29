@@ -18,15 +18,15 @@
 // ============================================================================
 
 import type {
-  DeliverFn, DeliveryMode, Flow, FlowDeliveryContext, FlowExecution, FlowStep, Message,
-  OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTodoChanged, OnTurnChanged,
-  PostParams, ResolveAgentName, Room, RoomProfile, RoomState, TodoItem, TodoStatus,
+  DeliverFn, DeliveryMode, Flow, FlowDeliveryContext, FlowExecution,
+  Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTodoChanged,
+  OnTurnChanged, PostParams, ResolveAgentName, Room, RoomProfile, RoomState, TodoItem, TodoStatus,
 } from './types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './types.ts'
 import { parseAddressedAgents } from './addressing.ts'
-import {
-  advanceFlowStep, deliverBroadcast, deliverFlow, deliverToAgent,
-} from './delivery-modes.ts'
+import { advanceFlowStep, deliverBroadcast, deliverFlow, deliverToAgent } from './delivery-modes.ts'
+import { createTodoStore } from './room-todos.ts'
+import { createFlowStore } from './room-flows.ts'
 
 export interface RoomCallbacks {
   readonly deliver?: DeliverFn
@@ -50,20 +50,15 @@ export const createRoom = (
   const messageLimit = maxMessages ?? DEFAULTS.roomMessageLimit
 
   const deliver = callbacks?.deliver
+  const resolveAgentName = callbacks?.resolveAgentName
 
   // --- State ---
   let mode: DeliveryMode = 'broadcast'
   let paused = false
 
-  // Flow state
-  const flows = new Map<string, Flow>()
-  let flowExecution: FlowExecution | undefined
-
-  // Todo state
-  const todos = new Map<string, TodoItem>()
-
-  // Agent name → ID resolution (injected from Team via callbacks)
-  const resolveAgentName = callbacks?.resolveAgentName
+  // Sub-systems
+  const todoStore = createTodoStore(profile.id, callbacks?.onTodoChanged)
+  const flowStore = createFlowStore(profile.id, callbacks?.onFlowEvent)
 
   // --- Eligible set: members minus user-muted ---
 
@@ -77,29 +72,43 @@ export const createRoom = (
     deliverToAgent(agentId, message, deliver)
   }
 
-  const notifyTurnChanged = (agentId?: string, waitingForHuman?: boolean): void => {
-    callbacks?.onTurnChanged?.(profile.id, agentId, waitingForHuman)
-  }
-
   const notifyModeChanged = (): void => {
     callbacks?.onDeliveryModeChanged?.(profile.id, mode)
   }
 
-  const notifyFlowEvent = (event: 'started' | 'step' | 'completed' | 'cancelled', detail?: Record<string, unknown>): void => {
-    callbacks?.onFlowEvent?.(profile.id, event, detail)
-  }
-
-  const clearFlowExecution = (): void => {
-    flowExecution = undefined
-  }
-
-  // Handle flow completion or cancellation: switch to broadcast + pause
   const endFlow = (flowId: string, event: 'completed' | 'cancelled'): void => {
-    clearFlowExecution()
+    flowStore.clearExecution()
     mode = 'broadcast'
     paused = true
-    notifyFlowEvent(event, { flowId })
+    flowStore.notifyFlowEvent(event, { flowId })
     notifyModeChanged()
+  }
+
+  // --- Post helpers ---
+
+  // Pure message construction from params + room context
+  const createRoomMessage = (params: PostParams): Message => ({
+    id: crypto.randomUUID(),
+    roomId: profile.id,
+    senderId: params.senderId,
+    senderName: params.senderName,
+    content: params.content,
+    timestamp: Date.now(),
+    type: params.type,
+    correlationId: params.correlationId,
+    generationMs: params.generationMs,
+    metadata: params.metadata,
+  })
+
+  // Deliver message to addressed agents (override mode dispatch)
+  const dispatchToAddressed = (message: Message, addressedNames: ReadonlyArray<string>): boolean => {
+    if (!resolveAgentName) return false
+    const addressedIds = addressedNames
+      .map(resolveAgentName)
+      .filter((id): id is string => id !== undefined && members.has(id) && !muted.has(id))
+    if (addressedIds.length === 0) return false
+    for (const id of addressedIds) deliverToOne(id, message)
+    return true
   }
 
   // --- Post ---
@@ -109,43 +118,24 @@ export const createRoom = (
       throw new Error('post() requires a non-empty senderId')
     }
 
-    const message: Message = {
-      id: crypto.randomUUID(),
-      roomId: profile.id,
-      senderId: params.senderId,
-      senderName: params.senderName,
-      content: params.content,
-      timestamp: Date.now(),
-      type: params.type,
-      correlationId: params.correlationId,
-      generationMs: params.generationMs,
-      metadata: params.metadata,
-    }
+    const message = createRoomMessage(params)
     messages.push(message)
 
-    // Notify observers (e.g. WS broadcast to UI) — always, regardless of delivery mode
     callbacks?.onMessagePosted?.(profile.id, message)
 
-    // Sender becomes a member implicitly for chat messages.
-    // Join/leave messages use explicit addMember/removeMember — implicit add would undo removals.
     if (params.senderId !== SYSTEM_SENDER_ID && params.type !== 'join' && params.type !== 'leave') {
       members.add(params.senderId)
     }
 
-    // Evict oldest messages if over limit
     if (messages.length > messageLimit) {
       messages.splice(0, messages.length - messageLimit)
     }
 
-    // --- Delivery dispatch ---
-    // Do NOT deliver: system, mute, room_summary (stored in history, seen as context)
     const nonDeliverable = message.type === 'system' || message.type === 'mute' || message.type === 'room_summary'
     if (nonDeliverable || !deliver) return message
 
-    // Compute eligible once: members minus user-muted
     const eligible = computeEligible()
 
-    // Join/leave messages are always broadcast regardless of mode and pause
     if (message.type === 'join' || message.type === 'leave') {
       deliverBroadcast(message, eligible, deliver)
       return message
@@ -153,43 +143,28 @@ export const createRoom = (
 
     // [[AgentName]] addressing override — works in ALL modes, even when paused
     const addressedNames = parseAddressedAgents(message.content)
-    if (addressedNames.length > 0 && resolveAgentName) {
-      const addressedIds = addressedNames
-        .map(resolveAgentName)
-        .filter((id): id is string => id !== undefined && members.has(id) && !muted.has(id))
-
-      if (addressedIds.length > 0) {
-        for (const id of addressedIds) {
-          deliverToOne(id, message)
-        }
-        // Addressing is a one-off override — does NOT change flow state
-        return message
-      }
-      // If no addressed agents resolved, fall through to mode dispatch
+    if (addressedNames.length > 0 && dispatchToAddressed(message, addressedNames)) {
+      return message
     }
 
-    // Paused: store but don't deliver
     if (paused) return message
 
-    // Mode dispatch
     switch (mode) {
       case 'broadcast':
         deliverBroadcast(message, eligible, deliver)
         break
 
       case 'flow': {
+        const flowExecution = flowStore.getExecution()
         if (!flowExecution?.active) break
-        const result = deliverFlow(
-          message, flowExecution, eligible,
-          params.senderId, deliver,
-        )
+        const result = deliverFlow(message, flowExecution, eligible, params.senderId, deliver)
         if (result.advanced) {
           if (result.completed) {
-            endFlow(flowExecution!.flow.id, 'completed')
+            endFlow(flowExecution.flow.id, 'completed')
           } else {
-            flowExecution!.stepIndex = result.nextStepIndex
-            notifyFlowEvent('step', {
-              flowId: flowExecution!.flow.id,
+            flowExecution.stepIndex = result.nextStepIndex
+            flowStore.notifyFlowEvent('step', {
+              flowId: flowExecution.flow.id,
               stepIndex: result.nextStepIndex,
               agentName: result.nextAgentName,
             })
@@ -205,21 +180,18 @@ export const createRoom = (
   // --- Delivery mode controls ---
 
   const setDeliveryMode = (newMode: Exclude<DeliveryMode, 'flow'>): void => {
-    // Cancel flow if active
+    const flowExecution = flowStore.getExecution()
     if (flowExecution?.active) {
       const flowId = flowExecution.flow.id
-      clearFlowExecution()
-      notifyFlowEvent('cancelled', { flowId })
+      flowStore.clearExecution()
+      flowStore.notifyFlowEvent('cancelled', { flowId })
     }
-
     mode = newMode
-    paused = false  // switching mode clears pause
-
-    // Notify even if mode unchanged — pause state may have changed
+    paused = false
     notifyModeChanged()
   }
 
-  // --- Muting (user-controlled, never modified by system/mode logic) ---
+  // --- Muting ---
 
   const setMuted = (agentId: string, isMuted: boolean): void => {
     const wasMuted = muted.has(agentId)
@@ -231,7 +203,6 @@ export const createRoom = (
       muted.delete(agentId)
     }
 
-    // Resolve agent name for the system message
     let agentName: string | undefined
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i]!.senderId === agentId) {
@@ -241,7 +212,6 @@ export const createRoom = (
     }
     const displayName = agentName ?? agentId
 
-    // Post mute/unmute system message (stored in history, NOT delivered)
     const muteMessage: Message = {
       id: crypto.randomUUID(),
       roomId: profile.id,
@@ -252,7 +222,7 @@ export const createRoom = (
     }
     messages.push(muteMessage)
 
-    // If muted agent is the current flow step, skip via advanceFlowStep
+    const flowExecution = flowStore.getExecution()
     if (mode === 'flow' && flowExecution?.active && isMuted) {
       const currentStep = flowExecution.flow.steps[flowExecution.stepIndex]
       if (currentStep && currentStep.agentId === agentId) {
@@ -271,7 +241,7 @@ export const createRoom = (
               : lastMsg
             deliverToOne(nextAgentId, enriched)
           }
-          notifyFlowEvent('step', {
+          flowStore.notifyFlowEvent('step', {
             flowId: flowExecution.flow.id,
             stepIndex: result.nextStepIndex,
             agentName: result.nextAgentName,
@@ -283,42 +253,34 @@ export const createRoom = (
 
   // --- Flow management ---
 
-  const addFlow = (config: Omit<Flow, 'id'>): Flow => {
-    const flow: Flow = { ...config, id: crypto.randomUUID() }
-    flows.set(flow.id, flow)
-    return flow
-  }
-
-  const removeFlow = (flowId: string): boolean => {
-    if (flowExecution?.flow.id === flowId) {
-      cancelFlow()
-    }
-    return flows.delete(flowId)
+  const cancelFlow = (): void => {
+    const flowExecution = flowStore.getExecution()
+    if (!flowExecution?.active) return
+    endFlow(flowExecution.flow.id, 'cancelled')
   }
 
   const startFlow = (flowId: string): void => {
-    const flow = flows.get(flowId)
+    const flow = flowStore.getFlow(flowId)
     if (!flow || flow.steps.length === 0) return
 
-    // Cancel existing flow if any
+    const flowExecution = flowStore.getExecution()
     if (flowExecution?.active) {
-      notifyFlowEvent('cancelled', { flowId: flowExecution.flow.id })
+      flowStore.notifyFlowEvent('cancelled', { flowId: flowExecution.flow.id })
     }
 
     paused = false
     const lastMsg = messages[messages.length - 1]
     if (!lastMsg || !deliver) return
 
-    flowExecution = {
+    flowStore.setExecution({
       flow,
       triggerMessageId: lastMsg.id,
       stepIndex: 0,
       active: true,
-    }
+    })
     mode = 'flow'
     notifyModeChanged()
 
-    // Deliver trigger message to first eligible step agent
     const eligible = computeEligible()
     const firstStep = flow.steps[0]!
     if (eligible.has(firstStep.agentId)) {
@@ -338,64 +300,9 @@ export const createRoom = (
         },
       }
       deliverToOne(firstStep.agentId, enriched)
-      notifyFlowEvent('started', { flowId: flow.id, agentName: firstStep.agentName })
+      flowStore.notifyFlowEvent('started', { flowId: flow.id, agentName: firstStep.agentName })
     }
   }
-
-  const cancelFlow = (): void => {
-    if (!flowExecution?.active) return
-    endFlow(flowExecution.flow.id, 'cancelled')
-  }
-
-  // --- Todo management ---
-
-  const notifyTodoChanged = (action: 'added' | 'updated' | 'removed', todo: TodoItem): void => {
-    callbacks?.onTodoChanged?.(profile.id, action, todo)
-  }
-
-  const addTodo = (config: { content: string; assignee?: string; assigneeId?: string; dependencies?: ReadonlyArray<string>; createdBy: string }): TodoItem => {
-    const now = Date.now()
-    const todo: TodoItem = {
-      id: crypto.randomUUID(),
-      content: config.content,
-      status: 'pending',
-      assignee: config.assignee,
-      assigneeId: config.assigneeId,
-      dependencies: config.dependencies,
-      createdBy: config.createdBy,
-      createdAt: now,
-      updatedAt: now,
-    }
-    todos.set(todo.id, todo)
-    notifyTodoChanged('added', todo)
-    return todo
-  }
-
-  const updateTodo = (todoId: string, updates: { status?: TodoStatus; assignee?: string; assigneeId?: string; content?: string; result?: string }): TodoItem | undefined => {
-    const existing = todos.get(todoId)
-    if (!existing) return undefined
-    // Filter out undefined values so we don't overwrite existing fields
-    const defined = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined))
-    const updated: TodoItem = {
-      ...existing,
-      ...defined,
-      updatedAt: Date.now(),
-    }
-    todos.set(todoId, updated)
-    notifyTodoChanged('updated', updated)
-    return updated
-  }
-
-  const removeTodo = (todoId: string): boolean => {
-    const existing = todos.get(todoId)
-    if (!existing) return false
-    todos.delete(todoId)
-    notifyTodoChanged('removed', existing)
-    return true
-  }
-
-  const getTodos = (): ReadonlyArray<TodoItem> =>
-    [...todos.values()].sort((a, b) => a.createdAt - b.createdAt)
 
   // --- Room interface ---
 
@@ -416,49 +323,39 @@ export const createRoom = (
       profile = { ...profile, roomPrompt: prompt }
     },
 
-    // Delivery mode
     get deliveryMode() { return mode },
     setDeliveryMode,
 
-    // Pause
     get paused() { return paused },
     setPaused: (p: boolean): void => { paused = p },
 
-    // Room state snapshot
-    getRoomState: (): RoomState => ({
-      mode,
-      paused,
-      muted: [...muted],
-      members: [...members],
-      ...(flowExecution ? {
-        flowExecution: {
-          flowId: flowExecution.flow.id,
-          stepIndex: flowExecution.stepIndex,
-          active: flowExecution.active,
-        },
-      } : {}),
-    }),
+    getRoomState: (): RoomState => {
+      const exec = flowStore.getExecution()
+      return {
+        mode,
+        paused,
+        muted: [...muted],
+        members: [...members],
+        ...(exec ? { flowExecution: { flowId: exec.flow.id, stepIndex: exec.stepIndex, active: exec.active } } : {}),
+      }
+    },
 
-    // Muting
     setMuted,
     isMuted: (agentId: string): boolean => muted.has(agentId),
     getMutedIds: (): ReadonlySet<string> => new Set(muted),
 
-    // Flow management
-    addFlow,
-    removeFlow: (flowId: string): boolean => removeFlow(flowId),
-    getFlows: (): ReadonlyArray<Flow> => [...flows.values()],
+    addFlow: (config: Omit<Flow, 'id'>) => flowStore.addFlow(config),
+    removeFlow: (flowId: string): boolean => flowStore.removeFlow(flowId, cancelFlow),
+    getFlows: (): ReadonlyArray<Flow> => flowStore.getFlows(),
     startFlow,
     cancelFlow,
-    get flowExecution() { return flowExecution },
+    get flowExecution() { return flowStore.getExecution() },
 
-    // Todo management
-    addTodo,
-    updateTodo,
-    removeTodo,
-    getTodos,
+    addTodo: todoStore.addTodo,
+    updateTodo: todoStore.updateTodo,
+    removeTodo: todoStore.removeTodo,
+    getTodos: todoStore.getTodos,
 
-    // Snapshot restore — bypass delivery pipeline entirely
     injectMessages: (msgs: ReadonlyArray<Message>): void => {
       for (const msg of msgs) {
         messages.push(msg)
@@ -479,10 +376,8 @@ export const createRoom = (
       for (const id of state.muted) muted.add(id)
       mode = state.mode
       paused = state.paused
-      flows.clear()
-      for (const flow of state.flows) flows.set(flow.id, flow)
-      todos.clear()
-      for (const todo of state.todos) todos.set(todo.id, todo)
+      flowStore.restoreFlows(state.flows)
+      todoStore.restoreTodos(state.todos)
     },
   }
 }
