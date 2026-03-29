@@ -79,7 +79,6 @@ const artifactListEl = $('#artifact-list') as HTMLElement
 const artifactAddRow = $('#artifact-add-row') as HTMLElement
 const artifactInput = $('#artifact-input') as HTMLInputElement
 const btnArtifactSubmit = $('#btn-artifact-submit') as HTMLElement
-const btnAddArtifact = $('#btn-add-artifact') as HTMLElement
 const roomHeader = $('#room-header') as HTMLElement
 const messagesDiv = $('#messages') as HTMLElement
 const chatForm = $('#chat-form') as HTMLFormElement
@@ -236,16 +235,6 @@ artifactHeader.onclick = () => {
   const room = rooms.get(selectedRoomId)
   if (room) refreshArtifactPanel(room)
   if (artifactExpanded) setTimeout(() => artifactInput.focus(), 50)
-}
-
-btnAddArtifact.onclick = (e) => {
-  e.stopPropagation()
-  if (!artifactExpanded) {
-    artifactExpanded = true
-    const room = rooms.get(selectedRoomId)
-    if (room) refreshArtifactPanel(room)
-  }
-  setTimeout(() => artifactInput.focus(), 50)
 }
 
 btnArtifactSubmit.onclick = (e) => {
