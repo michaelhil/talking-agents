@@ -17,7 +17,7 @@ import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
 import { addAgentToRoom, removeAgentFromRoom } from './agents/actions.ts'
-import { createListRoomsTool, createGetTimeTool, createQueryAgentTool, createListTodosTool, createAddTodoTool, createUpdateTodoTool, createCreateRoomTool, createDeleteRoomTool, createAddToRoomTool, createRemoveFromRoomTool } from './tools/built-in.ts'
+import { createListRoomsTool, createGetTimeTool, createQueryAgentTool, createListTodosTool, createAddTodoTool, createUpdateTodoTool, createCreateRoomTool, createDeleteRoomTool, createAddToRoomTool, createRemoveFromRoomTool, createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool, createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool, createPostToRoomTool, createGetRoomHistoryTool, createDelegateTool } from './tools/built-in.ts'
 import { createToolCapabilityCache } from './llm/tool-capability.ts'
 
 export interface System {
@@ -130,6 +130,15 @@ export const createSystem = (ollamaUrl?: string): System => {
   toolRegistry.register(createDeleteRoomTool(systemRemoveRoom, house))
   toolRegistry.register(createAddToRoomTool(team, house, systemAddAgentToRoom))
   toolRegistry.register(createRemoveFromRoomTool(team, house, systemRemoveAgentFromRoom))
+  toolRegistry.register(createListAgentsTool(team))
+  toolRegistry.register(createGetMyContextTool(team, house))
+  toolRegistry.register(createSetDeliveryModeTool(house))
+  toolRegistry.register(createPauseRoomTool(house))
+  toolRegistry.register(createMuteAgentTool(team, house))
+  toolRegistry.register(createSetRoomPromptTool(house))
+  toolRegistry.register(createPostToRoomTool(house))
+  toolRegistry.register(createGetRoomHistoryTool(house))
+  toolRegistry.register(createDelegateTool(team, house))
 
   // Bound spawn methods — close over system dependencies
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>

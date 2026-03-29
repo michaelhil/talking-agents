@@ -93,7 +93,9 @@ src/
   llm/
     ollama.ts           — Ollama HTTP client with timing
   tools/
-    built-in.ts         — list_rooms, get_time, query_agent
+    built-in.ts         — 19 built-in tools (rooms, agents, todos, delivery, delegation)
+    format.ts           — Text-protocol tool formatting for system prompts
+    loader.ts           — Filesystem tool discovery (./tools/, ~/.samsinn/tools/)
   integrations/
     mcp/
       client.ts         — MCP client: consumes external tool servers
@@ -132,6 +134,49 @@ src/
 ### WebSocket Protocol
 
 Connect: `ws://localhost:3000/ws?name=YourName`
+
+## Tools
+
+AI agents can invoke tools using `::TOOL:: tool_name {"param": "value"}` syntax (or native function-calling on supported models). See [`docs/tools.md`](docs/tools.md) for the full reference.
+
+### Built-in Tools (always available)
+
+| Tool | Description |
+|------|-------------|
+| `get_time` | Current date/time in ISO format |
+| `list_rooms` | All rooms in the system |
+| `list_agents` | All agents (AI + human) with their kind and model |
+| `get_my_context` | Caller's name, id, kind, and current room membership |
+| `query_agent` | Ask another AI agent a direct question synchronously |
+| `delegate` | Assign a task to another agent with todo tracking |
+| `list_todos` | All todos in the current room |
+| `add_todo` | Create a new todo item (with optional assignee) |
+| `update_todo` | Set status, add result, or reassign a todo |
+| `create_room` | Create a new room (caller auto-joins) |
+| `delete_room` | Permanently delete a room |
+| `add_to_room` | Add an agent (or yourself) to a room |
+| `remove_from_room` | Remove an agent (or yourself) from a room |
+| `set_delivery_mode` | Switch room to broadcast mode |
+| `pause_room` | Pause or unpause message delivery |
+| `mute_agent` | Mute or unmute an agent in a room |
+| `set_room_prompt` | Update the system prompt for a room |
+| `post_to_room` | Post a message to a room from anywhere |
+| `get_room_history` | Recent messages from a room |
+
+### External Tools (filesystem-loaded)
+
+Drop `.ts` files in `./tools/` (project) or `~/.samsinn/tools/` (user-global). The system loads them at startup and makes them available to any agent that lists the tool by name. See `docs/tools.md` for authoring guidelines.
+
+**Bundled external tools** (in `tools/`):
+
+| File | Tools |
+|------|-------|
+| `memory.ts` | `think`, `note`, `my_notes`, `remember`, `recall`, `forget` |
+| `compute.ts` | `calculate`, `json_extract`, `format_table` |
+| `web.ts` | `web_search`*, `fetch_url` |
+| `research.ts` | `arxiv_search`, `doi_lookup`, `semantic_scholar` |
+
+*`web_search` requires `BRAVE_API_KEY` or `SERPER_API_KEY`.
 
 ## Headless Mode (MCP Server)
 

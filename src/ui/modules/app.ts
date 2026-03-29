@@ -641,9 +641,11 @@ modeSelector.onchange = () => {
 roomForm.onsubmit = (e) => {
   e.preventDefault()
   const data = new FormData(roomForm)
+  const roomPrompt = (data.get('roomPrompt') as string | null)?.trim() || undefined
   send({
     type: 'create_room',
     name: data.get('name') as string,
+    ...(roomPrompt ? { roomPrompt } : {}),
   })
   roomModal.close()
   roomForm.reset()

@@ -305,6 +305,8 @@ export interface ToolContext {
 export interface Tool {
   readonly name: string
   readonly description: string
+  readonly usage?: string           // when to use / when not to — injected into LLM context
+  readonly returns?: string         // human-readable description of the return value
   readonly parameters: Record<string, unknown>  // JSON Schema for LLM
   readonly execute: (params: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>
 }
