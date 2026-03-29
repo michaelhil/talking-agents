@@ -1,5 +1,6 @@
 import { json, errorResponse, parseBody } from '../http-routes.ts'
-import { SYSTEM_SENDER_ID } from '../../core/types.ts'
+import { SYSTEM_SENDER_ID, SETTABLE_DELIVERY_MODES } from '../../core/types.ts'
+import type { SettableDeliveryMode } from '../../core/types.ts'
 import type { RouteEntry, RouteContext } from './types.ts'
 
 export const roomRoutes: RouteEntry[] = [
@@ -113,11 +114,13 @@ export const roomRoutes: RouteEntry[] = [
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
       const body = await parseBody(req)
-      const newMode = body.mode as 'broadcast' | 'flow'
-      if (newMode !== 'broadcast' && newMode !== 'flow') {
-        return errorResponse('mode must be broadcast or flow')
+      const rawMode = body.mode as string
+      if (!SETTABLE_DELIVERY_MODES.includes(rawMode as SettableDeliveryMode)) {
+        return rawMode === 'flow'
+          ? errorResponse('Flow mode is entered via start_flow, not set_delivery_mode', 400)
+          : errorResponse(`Invalid mode "${rawMode}". Valid: ${SETTABLE_DELIVERY_MODES.join(', ')}`, 400)
       }
-      room.setDeliveryMode(newMode)
+      room.setDeliveryMode(rawMode as SettableDeliveryMode)
       return json({ mode: room.deliveryMode })
     },
   },

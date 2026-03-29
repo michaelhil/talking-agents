@@ -30,12 +30,16 @@ interface MCPConnection {
   readonly toolCount: number
 }
 
-const activeConnections: MCPConnection[] = []
+export interface MCPRegistrationResult {
+  readonly totalTools: number
+  readonly disconnect: () => Promise<void>
+}
 
-export const registerMCPServer = async (
+const registerMCPServer = async (
   registry: ToolRegistry,
   serverName: string,
   config: MCPServerConfig,
+  connections: MCPConnection[],
 ): Promise<number> => {
   const client = new Client({ name: `samsinn-${serverName}`, version: '1.0.0' })
   const transport = new StdioClientTransport({
@@ -82,31 +86,33 @@ export const registerMCPServer = async (
     registered++
   }
 
-  activeConnections.push({ name: serverName, client, transport, toolCount: registered })
+  connections.push({ name: serverName, client, transport, toolCount: registered })
   return registered
 }
 
 export const registerAllMCPServers = async (
   registry: ToolRegistry,
   config: MCPConfig,
-): Promise<void> => {
+): Promise<MCPRegistrationResult> => {
+  const connections: MCPConnection[] = []
   const servers = config.mcpServers ?? {}
 
   for (const [name, serverConfig] of Object.entries(servers)) {
     try {
-      const count = await registerMCPServer(registry, name, serverConfig)
+      const count = await registerMCPServer(registry, name, serverConfig, connections)
       console.log(`MCP "${name}": ${count} tools registered`)
     } catch (err) {
       console.error(`MCP "${name}" failed to connect:`, err instanceof Error ? err.message : err)
     }
   }
-}
 
-export const disconnectAllMCPServers = async (): Promise<void> => {
-  for (const conn of activeConnections) {
-    try {
-      await conn.client.close()
-    } catch { /* ignore cleanup errors */ }
+  const totalTools = connections.reduce((sum, c) => sum + c.toolCount, 0)
+  return {
+    totalTools,
+    disconnect: async () => {
+      await Promise.all(connections.map(async c => {
+        try { await c.client.close() } catch { /* ignore close errors */ }
+      }))
+    },
   }
-  activeConnections.length = 0
 }

@@ -15,6 +15,10 @@ import { asAIAgent } from '../agents/shared.ts'
 import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
+// --- Version ---
+
+export const SNAPSHOT_VERSION = 1
+
 // --- Snapshot schema ---
 
 export interface RoomSnapshot {
@@ -116,6 +120,26 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   }
 }
 
+// --- Migration ---
+
+const migrateSnapshot = (raw: Record<string, unknown>): SystemSnapshot => {
+  // Version may be stored as string (legacy) or number; normalise to number
+  const rawVersion = raw.version
+  const version = typeof rawVersion === 'number'
+    ? rawVersion
+    : typeof rawVersion === 'string'
+      ? parseInt(rawVersion, 10)
+      : 0
+  if (version > SNAPSHOT_VERSION) {
+    throw new Error(
+      `Snapshot version ${version} is newer than this build (supports up to v${SNAPSHOT_VERSION}). Please upgrade the application.`,
+    )
+  }
+  // v0 → v1: version field was added; no structural changes needed
+  // Future migrations: if (version < 2) { raw = migrateV1toV2(raw) }
+  return raw as unknown as SystemSnapshot
+}
+
 // --- Save / Load ---
 
 export const saveSnapshot = async (snapshot: SystemSnapshot, path: string): Promise<void> => {
@@ -131,12 +155,9 @@ export const loadSnapshot = async (path: string): Promise<SystemSnapshot | null>
   if (!await file.exists()) return null
 
   try {
-    const data = await file.json() as SystemSnapshot
-    if (data.version !== '1') {
-      console.error(`Unsupported snapshot version: ${data.version}`)
-      return null
-    }
-    return data
+    const text = await file.text()
+    const raw = JSON.parse(text) as Record<string, unknown>
+    return migrateSnapshot(raw)
   } catch (err) {
     console.error('Failed to load snapshot:', err)
     return null

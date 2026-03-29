@@ -1,5 +1,6 @@
-import type { WSInbound } from '../../core/types.ts'
-import { requireRoom, requireAgent, type CommandContext } from './types.ts'
+import { SETTABLE_DELIVERY_MODES } from '../../core/types.ts'
+import type { SettableDeliveryMode, WSInbound } from '../../core/types.ts'
+import { requireRoom, requireAgent, sendError, type CommandContext } from './types.ts'
 
 export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Promise<boolean> => {
   const { ws, session, system, broadcast } = ctx
@@ -31,7 +32,14 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
     case 'set_delivery_mode': {
       const room = requireRoom(ws, system, msg.roomName)
       if (!room) return true
-      room.setDeliveryMode(msg.mode)
+      if (!SETTABLE_DELIVERY_MODES.includes(msg.mode as SettableDeliveryMode)) {
+        sendError(ws, (msg.mode as string) === 'flow'
+          ? 'Flow mode is entered via start_flow, not set_delivery_mode'
+          : `Invalid mode: ${msg.mode}`)
+        return true
+      }
+      room.setDeliveryMode(msg.mode as SettableDeliveryMode)
+      broadcast({ type: 'delivery_mode_changed', roomName: room.profile.name, mode: room.deliveryMode, paused: room.paused })
       return true
     }
     case 'set_paused': {

@@ -149,14 +149,18 @@ export const spawnAIAgent = async (
 ): Promise<AIAgent> => {
 
   // Resolve target: respond where the trigger came from
-  const resolveTarget = (decision: Decision): MessageTarget => {
+  const resolveTarget = (decision: Decision): MessageTarget | null => {
     if (decision.triggerRoomId) return { rooms: [decision.triggerRoomId] }
     if (decision.triggerPeerId) return { agents: [decision.triggerPeerId] }
-    return {}
+    return null
   }
 
   const onDecision = (decision: Decision): void => {
     const target = resolveTarget(decision)
+    if (!target) {
+      console.error(`[${config.name}] Decision has no routing target — response dropped. This is a bug.`)
+      return
+    }
 
     if (decision.response.action === 'respond') {
       routeMessage(target, {

@@ -23,14 +23,11 @@ import type {
   AIAgent,
   AgentHistory,
   AgentProfile,
-  AgentState,
   AIAgentConfig,
   LLMProvider,
   Message,
   Room,
   RoomProfile,
-  StateSubscriber,
-  StateValue,
   TodoItem,
   ToolDefinition,
   ToolExecutor,
@@ -39,6 +36,7 @@ import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
 import { extractAgentProfile as extractProfile } from './shared.ts'
 import { triggerKey, buildContext, flushIncoming, type BuildContextDeps } from './context-builder.ts'
 import { evaluate, type OnDecision } from './evaluation.ts'
+import { createConcurrencyManager } from './concurrency.ts'
 
 // Re-export Decision/OnDecision for consumers
 export type { Decision, OnDecision } from './evaluation.ts'
@@ -75,12 +73,7 @@ export const createAIAgent = (
     agentProfiles: new Map(),
   }
 
-  // Concurrency control
-  const generatingContexts = new Set<string>()
-  const pendingContexts = new Set<string>()
-  let idleResolvers: Array<() => void> = []
-  const stateSubscribers = new Set<StateSubscriber>()
-  let generationEpoch = 0  // incremented on cancelGeneration to discard stale results
+  const cm = createConcurrencyManager(agentId)
 
   let currentSystemPrompt: string = config.systemPrompt
   let currentModel: string = config.model
@@ -93,49 +86,12 @@ export const createAIAgent = (
   const getResponseFormat = options?.getResponseFormat
   const getRoomTodos = options?.getRoomTodos
 
-  // --- State observability ---
-
-  const notifyState = (value: StateValue, context?: string): void => {
-    for (const fn of stateSubscribers) fn(value, agentId, context)
-  }
-
-  const state: AgentState = {
-    get: () => generatingContexts.size > 0 ? 'generating' : 'idle',
-    subscribe: (fn: StateSubscriber) => {
-      stateSubscribers.add(fn)
-      return () => { stateSubscribers.delete(fn) }
-    },
-  }
-
   // --- Name resolution ---
 
   const resolveName = (senderId: string): string => {
     if (senderId === SYSTEM_SENDER_ID) return 'System'
     if (senderId === agentId) return config.name
     return agentHistory.agentProfiles.get(senderId)?.name ?? senderId
-  }
-
-  // --- Idle detection ---
-
-  const checkIdle = (): void => {
-    if (generatingContexts.size === 0 && pendingContexts.size === 0) {
-      const resolvers = idleResolvers
-      idleResolvers = []
-      for (const resolve of resolvers) resolve()
-    }
-  }
-
-  const whenIdle = (timeoutMs = AGENT_TIMEOUT_MS): Promise<void> => {
-    if (generatingContexts.size === 0 && pendingContexts.size === 0) {
-      return Promise.resolve()
-    }
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`whenIdle timed out after ${timeoutMs}ms`)),
-        timeoutMs,
-      )
-      idleResolvers.push(() => { clearTimeout(timer); resolve() })
-    })
   }
 
   // --- Context deps ---
@@ -157,45 +113,45 @@ export const createAIAgent = (
   const tryEvaluate = (triggerRoomId?: string, triggerPeerId?: string): void => {
     const key = triggerKey(triggerRoomId, triggerPeerId)
 
-    if (generatingContexts.has(key)) {
-      pendingContexts.add(key)
+    if (cm.isGenerating(key)) {
+      cm.addPending(key)
       return
     }
 
-    generatingContexts.add(key)
-    notifyState('generating', key)
+    cm.startGeneration(key)
+    cm.notifyState('generating', key)
 
     const contextResult = buildContext(contextDeps(), triggerRoomId, triggerPeerId)
-    const epochAtStart = generationEpoch
+    const epoch = cm.epochAtStart()
 
     const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt }
     // epoch guards: each cancelGeneration() increments generationEpoch so stale
     // in-flight results from a prior generation cycle are silently discarded.
-    evaluate(contextResult, evalConfig, llmProvider, toolExecutor, maxToolIterations, triggerRoomId, triggerPeerId, toolDefinitions)
-      .then(({ decision, flushInfo }) => {
-        if (epochAtStart !== generationEpoch) return  // cancelled — discard stale result
+    const run = async (): Promise<void> => {
+      try {
+        const { decision, flushInfo } = await evaluate(
+          contextResult, evalConfig, llmProvider, toolExecutor, maxToolIterations,
+          triggerRoomId, triggerPeerId, toolDefinitions,
+        )
+        if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
 
         // Flush incoming always — on both respond and pass.
         // On pass, the agent has consciously evaluated these messages; they belong in history.
         flushIncoming(flushInfo, agentHistory, agentId)
         onDecision(decision)
-      })
-      .catch(err => {
-        if (epochAtStart !== generationEpoch) return  // cancelled, ignore error
+      } catch (err) {
+        if (!cm.isEpochCurrent(epoch)) return  // cancelled, ignore error
         console.error(`[${config.name}] Evaluation error:`, err)
-      })
-      .finally(() => {
-        if (epochAtStart !== generationEpoch) return  // cancelled, already cleaned up
-        generatingContexts.delete(key)
-        notifyState('idle', key)
-
-        if (pendingContexts.has(key)) {
-          pendingContexts.delete(key)
-          tryEvaluate(triggerRoomId, triggerPeerId)
-        } else {
-          checkIdle()
+      } finally {
+        if (cm.isEpochCurrent(epoch)) {
+          cm.endGeneration(key)  // removes key, notifies idle, checks idle
+          if (cm.consumePending(key)) {
+            tryEvaluate(triggerRoomId, triggerPeerId)
+          }
         }
-      })
+      }
+    }
+    void run()
   }
 
   // --- Receive ---
@@ -321,13 +277,13 @@ export const createAIAgent = (
     name: config.name,
     kind: 'ai',
     metadata: { model: currentModel },
-    state,
+    state: cm.state,
     receive,
     join,
     leave: (roomId: string): void => {
       agentHistory.rooms.delete(roomId)
     },
-    whenIdle,
+    whenIdle: cm.whenIdle,
     query,
     updateSystemPrompt: (prompt: string) => { currentSystemPrompt = prompt },
     getSystemPrompt: () => currentSystemPrompt,
@@ -336,12 +292,6 @@ export const createAIAgent = (
     getTemperature: () => config.temperature,
     getHistoryLimit: () => config.historyLimit,
     getTools: () => config.tools,
-    cancelGeneration: () => {
-      // Increment epoch so in-flight LLM calls discard their results
-      generationEpoch++
-      generatingContexts.clear()
-      pendingContexts.clear()
-      notifyState('idle')
-    },
+    cancelGeneration: cm.cancelAll,
   }
 }

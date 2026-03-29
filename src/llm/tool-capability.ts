@@ -86,6 +86,7 @@ export const createToolCapabilityCache = (baseUrl: string): ToolCapabilityCache 
       const cached = cache.get(model)
       if (cached !== undefined) return cached
       const result = await probeNativeToolSupport(model, baseUrl)
+      if (cache.size >= 100) cache.clear()
       cache.set(model, result)
       return result
     },

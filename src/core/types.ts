@@ -37,14 +37,19 @@ export interface RoomContext {
 }
 
 export interface DMContext {
-  history: Message[]                // all processed DMs with this peer (unbounded)
+  history: ReadonlyArray<Message>   // all processed DMs with this peer (unbounded)
   lastActiveAt?: number
 }
 
 export interface AgentHistory {
   readonly rooms: Map<string, RoomContext>        // roomId → context
   readonly dms: Map<string, DMContext>            // peerId → context
-  readonly incoming: Message[]                    // unprocessed messages (all contexts)
+  // Intentionally mutable buffer — messages arrive here before evaluation, then
+  // flushIncoming moves processed messages to RoomContext/DMContext history.
+  // The `readonly` marker prevents field reassignment, not element mutation.
+  // Safe: JavaScript's event loop ensures each flush runs to completion
+  // before any other code can observe intermediate state.
+  readonly incoming: Message[]
   readonly agentProfiles: Map<string, AgentProfile>
 }
 
@@ -89,6 +94,11 @@ export type DeliverFn = (agentId: string, message: Message) => void
 // [[AgentName]] addressing and muting work as universal overrides in all modes.
 
 export type DeliveryMode = 'broadcast' | 'flow'
+
+// Modes that can be set directly via the delivery-mode endpoint.
+// 'flow' is excluded — it is entered only via startFlow().
+export const SETTABLE_DELIVERY_MODES = ['broadcast'] as const satisfies ReadonlyArray<Exclude<DeliveryMode, 'flow'>>
+export type SettableDeliveryMode = typeof SETTABLE_DELIVERY_MODES[number]
 
 // --- Flow types ---
 
@@ -384,6 +394,7 @@ export interface AIAgentConfig {
   readonly historyLimit?: number
   readonly tools?: ReadonlyArray<string>        // tool names this agent can use
   readonly maxToolIterations?: number           // default 5
+  readonly maxToolResultChars?: number          // default: 4000
 }
 
 // === Agent Response (parsed from LLM plain text output) ===

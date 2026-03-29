@@ -50,10 +50,9 @@ export const bootstrap = async (): Promise<void> => {
 
   // Register MCP client tools from config (external tool servers)
   const mcpConfigPath = `${import.meta.dir}/../mcp-servers.json`
-  if (existsSync(mcpConfigPath)) {
-    const mcpConfig = await Bun.file(mcpConfigPath).json()
-    await registerAllMCPServers(system.toolRegistry, mcpConfig)
-  }
+  const mcpResult = existsSync(mcpConfigPath)
+    ? await registerAllMCPServers(system.toolRegistry, await Bun.file(mcpConfigPath).json())
+    : { totalTools: 0, disconnect: async (): Promise<void> => {} }
 
   console.log(`Tools: ${system.toolRegistry.list().map(t => t.name).join(', ')}`)
 
@@ -79,6 +78,7 @@ export const bootstrap = async (): Promise<void> => {
         ])
       }
     }
+    await mcpResult.disconnect()
     try {
       await autoSaver.flush()
       console.log('Snapshot saved.')

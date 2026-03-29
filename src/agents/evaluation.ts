@@ -101,13 +101,24 @@ const nativeCallsToToolCalls = (native: ReadonlyArray<NativeToolCall>): Readonly
 
 // === Tool result injection ===
 
+const MAX_TOOL_RESULT_CHARS = 4_000
+
+const truncateResult = (s: string, maxChars: number): string =>
+  s.length > maxChars
+    ? `${s.slice(0, maxChars)}\n[... ${s.length - maxChars} characters omitted]`
+    : s
+
 const formatToolResults = (
   calls: ReadonlyArray<ToolCall>,
   results: ReadonlyArray<ToolResult>,
+  maxChars: number,
 ): string => {
-  const lines = results.map((r, i) =>
-    `- ${calls[i]?.tool}: ${r.success ? JSON.stringify(r.data) : `Error: ${r.error}`}`,
-  )
+  const lines = results.map((r, i) => {
+    const value = r.success
+      ? truncateResult(JSON.stringify(r.data), maxChars)
+      : `Error: ${truncateResult(r.error ?? '', maxChars)}`
+    return `- ${calls[i]?.tool}: ${value}`
+  })
   return `Tool results:\n${lines.join('\n')}\n\nNow respond to the conversation using these results. Write your response as natural text.`
 }
 
@@ -130,6 +141,7 @@ export const evaluate = async (
 ): Promise<EvalResult> => {
   const context = [...contextResult.messages]
   let totalGenerationMs = 0
+  const maxToolResultChars = config.maxToolResultChars ?? MAX_TOOL_RESULT_CHARS
 
   const makeResult = (decision: Decision): EvalResult => ({
     decision,
@@ -160,7 +172,7 @@ export const evaluate = async (
         const calls = nativeCallsToToolCalls(chatResponse.toolCalls)
         const results = await toolExecutor(calls, triggerRoomId)
         context.push({ role: 'assistant' as const, content: chatResponse.content })
-        context.push({ role: 'user' as const, content: formatToolResults(calls, results) })
+        context.push({ role: 'user' as const, content: formatToolResults(calls, results, maxToolResultChars) })
         continue
       }
 

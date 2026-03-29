@@ -28,6 +28,7 @@ export interface FlushInfo {
   readonly ids: Set<string>
   readonly dmMessages: Message[]
   readonly triggerRoomId?: string
+  readonly triggerPeerId?: string
 }
 
 // === Context result — ready for LLM consumption ===
@@ -89,15 +90,13 @@ export const flushIncoming = (
   }
 
   // Append flushed DMs to DMContext
-  for (const msg of info.dmMessages) {
-    const peerId = msg.senderId === agentId ? msg.recipientId! : msg.senderId
-    if (!peerId) continue
-    let ctx = history.dms.get(peerId)
+  if (info.triggerPeerId && info.dmMessages.length > 0) {
+    let ctx = history.dms.get(info.triggerPeerId)
     if (!ctx) {
       ctx = { history: [], lastActiveAt: undefined }
-      history.dms.set(peerId, ctx)
+      history.dms.set(info.triggerPeerId, ctx)
     }
-    ctx.history.push(msg)
+    ctx.history = [...ctx.history, ...info.dmMessages]
     ctx.lastActiveAt = Date.now()
   }
 }
@@ -363,6 +362,6 @@ export const buildContext = (
 
   return {
     messages: chatMessages,
-    flushInfo: { ids: flushIds, dmMessages: flushDMs, triggerRoomId },
+    flushInfo: { ids: flushIds, dmMessages: flushDMs, triggerRoomId, triggerPeerId },
   }
 }
