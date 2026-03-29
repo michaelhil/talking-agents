@@ -45,6 +45,7 @@ export const createRoom = (
 ): Room => {
   let profile = initialProfile
   const messages: Message[] = []
+  const compressedIds = new Set<string>()
   const members = new Set<string>()
   const muted = new Set<string>()
   const messageLimit = maxMessages ?? DEFAULTS.roomMessageLimit
@@ -95,6 +96,7 @@ export const createRoom = (
     timestamp: Date.now(),
     type: params.type,
     correlationId: params.correlationId,
+    inReplyTo: params.inReplyTo,
     generationMs: params.generationMs,
     metadata: params.metadata,
   })
@@ -127,7 +129,8 @@ export const createRoom = (
     }
 
     if (messages.length > messageLimit) {
-      messages.splice(0, messages.length - messageLimit)
+      const pruned = messages.splice(0, messages.length - messageLimit)
+      for (const msg of pruned) compressedIds.add(msg.id)
     }
 
     const nonDeliverable = message.type === 'system' || message.type === 'mute' || message.type === 'room_summary'
@@ -379,6 +382,8 @@ export const createRoom = (
       }
     },
 
+    getCompressedIds: (): ReadonlySet<string> => new Set(compressedIds),
+
     restoreState: (state: RoomRestoreParams): void => {
       members.clear()
       for (const id of state.members) members.add(id)
@@ -388,6 +393,10 @@ export const createRoom = (
       paused = state.paused
       flowStore.restoreFlows(state.flows)
       todoStore.restoreTodos(state.todos)
+      compressedIds.clear()
+      if (state.compressedIds) {
+        for (const id of state.compressedIds) compressedIds.add(id)
+      }
     },
   }
 }

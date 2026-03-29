@@ -9,8 +9,8 @@ import { spawnAIAgent, spawnHumanAgent } from './spawn.ts'
 import { addAgentToRoom } from './actions.ts'
 import { createOllamaProvider } from '../llm/ollama.ts'
 import { createToolRegistry } from '../core/tool-registry.ts'
-import { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from '../tools/built-in/index.ts'
-import type { AIAgentConfig, LLMProvider, Message } from '../core/types.ts'
+import { createGetTimeTool } from '../tools/built-in/index.ts'
+import type { LLMProvider, Message } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
 
 const FAST_MODEL = 'llama3.2:latest'
@@ -23,7 +23,7 @@ const createSystem = () => {
     team.getAgent(agentId)?.receive(message)
   }
   const house = createHouse({ deliver })
-  const routeMessage = createMessageRouter({ house, team, deliver })
+  const routeMessage = createMessageRouter({ house })
   const intro = house.createRoom({
     name: 'Introductions',
     
@@ -58,7 +58,7 @@ const makePassProvider = (reason = 'not relevant') =>
 
 describe('Integration — Full message lifecycle', () => {
   test('room message → AI agent → response delivered to room members', async () => {
-    const { house, team, intro, routeMessage } = createSystem()
+    const { team, intro, routeMessage } = createSystem()
 
     // Set up human observer
     const humanInbox: Message[] = []
@@ -321,44 +321,6 @@ describe('Integration — Full message lifecycle', () => {
     expect(bTriggeredByA).toBe(true)
   })
 
-  test('DM flow — AI agent receives DM and responds', async () => {
-    const { team, routeMessage } = createSystem()
-
-    const humanInbox: Message[] = []
-    const human = createHumanAgent({ name: 'Alice' }, (msg) => { humanInbox.push(msg) })
-    team.addAgent(human)
-
-    const provider = makeRespondProvider('DM received!')
-    const agent = createAIAgent(
-      { name: 'Bot', model: 'mock', systemPrompt: 'Respond to DMs.' },
-      provider,
-      (d) => {
-        if (d.response.action === 'respond') {
-          routeMessage(
-            { agents: [d.triggerPeerId!] },
-            { senderId: agent.id, content: d.response.content, type: 'chat', generationMs: d.generationMs },
-          )
-        }
-      },
-    )
-    team.addAgent(agent)
-
-    // Send DM to agent
-    routeMessage(
-      { agents: [agent.id] },
-      { senderId: human.id, content: 'Private question', type: 'chat' },
-    )
-
-    await agent.whenIdle()
-
-    // Human should receive DM response
-    const dmResponse = humanInbox.find(m => m.senderId === agent.id && m.type === 'chat')
-    expect(dmResponse).toBeDefined()
-    expect(dmResponse!.content).toBe('DM received!')
-    expect(dmResponse!.recipientId).toBe(human.id)
-    expect(dmResponse!.roomId).toBeUndefined()
-  })
-
   test('join generates summary and includes it as [NEW] in first context', async () => {
     const { house, team, routeMessage } = createSystem()
 
@@ -587,14 +549,14 @@ describe('Integration — Full message lifecycle', () => {
 
     expect(agent.state.get()).toBe('generating')
     expect(states).toHaveLength(1)
-    expect(states[0]).toEqual({ state: 'generating', context: `room:${intro.profile.id}` })
+    expect(states[0]).toEqual({ state: 'generating', context: intro.profile.id })
 
     resolveChat!()
     await agent.whenIdle()
 
     expect(agent.state.get()).toBe('idle')
     expect(states).toHaveLength(2)
-    expect(states[1]).toEqual({ state: 'idle', context: `room:${intro.profile.id}` })
+    expect(states[1]).toEqual({ state: 'idle', context: intro.profile.id })
   })
 })
 
@@ -773,77 +735,22 @@ describe('Integration — Room + Team + routeMessage', () => {
     expect(msgs[0]!.roomId).toBe(specific.profile.id)
   })
 
-  test('DM delivery: recipient and sender both receive', () => {
-    const { team, routeMessage } = createSystem()
+  test('correlationId shared across multi-room delivery', () => {
+    const { house, routeMessage } = createSystem()
 
-    const aliceInbox: Message[] = []
-    const bobInbox: Message[] = []
-
-    const alice = createHumanAgent({ name: 'Alice' }, (msg) => { aliceInbox.push(msg) })
-    const bob = createHumanAgent({ name: 'Bob' }, (msg) => { bobInbox.push(msg) })
-
-    team.addAgent(alice)
-    team.addAgent(bob)
-
-    const msgs = routeMessage({ agents: [bob.id] }, { senderId: alice.id, content: 'Private hello', type: 'chat' })
-
-    expect(msgs).toHaveLength(1)
-    expect(msgs[0]!.recipientId).toBe(bob.id)
-    expect(msgs[0]!.roomId).toBeUndefined()
-
-    expect(bobInbox.some(m => m.content === 'Private hello')).toBe(true)
-    expect(aliceInbox.some(m => m.content === 'Private hello')).toBe(false)
-  })
-
-  test('correlationId shared across multi-target delivery', () => {
-    const { team, intro, routeMessage } = createSystem()
-
-    const aliceInbox: Message[] = []
-    const bobInbox: Message[] = []
-
-    const alice = createHumanAgent({ name: 'Alice' }, (msg) => { aliceInbox.push(msg) })
-    const bob = createHumanAgent({ name: 'Bob' }, (msg) => { bobInbox.push(msg) })
-    team.addAgent(alice)
-    team.addAgent(bob)
-
-    routeMessage({ rooms: [intro.profile.id] }, { senderId: alice.id, content: '[Alice] joined', type: 'join' })
-
-    const charlie = createHumanAgent({ name: 'Charlie' }, () => {})
-    team.addAgent(charlie)
-    routeMessage({ rooms: [intro.profile.id] }, { senderId: charlie.id, content: '[Charlie] joined', type: 'join' })
+    const room1 = house.createRoom({ name: 'Alpha', createdBy: 'test' })
+    const room2 = house.createRoom({ name: 'Beta', createdBy: 'test' })
 
     const msgs = routeMessage(
-      { rooms: [intro.profile.id], agents: [bob.id] },
-      { senderId: charlie.id, content: 'Check this out', type: 'chat' },
+      { rooms: [room1.profile.id, room2.profile.id] },
+      { senderId: 'alice', senderName: 'Alice', content: 'Broadcast', type: 'chat' },
     )
 
     expect(msgs).toHaveLength(2)
     expect(msgs[0]!.correlationId).toBeTruthy()
     expect(msgs[0]!.correlationId).toBe(msgs[1]!.correlationId)
-    expect(msgs[0]!.roomId).toBe(intro.profile.id)
-    expect(msgs[1]!.recipientId).toBe(bob.id)
-  })
-
-  test('DM does not go through room — room has no record', () => {
-    const { team, intro, routeMessage } = createSystem()
-
-    const bob = createHumanAgent({ name: 'Bob' }, () => {})
-    team.addAgent(bob)
-
-    routeMessage({ agents: [bob.id] }, { senderId: 'alice-temp', content: 'Secret', type: 'chat' })
-
-    expect(intro.getMessageCount()).toBe(0)
-  })
-
-  test('agent self-DM is prevented', () => {
-    const { team, routeMessage } = createSystem()
-
-    const aliceInbox: Message[] = []
-    const alice = createHumanAgent({ name: 'Alice' }, (msg) => { aliceInbox.push(msg) })
-    team.addAgent(alice)
-
-    const msgs = routeMessage({ agents: [alice.id] }, { senderId: alice.id, content: 'Hello me', type: 'chat' })
-    expect(msgs).toHaveLength(0)
+    expect(msgs[0]!.roomId).toBe(room1.profile.id)
+    expect(msgs[1]!.roomId).toBe(room2.profile.id)
   })
 
   test('multiple rooms operate independently with team delivery', async () => {

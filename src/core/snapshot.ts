@@ -9,7 +9,7 @@
 // ============================================================================
 
 import type {
-  AIAgentConfig, DeliveryMode, Flow, Message, Room, RoomProfile, TodoItem,
+  Agent, AIAgentConfig, DeliveryMode, Flow, Message, Room, RoomProfile, TodoItem,
 } from './types.ts'
 import { asAIAgent } from '../agents/shared.ts'
 import { mkdir, rename } from 'node:fs/promises'
@@ -30,6 +30,7 @@ export interface RoomSnapshot {
   readonly muted: ReadonlyArray<string>
   readonly flows: ReadonlyArray<Flow>
   readonly todos: ReadonlyArray<TodoItem>
+  readonly compressedIds?: ReadonlyArray<string>
 }
 
 export interface AgentSnapshot {
@@ -60,8 +61,8 @@ interface SerializableSystem {
     readonly getResponseFormat: () => string
   }
   readonly team: {
-    readonly listAgents: () => ReadonlyArray<{ readonly id: string; readonly name: string; readonly kind: string }>
-    readonly getAgent: (idOrName: string) => { readonly id: string; readonly kind: string } | undefined
+    readonly listAgents: () => ReadonlyArray<Agent>
+    readonly getAgent: (idOrName: string) => Agent | undefined
   }
 }
 
@@ -85,6 +86,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       muted: [...state.muted],
       flows: room.getFlows(),
       todos: room.getTodos(),
+      compressedIds: room.getCompressedIds().size > 0 ? [...room.getCompressedIds()] : undefined,
     })
   }
 
@@ -211,6 +213,7 @@ export const restoreFromSnapshot = async (
       paused: data.paused,
       flows: data.flows,
       todos: data.todos,
+      compressedIds: roomSnap.compressedIds,
     })
     roomMap.set(room.profile.id, room)
   }

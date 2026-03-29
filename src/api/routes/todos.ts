@@ -1,6 +1,6 @@
 import { json, errorResponse, parseBody } from '../http-routes.ts'
 import { SYSTEM_SENDER_ID } from '../../core/types.ts'
-import type { RouteEntry, RouteContext } from './types.ts'
+import type { RouteEntry } from './types.ts'
 
 export const todoRoutes: RouteEntry[] = [
   {

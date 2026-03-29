@@ -6,8 +6,7 @@
 //
 // History architecture: a single AgentHistory struct owns all per-agent state.
 //   - rooms: per-room processed history + room profile + last-active timestamp
-//   - dms: per-peer DM history + last-active timestamp
-//   - incoming: shared buffer of unprocessed messages across all contexts
+//   - incoming: shared buffer of unprocessed messages across all rooms
 //   - agentProfiles: knowledge about other agents in the system
 //
 // join() initialises the RoomContext (with profile) before the first message
@@ -22,26 +21,22 @@
 import type {
   AIAgent,
   AgentHistory,
-  AgentProfile,
   AIAgentConfig,
   LLMProvider,
   Message,
   Room,
-  RoomProfile,
   TodoItem,
   ToolDefinition,
   ToolExecutor,
 } from '../core/types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types.ts'
 import { extractAgentProfile as extractProfile } from './shared.ts'
-import { triggerKey, buildContext, flushIncoming, type BuildContextDeps } from './context-builder.ts'
+import { buildContext, flushIncoming, type BuildContextDeps } from './context-builder.ts'
 import { evaluate, type OnDecision } from './evaluation.ts'
 import { createConcurrencyManager } from './concurrency.ts'
 
 // Re-export Decision/OnDecision for consumers
 export type { Decision, OnDecision } from './evaluation.ts'
-
-const AGENT_TIMEOUT_MS = 30_000  // default timeout for whenIdle() and query()
 
 // === Factory Options ===
 
@@ -52,6 +47,7 @@ export interface AIAgentOptions {
   readonly getHousePrompt?: () => string
   readonly getResponseFormat?: () => string
   readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
+  readonly getCompressedIds?: (roomId: string) => ReadonlySet<string>
 }
 
 // === Factory ===
@@ -68,7 +64,6 @@ export const createAIAgent = (
   // Single unified history structure — all agent state in one place
   const agentHistory: AgentHistory = {
     rooms: new Map(),
-    dms: new Map(),
     incoming: [],
     agentProfiles: new Map(),
   }
@@ -85,6 +80,7 @@ export const createAIAgent = (
   const getHousePrompt = options?.getHousePrompt
   const getResponseFormat = options?.getResponseFormat
   const getRoomTodos = options?.getRoomTodos
+  const getCompressedIds = options?.getCompressedIds
 
   // --- Name resolution ---
 
@@ -106,47 +102,47 @@ export const createAIAgent = (
     historyLimit,
     resolveName,
     getRoomTodos,
+    getCompressedIds,
   })
 
-  // --- Evaluation loop: per-context generation with pending queue ---
+  // --- Evaluation loop: per-room generation with pending queue ---
 
-  const tryEvaluate = (triggerRoomId?: string, triggerPeerId?: string): void => {
-    const key = triggerKey(triggerRoomId, triggerPeerId)
-
-    if (cm.isGenerating(key)) {
-      cm.addPending(key)
+  const tryEvaluate = (triggerRoomId: string): void => {
+    if (cm.isGenerating(triggerRoomId)) {
+      cm.addPending(triggerRoomId)
       return
     }
 
-    cm.startGeneration(key)
-    cm.notifyState('generating', key)
+    cm.startGeneration(triggerRoomId)
+    cm.notifyState('generating', triggerRoomId)
 
-    const contextResult = buildContext(contextDeps(), triggerRoomId, triggerPeerId)
+    const contextResult = buildContext(contextDeps(), triggerRoomId)
     const epoch = cm.epochAtStart()
 
     const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt }
+    const inReplyTo = contextResult.flushInfo.ids.size > 0 ? [...contextResult.flushInfo.ids] : undefined
     // epoch guards: each cancelGeneration() increments generationEpoch so stale
     // in-flight results from a prior generation cycle are silently discarded.
     const run = async (): Promise<void> => {
       try {
         const { decision, flushInfo } = await evaluate(
           contextResult, evalConfig, llmProvider, toolExecutor, maxToolIterations,
-          triggerRoomId, triggerPeerId, toolDefinitions,
+          triggerRoomId, toolDefinitions, inReplyTo,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
 
         // Flush incoming always — on both respond and pass.
         // On pass, the agent has consciously evaluated these messages; they belong in history.
-        flushIncoming(flushInfo, agentHistory, agentId)
+        flushIncoming(flushInfo, agentHistory)
         onDecision(decision)
       } catch (err) {
         if (!cm.isEpochCurrent(epoch)) return  // cancelled, ignore error
         console.error(`[${config.name}] Evaluation error:`, err)
       } finally {
         if (cm.isEpochCurrent(epoch)) {
-          cm.endGeneration(key)  // removes key, notifies idle, checks idle
-          if (cm.consumePending(key)) {
-            tryEvaluate(triggerRoomId, triggerPeerId)
+          cm.endGeneration(triggerRoomId)
+          if (cm.consumePending(triggerRoomId)) {
+            tryEvaluate(triggerRoomId)
           }
         }
       }
@@ -155,34 +151,23 @@ export const createAIAgent = (
   }
 
   // --- Receive ---
-  // History is no longer delivered via receive() — RoomContext is initialised
-  // in join() before the first message arrives. Own messages go straight to
-  // room history (not incoming) for re-evaluation continuity.
+  // All messages have a roomId. Own messages go straight to room history for
+  // re-evaluation continuity without triggering a new eval.
 
   const receive = (message: Message): void => {
     extractProfile(message, agentId, agentHistory.agentProfiles)
 
-    if (message.roomId) {
-      if (message.senderId === agentId) {
-        // Own room messages go straight to history so they're visible as
-        // assistant context during re-evaluations without triggering a new eval.
-        const ctx = agentHistory.rooms.get(message.roomId)
-        if (ctx) ctx.history = [...ctx.history, message]
-      } else {
-        agentHistory.incoming.push(message)
-      }
-    } else {
-      agentHistory.incoming.push(message)
+    if (message.senderId === agentId) {
+      const ctx = agentHistory.rooms.get(message.roomId)
+      if (ctx) ctx.history = [...ctx.history, message]
+      return
     }
 
-    if (message.senderId === agentId) return
+    agentHistory.incoming.push(message)
+
     if (message.type === 'system' || message.type === 'leave' || message.type === 'pass') return
 
-    if (message.roomId) {
-      tryEvaluate(message.roomId, undefined)
-    } else {
-      tryEvaluate(undefined, message.senderId)
-    }
+    tryEvaluate(message.roomId)
   }
 
   // --- Join ---
@@ -241,36 +226,6 @@ export const createAIAgent = (
     }
   }
 
-  // --- Query — synchronous side-channel for tool-based inter-agent communication ---
-
-  const QUERY_TIMEOUT_MS = AGENT_TIMEOUT_MS
-
-  const query = async (question: string, askerId: string, askerName?: string): Promise<string> => {
-    if (cm.isQuerying()) throw new Error(`${config.name} is already processing a query`)
-    cm.startQuery()
-
-    try {
-      const name = askerName ?? agentHistory.agentProfiles.get(askerId)?.name ?? askerId
-      const timeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Query to ${config.name} timed out after ${QUERY_TIMEOUT_MS}ms`)), QUERY_TIMEOUT_MS),
-      )
-      const response = await Promise.race([
-        llmProvider.chat({
-          model: config.model,
-          messages: [
-            { role: 'system', content: currentSystemPrompt },
-            { role: 'user', content: `[${name}] asks: ${question}` },
-          ],
-          temperature: config.temperature,
-        }),
-        timeout,
-      ])
-      return response.content
-    } finally {
-      cm.endQuery()
-    }
-  }
-
   return {
     id: agentId,
     name: config.name,
@@ -283,7 +238,6 @@ export const createAIAgent = (
       agentHistory.rooms.delete(roomId)
     },
     whenIdle: cm.whenIdle,
-    query,
     updateSystemPrompt: (prompt: string) => { currentSystemPrompt = prompt },
     getSystemPrompt: () => currentSystemPrompt,
     updateModel: (model: string) => { currentModel = model },

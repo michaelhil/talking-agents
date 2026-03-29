@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { System } from '../../../main.ts'
+import type { AIAgent } from '../../../core/types.ts'
 import { asAIAgent } from '../../../agents/shared.ts'
 import { textResult, errorResult, resolveAgent } from './helpers.ts'
 

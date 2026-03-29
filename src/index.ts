@@ -52,7 +52,7 @@ export { createHumanAgent } from './agents/human-agent.ts'
 export type { HumanAgent, HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 
 // Agent internals (for advanced use) — @internal, subject to change
-export { buildContext, flushIncoming, triggerKey, formatMessage } from './agents/context-builder.ts'
+export { buildContext, flushIncoming, formatMessage } from './agents/context-builder.ts'
 export type { FlushInfo, ContextResult, BuildContextDeps } from './agents/context-builder.ts'
 export { evaluate, parseResponse } from './agents/evaluation.ts'
 export type { EvalResult } from './agents/evaluation.ts'
@@ -65,7 +65,7 @@ export { validateName, ensureUniqueName } from './core/names.ts'
 export { createToolRegistry } from './core/tool-registry.ts'
 
 // Built-in tools
-export { createListRoomsTool, createGetTimeTool, createQueryAgentTool } from './tools/built-in/index.ts'
+export { createListRoomsTool, createGetTimeTool } from './tools/built-in/index.ts'
 
 // LLM providers
 export { createOllamaProvider } from './llm/ollama.ts'

@@ -5,7 +5,7 @@
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
 // ============================================================================
 
-import type { Agent, AIAgentConfig, DeliverFn, House, HouseCallbacks, LLMProvider, Message, OnDeliveryModeChanged, OnFlowEvent, OnMembershipChanged, OnMessagePosted, OnRoomCreated, OnRoomDeleted, OnTodoChanged, OnTurnChanged, ResolveAgentName, RouteMessage, Room, Team, ToolRegistry } from './core/types.ts'
+import type { Agent, AIAgentConfig, DeliverFn, House, HouseCallbacks, LLMProvider, OnDeliveryModeChanged, OnFlowEvent, OnMembershipChanged, OnMessagePosted, OnRoomCreated, OnRoomDeleted, OnTodoChanged, OnTurnChanged, ResolveAgentName, RouteMessage, Team, ToolRegistry } from './core/types.ts'
 import { DEFAULTS } from './core/types.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
@@ -17,7 +17,7 @@ import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
 import { addAgentToRoom, removeAgentFromRoom } from './agents/actions.ts'
-import { createListRoomsTool, createGetTimeTool, createQueryAgentTool, createListTodosTool, createAddTodoTool, createUpdateTodoTool, createCreateRoomTool, createDeleteRoomTool, createAddToRoomTool, createRemoveFromRoomTool, createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool, createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool, createPostToRoomTool, createGetRoomHistoryTool, createDelegateTool } from './tools/built-in/index.ts'
+import { createListRoomsTool, createGetTimeTool, createListTodosTool, createAddTodoTool, createUpdateTodoTool, createCreateRoomTool, createDeleteRoomTool, createAddToRoomTool, createRemoveFromRoomTool, createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool, createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool, createPostToRoomTool, createGetRoomHistoryTool } from './tools/built-in/index.ts'
 import { createToolCapabilityCache } from './llm/tool-capability.ts'
 
 export interface System {
@@ -45,7 +45,7 @@ export interface System {
 export const createSystem = (ollamaUrl?: string): System => {
   const team = createTeam()
 
-  // Single deliver function — used by both Room (via House) and DMs (via message router)
+  // Single deliver function — injected into every Room via House for member delivery
   const deliver: DeliverFn = (agentId, message) => {
     team.getAgent(agentId)?.receive(message)
   }
@@ -82,7 +82,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     onRoomDeleted: roomDeleted.proxy,
   }
   const house = createHouse(houseCallbacks)
-  const routeMessage = createMessageRouter({ house, team, deliver })
+  const routeMessage = createMessageRouter({ house })
   const resolvedOllamaUrl = ollamaUrl ?? DEFAULTS.ollamaBaseUrl
   const ollama = createOllamaProvider(resolvedOllamaUrl)
   const toolCapabilityCache = createToolCapabilityCache(resolvedOllamaUrl)
@@ -143,9 +143,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     createRemoveFromRoomTool(team, house, systemRemoveAgentFromRoom),
     // Agent tools
     createListAgentsTool(team),
-    createQueryAgentTool(team),
     createMuteAgentTool(team, house),
-    createDelegateTool(team, house),
     createGetMyContextTool(team, house),
     // Todo tools
     createListTodosTool(house),

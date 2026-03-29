@@ -1,24 +1,22 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { MessageTarget } from '../../../core/types.ts'
 import type { System } from '../../../main.ts'
 import { textResult, errorResult, resolveRoom } from './helpers.ts'
 
 export const registerMessageTools = (mcpServer: McpServer, system: System): void => {
   mcpServer.tool(
     'post_message',
-    'Post a message to a room or send a DM to agents. Use this to inject messages into conversations.',
+    'Post a message to one or more rooms. Use this to inject messages into conversations.',
     {
       content: z.string().describe('Message content'),
       senderId: z.string().default('mcp-client').describe('Sender ID'),
       senderName: z.string().optional().describe('Sender display name'),
-      roomNames: z.array(z.string()).optional().describe('Room names to post to'),
-      agentNames: z.array(z.string()).optional().describe('Agent names for DMs'),
+      roomNames: z.array(z.string()).describe('Room names to post to'),
     },
-    async ({ content, senderId, senderName, roomNames, agentNames }) => {
+    async ({ content, senderId, senderName, roomNames }) => {
       try {
-        const target: Record<string, unknown> = {}
-        if (roomNames?.length) target.rooms = roomNames
-        if (agentNames?.length) target.agents = agentNames
+        const target: MessageTarget = { rooms: roomNames }
         const messages = system.routeMessage(target, {
           senderId,
           senderName: senderName ?? senderId,
@@ -64,7 +62,12 @@ export const registerMessageTools = (mcpServer: McpServer, system: System): void
     async ({ roomName, name, steps, loop }) => {
       try {
         const room = resolveRoom(system, roomName)
-        const flow = room.addFlow({ name, steps, loop })
+        const resolvedSteps = steps.map(s => {
+          const agent = system.team.getAgent(s.agentName)
+          if (!agent) throw new Error(`Agent "${s.agentName}" not found`)
+          return { agentId: agent.id, agentName: s.agentName, stepPrompt: s.stepPrompt }
+        })
+        const flow = room.addFlow({ name, steps: resolvedSteps, loop })
         return textResult(flow)
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to add flow')

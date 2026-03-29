@@ -28,7 +28,7 @@ import type {
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import { addAgentToRoom } from './actions.ts'
-import { createToolCapabilityCache, toolsToDefinitions } from '../llm/tool-capability.ts'
+import { toolsToDefinitions } from '../llm/tool-capability.ts'
 import type { ToolCapabilityCache } from '../llm/tool-capability.ts'
 import { formatToolDescriptions } from '../tools/format.ts'
 
@@ -152,19 +152,8 @@ export const spawnAIAgent = async (
     throw new Error(`Agent name "${config.name}" is already taken`)
   }
 
-  // Resolve target: respond where the trigger came from
-  const resolveTarget = (decision: Decision): MessageTarget | null => {
-    if (decision.triggerRoomId) return { rooms: [decision.triggerRoomId] }
-    if (decision.triggerPeerId) return { agents: [decision.triggerPeerId] }
-    return null
-  }
-
   const onDecision = (decision: Decision): void => {
-    const target = resolveTarget(decision)
-    if (!target) {
-      console.error(`[${config.name}] Decision has no routing target — response dropped. This is a bug.`)
-      return
-    }
+    const target: MessageTarget = { rooms: [decision.triggerRoomId] }
 
     if (decision.response.action === 'respond') {
       routeMessage(target, {
@@ -173,8 +162,9 @@ export const spawnAIAgent = async (
         content: decision.response.content,
         type: 'chat',
         generationMs: decision.generationMs,
+        inReplyTo: decision.inReplyTo,
       })
-    } else if (decision.response.action === 'pass' && decision.triggerRoomId) {
+    } else if (decision.response.action === 'pass') {
       // Post pass as a visible message so humans can see agent decisions
       const reason = decision.response.reason ?? 'nothing to add'
       routeMessage(target, {
@@ -183,6 +173,7 @@ export const spawnAIAgent = async (
         content: `[pass] ${reason}`,
         type: 'pass',
         generationMs: decision.generationMs,
+        inReplyTo: decision.inReplyTo,
       })
     }
   }
@@ -199,6 +190,7 @@ export const spawnAIAgent = async (
       const room = house.getRoom(roomId)
       return room ? room.getTodos() : []
     },
+    getCompressedIds: (roomId: string) => house.getRoom(roomId)?.getCompressedIds() ?? new Set(),
   }, spawnOptions?.overrideId)
 
   // Fill agentRef so the lazy ToolContext in resolveAgentTools resolves correctly

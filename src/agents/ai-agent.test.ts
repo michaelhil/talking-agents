@@ -516,14 +516,14 @@ describe('Agent state', () => {
 
     expect(agent.state.get()).toBe('generating')
     expect(states).toHaveLength(1)
-    expect(states[0]).toEqual({ state: 'generating', context: 'room:room-1' })
+    expect(states[0]).toEqual({ state: 'generating', context: 'room-1' })
 
     resolveChat!()
     await agent.whenIdle()
 
     expect(agent.state.get()).toBe('idle')
     expect(states).toHaveLength(2)
-    expect(states[1]).toEqual({ state: 'idle', context: 'room:room-1' })
+    expect(states[1]).toEqual({ state: 'idle', context: 'room-1' })
   })
 
   test('unsubscribe stops notifications', async () => {
@@ -664,7 +664,7 @@ describe('Tool use (ReAct loop)', () => {
         callCount++
         if (callCount === 1) {
           return {
-            content: '::TOOL:: query_agent {"target": "Alice", "question": "status?"}',
+            content: '::TOOL:: get_time {"timezone": "UTC"}',
             generationMs: 50,
             tokensUsed: { prompt: 10, completion: 5 },
           }
@@ -688,15 +688,15 @@ describe('Tool use (ReAct loop)', () => {
       makeConfig(),
       provider,
       (d) => decisions.push(d),
-      { toolExecutor, toolDescriptions: 'Available tools:\n- query_agent: Query another agent.' },
+      { toolExecutor, toolDescriptions: 'Available tools:\n- get_time: Returns the current time.' },
     )
 
     agent.receive(makeMessage({ senderId: 'bob', roomId: 'room-1' }))
     await agent.whenIdle()
 
     expect(executedCalls).toHaveLength(1)
-    expect(executedCalls[0]!.tool).toBe('query_agent')
-    expect(executedCalls[0]!.arguments).toEqual({ target: 'Alice', question: 'status?' })
+    expect(executedCalls[0]!.tool).toBe('get_time')
+    expect(executedCalls[0]!.arguments).toEqual({ timezone: 'UTC' })
   })
 
   test('tool descriptions appear in context when configured', async () => {
@@ -733,51 +733,3 @@ describe('Tool use (ReAct loop)', () => {
   })
 })
 
-describe('Query (synchronous inter-agent)', () => {
-  test('query returns LLM response directly', async () => {
-    const agent = createAIAgent(
-      makeConfig(),
-      makeLLMProvider('The answer is 42'),
-      () => {},
-    )
-
-    const result = await agent.query('What is the meaning of life?', 'alice-1')
-    expect(result).toBe('The answer is 42')
-  })
-
-  test('query includes asker identity in prompt', async () => {
-    let capturedMessages: ReadonlyArray<{ role: string; content: string }> = []
-    const provider: LLMProvider = {
-      chat: async (req) => {
-        capturedMessages = req.messages
-        return { content: 'response', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
-      },
-      models: async () => [],
-    }
-
-    const agent = createAIAgent(makeConfig(), provider, () => {})
-    await agent.query('Hello?', 'some-id')
-
-    const userMsg = capturedMessages.find(m => m.role === 'user')
-    expect(userMsg?.content).toContain('asks: Hello?')
-  })
-
-  test('query rejects concurrent calls', async () => {
-    let resolveChat: (() => void) | null = null
-    const provider: LLMProvider = {
-      chat: () => new Promise(resolve => {
-        resolveChat = () => resolve({ content: 'done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } })
-      }),
-      models: async () => [],
-    }
-
-    const agent = createAIAgent(makeConfig(), provider, () => {})
-    const first = agent.query('Q1', 'a')
-
-    // Second concurrent query should fail
-    await expect(agent.query('Q2', 'b')).rejects.toThrow('already processing a query')
-
-    resolveChat!()
-    await first
-  })
-})

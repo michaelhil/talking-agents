@@ -27,7 +27,7 @@ export const houseRoutes: RouteEntry[] = [
     handler: async (_req, _match, { system }) => {
       try {
         const [running, all] = await Promise.all([
-          system.ollama.runningModels().catch(() => [] as string[]),
+          (system.ollama.runningModels?.() ?? Promise.resolve([] as string[])).catch(() => [] as string[]),
           system.ollama.models().catch(() => [] as string[]),
         ])
         const runningSet = new Set(running)

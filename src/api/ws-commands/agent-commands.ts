@@ -3,7 +3,7 @@ import { asAIAgent } from '../../agents/shared.ts'
 import { requireAgent, sendError, type CommandContext } from './types.ts'
 
 export const handleAgentCommand = async (msg: WSInbound, ctx: CommandContext): Promise<boolean> => {
-  const { ws, session, system } = ctx
+  const { ws, system } = ctx
 
   switch (msg.type) {
     case 'create_agent': {

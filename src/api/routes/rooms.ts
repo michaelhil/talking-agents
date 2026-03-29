@@ -1,7 +1,7 @@
 import { json, errorResponse, parseBody } from '../http-routes.ts'
 import { SYSTEM_SENDER_ID, SETTABLE_DELIVERY_MODES } from '../../core/types.ts'
 import type { SettableDeliveryMode } from '../../core/types.ts'
-import type { RouteEntry, RouteContext } from './types.ts'
+import type { RouteEntry } from './types.ts'
 
 export const roomRoutes: RouteEntry[] = [
   {

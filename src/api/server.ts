@@ -6,7 +6,7 @@
 // ============================================================================
 
 import type { System } from '../main.ts'
-import type { Message, TodoItem, WSOutbound } from '../core/types.ts'
+import type { Message, WSOutbound } from '../core/types.ts'
 import { DEFAULTS } from '../core/types.ts'
 import { ensureUniqueName } from '../core/names.ts'
 import { handleAPI } from './http-routes.ts'

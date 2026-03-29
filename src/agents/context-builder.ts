@@ -4,7 +4,7 @@
 // Two-buffer architecture: room-sourced history (old) + incoming buffer (new).
 // Messages in incoming are tagged [NEW] so the LLM can prioritise them.
 // After evaluation, flushIncoming moves processed messages out of incoming
-// and appends them to the relevant RoomContext or DMContext in AgentHistory.
+// and appends them to the relevant RoomContext in AgentHistory.
 //
 // Full history is preserved in AgentHistory; only a historyLimit-sized
 // window is passed to the LLM on each context build.
@@ -16,7 +16,6 @@ import type {
   ChatRequest,
   FlowDeliveryContext,
   Message,
-  RoomContext,
   TodoItem,
 } from '../core/types.ts'
 import { SYSTEM_SENDER_ID } from '../core/types.ts'
@@ -26,9 +25,7 @@ import { TOOL_RESPONSE_FORMAT_SUFFIX } from '../tools/format.ts'
 
 export interface FlushInfo {
   readonly ids: Set<string>
-  readonly dmMessages: Message[]
-  readonly triggerRoomId?: string
-  readonly triggerPeerId?: string
+  readonly triggerRoomId: string
 }
 
 // === Context result — ready for LLM consumption ===
@@ -38,14 +35,6 @@ export interface ContextResult {
   readonly flushInfo: FlushInfo
 }
 
-// === Trigger key — unified string key for generatingContexts/pendingContexts sets ===
-// Kept here as it defines the canonical format used in state context strings.
-
-export const triggerKey = (roomId?: string, peerId?: string): string => {
-  if (roomId && peerId) throw new Error('triggerKey: roomId and peerId are mutually exclusive')
-  return roomId ? `room:${roomId}` : `dm:${peerId}`
-}
-
 // === Format a single message for LLM context ===
 
 export const formatMessage = (
@@ -53,11 +42,14 @@ export const formatMessage = (
   prefix: string,
   agentId: string,
   resolveName: (senderId: string) => string,
+  compressedIds?: ReadonlySet<string>,
 ): { role: 'user' | 'assistant'; content: string } | null => {
   if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.type === 'pass' || msg.type === 'mute') return null
   const stepPrompt = (msg.metadata as Record<string, unknown> | undefined)?.stepPrompt as string | undefined
   if (msg.senderId === agentId) {
-    return { role: 'assistant' as const, content: msg.content }
+    const staleRef = compressedIds && msg.inReplyTo?.some(id => compressedIds.has(id))
+    const suffix = staleRef ? '\n[↩ context compressed]' : ''
+    return { role: 'assistant' as const, content: `${msg.content}${suffix}` }
   }
   const name = resolveName(msg.senderId)
   const stepLine = stepPrompt ? `\n[Step instruction: ${stepPrompt}]` : ''
@@ -65,13 +57,12 @@ export const formatMessage = (
 }
 
 // === Flush incoming buffer after evaluation ===
-// Moves processed messages from incoming into the appropriate RoomContext or DMContext.
+// Moves processed messages from incoming into the appropriate RoomContext.
 // Full history is preserved (no cap); buildContext slices at historyLimit when reading.
 
 export const flushIncoming = (
   info: FlushInfo,
   history: AgentHistory,
-  agentId: string,
 ): void => {
   if (info.ids.size === 0) return
 
@@ -80,24 +71,12 @@ export const flushIncoming = (
   history.incoming.length = 0
   history.incoming.push(...remaining)
 
-  // Append flushed room messages to RoomContext history
-  if (info.triggerRoomId && flushed.length > 0) {
+  if (flushed.length > 0) {
     const ctx = history.rooms.get(info.triggerRoomId)
     if (ctx) {
       ctx.history = [...ctx.history, ...flushed]
       ctx.lastActiveAt = Date.now()
     }
-  }
-
-  // Append flushed DMs to DMContext
-  if (info.triggerPeerId && info.dmMessages.length > 0) {
-    let ctx = history.dms.get(info.triggerPeerId)
-    if (!ctx) {
-      ctx = { history: [], lastActiveAt: undefined }
-      history.dms.set(info.triggerPeerId, ctx)
-    }
-    ctx.history = [...ctx.history, ...info.dmMessages]
-    ctx.lastActiveAt = Date.now()
   }
 }
 
@@ -145,6 +124,7 @@ export interface BuildContextDeps {
   readonly historyLimit: number
   readonly resolveName: (senderId: string) => string
   readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
+  readonly getCompressedIds?: (roomId: string) => ReadonlySet<string>
 }
 
 // === Private section builders ===
@@ -182,8 +162,7 @@ const buildFlowSection = (fc: FlowDeliveryContext, stepIndex: number): string =>
 
 const buildActivitySection = (
   deps: BuildContextDeps,
-  triggerRoomId: string | undefined,
-  triggerPeerId: string | undefined,
+  triggerRoomId: string,
 ): string => {
   const activityLines: string[] = []
 
@@ -201,20 +180,12 @@ const buildActivitySection = (
     activityLines.push(line)
   }
 
-  for (const [peerId, ctx] of deps.history.dms) {
-    if (peerId === triggerPeerId) continue
-    if (ctx.history.length === 0 && !ctx.lastActiveAt) continue
-    const peerName = deps.history.agentProfiles.get(peerId)?.name ?? peerId
-    activityLines.push(`- DM with ${peerName} [peerId: ${peerId}]: ${relativeTime(ctx.lastActiveAt)}`)
-  }
-
   return `Your activity in other contexts:\n${activityLines.join('\n')}`
 }
 
 const buildSystemMessage = (
   deps: BuildContextDeps,
-  triggerRoomId: string | undefined,
-  triggerPeerId: string | undefined,
+  triggerRoomId: string,
 ): string => {
   const sections: string[] = []
 
@@ -222,61 +193,44 @@ const buildSystemMessage = (
     sections.push(`=== HOUSE RULES ===\n${deps.housePrompt}`)
   }
 
-  if (triggerRoomId) {
-    const roomCtx = deps.history.rooms.get(triggerRoomId)
-    if (roomCtx?.profile.roomPrompt) {
-      sections.push(`=== ROOM: ${roomCtx.profile.name} ===\n${roomCtx.profile.roomPrompt}`)
-    }
+  const roomCtx = deps.history.rooms.get(triggerRoomId)
+  if (roomCtx?.profile.roomPrompt) {
+    sections.push(`=== ROOM: ${roomCtx.profile.name} ===\n${roomCtx.profile.roomPrompt}`)
   }
 
   sections.push(`=== YOUR IDENTITY ===\n${deps.systemPrompt}`)
 
   const contextLines: string[] = []
 
-  if (triggerRoomId) {
-    const roomCtx = deps.history.rooms.get(triggerRoomId)
-    if (roomCtx) {
-      contextLines.push(`You are in room "${roomCtx.profile.name}" [id: ${triggerRoomId}].`)
-    }
-
-    const freshForRoom = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
-    const latestWithFlow = [...freshForRoom].reverse().find(
-      m => (m.metadata as Record<string, unknown> | undefined)?.flowContext,
-    )
-    if (latestWithFlow) {
-      const fc = (latestWithFlow.metadata as Record<string, unknown>).flowContext as FlowDeliveryContext
-      const triggerMsg = latestWithFlow
-      const stepIndex = (triggerMsg.metadata as Record<string, unknown>)?.flowContext
-        ? fc.stepIndex
-        : 0
-      contextLines.push(buildFlowSection(fc, stepIndex))
-    }
-
-    const participants = getParticipantsForRoom(triggerRoomId, deps.history, deps.agentId)
-    if (participants.length > 0) {
-      contextLines.push(buildParticipantsSection(participants))
-    }
-
-    if (deps.getRoomTodos) {
-      const todos = deps.getRoomTodos(triggerRoomId)
-      if (todos.length > 0) {
-        contextLines.push(buildTodosSection(todos))
-      }
-    }
-  } else if (triggerPeerId) {
-    const peerProfile = deps.history.agentProfiles.get(triggerPeerId)
-    const peerName = peerProfile?.name ?? triggerPeerId
-    contextLines.push(`This is a direct conversation with ${peerName} [id: ${triggerPeerId}].`)
+  if (roomCtx) {
+    contextLines.push(`You are in room "${roomCtx.profile.name}" [id: ${triggerRoomId}].`)
   }
 
-  const activitySection = buildActivitySection(deps, triggerRoomId, triggerPeerId)
-  // Only include if there are actual other contexts listed
-  const hasActivity = deps.history.rooms.size > (triggerRoomId ? 1 : 0) ||
-    [...deps.history.dms].some(([peerId, ctx]) =>
-      peerId !== triggerPeerId && (ctx.history.length > 0 || ctx.lastActiveAt !== undefined),
-    )
-  if (hasActivity) {
-    contextLines.push(activitySection)
+  const freshForRoom = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
+  const latestWithFlow = [...freshForRoom].reverse().find(
+    m => (m.metadata as Record<string, unknown> | undefined)?.flowContext,
+  )
+  if (latestWithFlow) {
+    const fc = (latestWithFlow.metadata as Record<string, unknown>).flowContext as FlowDeliveryContext
+    const stepIndex = fc.stepIndex
+    contextLines.push(buildFlowSection(fc, stepIndex))
+  }
+
+  const participants = getParticipantsForRoom(triggerRoomId, deps.history, deps.agentId)
+  if (participants.length > 0) {
+    contextLines.push(buildParticipantsSection(participants))
+  }
+
+  if (deps.getRoomTodos) {
+    const todos = deps.getRoomTodos(triggerRoomId)
+    if (todos.length > 0) {
+      contextLines.push(buildTodosSection(todos))
+    }
+  }
+
+  // Other-room activity (only include when there are other rooms)
+  if (deps.history.rooms.size > 1) {
+    contextLines.push(buildActivitySection(deps, triggerRoomId))
   }
 
   const knownAgents = [...deps.history.agentProfiles.values()].filter(a => a.id !== deps.agentId)
@@ -308,60 +262,35 @@ const buildSystemMessage = (
 
 export const buildContext = (
   deps: BuildContextDeps,
-  triggerRoomId?: string,
-  triggerPeerId?: string,
+  triggerRoomId: string,
 ): ContextResult => {
   const flushIds = new Set<string>()
-  const flushDMs: Message[] = []
 
-  const systemContent = buildSystemMessage(deps, triggerRoomId, triggerPeerId)
+  const systemContent = buildSystemMessage(deps, triggerRoomId)
 
   const chatMessages: ChatRequest['messages'][number][] = [
     { role: 'system' as const, content: systemContent },
   ]
 
-  // Room context: history window (old) + incoming (new)
-  if (triggerRoomId) {
-    const ctx = deps.history.rooms.get(triggerRoomId)
-    const all = ctx?.history ?? []
-    // Apply historyLimit window at read time — full history preserved in AgentHistory
-    const old = all.length > deps.historyLimit ? all.slice(-deps.historyLimit) : all
-    const fresh = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
+  const ctx = deps.history.rooms.get(triggerRoomId)
+  const all = ctx?.history ?? []
+  // Apply historyLimit window at read time — full history preserved in AgentHistory
+  const old = all.length > deps.historyLimit ? all.slice(-deps.historyLimit) : all
+  const fresh = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
+  const roomCompressedIds = deps.getCompressedIds?.(triggerRoomId)
 
-    for (const msg of old) {
-      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName)
-      if (formatted) chatMessages.push(formatted)
-    }
-    for (const msg of fresh) {
-      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName)
-      if (formatted) chatMessages.push(formatted)
-      flushIds.add(msg.id)
-    }
+  for (const msg of old) {
+    const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds)
+    if (formatted) chatMessages.push(formatted)
   }
-
-  // DM context: history window (old) + incoming DMs (new)
-  if (triggerPeerId) {
-    const ctx = deps.history.dms.get(triggerPeerId)
-    const all = ctx?.history ?? []
-    const old = all.length > deps.historyLimit ? all.slice(-deps.historyLimit) : all
-    const fresh = deps.history.incoming.filter(m =>
-      m.roomId === undefined && (m.senderId === triggerPeerId || m.recipientId === triggerPeerId),
-    )
-
-    for (const msg of old) {
-      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName)
-      if (formatted) chatMessages.push(formatted)
-    }
-    for (const msg of fresh) {
-      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName)
-      if (formatted) chatMessages.push(formatted)
-      flushIds.add(msg.id)
-      flushDMs.push(msg)
-    }
+  for (const msg of fresh) {
+    const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds)
+    if (formatted) chatMessages.push(formatted)
+    flushIds.add(msg.id)
   }
 
   return {
     messages: chatMessages,
-    flushInfo: { ids: flushIds, dmMessages: flushDMs, triggerRoomId, triggerPeerId },
+    flushInfo: { ids: flushIds, triggerRoomId },
   }
 }

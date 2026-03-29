@@ -2,13 +2,12 @@
 // ConcurrencyManager — Per-agent concurrency and state tracking.
 //
 // Owns: generatingContexts, pendingContexts, idleResolvers, stateSubscribers,
-// generationEpoch, and queryCount. Extracted from ai-agent.ts to keep that
-// file focused on context building and evaluation.
+// and generationEpoch. Extracted from ai-agent.ts to keep that file focused
+// on context building and evaluation.
 //
-// whenIdle() waits for both the generation loop AND any active queries to
-// complete. cancelAll() clears generation state but NOT queries — a query
-// is a synchronous side-channel request and its caller awaits a response;
-// canceling would leave it hanging.
+// whenIdle() waits for both the generation loop and pending queue to drain.
+// cancelAll() clears generation state — the generationEpoch guard ensures
+// in-flight results from cancelled generations are silently discarded.
 // ============================================================================
 
 import type { AgentState, StateSubscriber, StateValue } from '../core/types.ts'
@@ -27,9 +26,6 @@ export interface ConcurrencyManager {
   readonly whenIdle: (timeoutMs?: number) => Promise<void>
   readonly cancelAll: () => void
   readonly notifyState: (value: StateValue, context?: string) => void
-  readonly isQuerying: () => boolean
-  readonly startQuery: () => void
-  readonly endQuery: () => void
 }
 
 export const createConcurrencyManager = (agentId: string): ConcurrencyManager => {
@@ -38,14 +34,13 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
   let idleResolvers: Array<() => void> = []
   const stateSubscribers = new Set<StateSubscriber>()
   let generationEpoch = 0
-  let queryCount = 0
 
   const notifyState = (value: StateValue, context?: string): void => {
     for (const fn of stateSubscribers) fn(value, agentId, context)
   }
 
   const checkIdle = (): void => {
-    if (generatingContexts.size === 0 && pendingContexts.size === 0 && queryCount === 0) {
+    if (generatingContexts.size === 0 && pendingContexts.size === 0) {
       const resolvers = idleResolvers
       idleResolvers = []
       for (const resolve of resolvers) resolve()
@@ -61,7 +56,7 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
   }
 
   const whenIdle = (timeoutMs = AGENT_TIMEOUT_MS): Promise<void> => {
-    if (generatingContexts.size === 0 && pendingContexts.size === 0 && queryCount === 0) {
+    if (generatingContexts.size === 0 && pendingContexts.size === 0) {
       return Promise.resolve()
     }
     return new Promise<void>((resolve, reject) => {
@@ -101,11 +96,5 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
       notifyState('idle')
     },
     notifyState,
-    isQuerying: () => queryCount > 0,
-    startQuery: () => { queryCount++ },
-    endQuery: () => {
-      queryCount = Math.max(0, queryCount - 1)
-      checkIdle()
-    },
   }
 }

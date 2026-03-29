@@ -28,8 +28,8 @@ import type { ContextResult, FlushInfo } from './context-builder.ts'
 export interface Decision {
   readonly response: AgentResponse
   readonly generationMs: number
-  readonly triggerRoomId?: string
-  readonly triggerPeerId?: string
+  readonly triggerRoomId: string
+  readonly inReplyTo?: ReadonlyArray<string>  // IDs of messages that triggered this decision
 }
 
 export type OnDecision = (decision: Decision) => void
@@ -135,16 +135,16 @@ export const evaluate = async (
   llmProvider: LLMProvider,
   toolExecutor: ToolExecutor | undefined,
   maxToolIterations: number,
-  triggerRoomId?: string,
-  triggerPeerId?: string,
+  triggerRoomId: string,
   toolDefinitions?: ReadonlyArray<ToolDefinition>,
+  inReplyTo?: ReadonlyArray<string>,
 ): Promise<EvalResult> => {
   const context = [...contextResult.messages]
   let totalGenerationMs = 0
   const maxToolResultChars = config.maxToolResultChars ?? MAX_TOOL_RESULT_CHARS
 
   const makeResult = (decision: Decision): EvalResult => ({
-    decision,
+    decision: inReplyTo && inReplyTo.length > 0 ? { ...decision, inReplyTo } : decision,
     flushInfo: contextResult.flushInfo,
   })
 
@@ -162,12 +162,7 @@ export const evaluate = async (
       // Native tool call path — model returned structured tool calls directly
       if (chatResponse.toolCalls && chatResponse.toolCalls.length > 0) {
         if (!toolExecutor) {
-          return makeResult({
-            response: { action: 'pass', reason: 'Tool calls not available' },
-            generationMs: totalGenerationMs,
-            triggerRoomId,
-            triggerPeerId,
-          })
+          return makeResult({ response: { action: 'pass', reason: 'Tool calls not available' }, generationMs: totalGenerationMs, triggerRoomId })
         }
         const calls = nativeCallsToToolCalls(chatResponse.toolCalls)
         const results = await toolExecutor(calls, triggerRoomId)
@@ -182,46 +177,24 @@ export const evaluate = async (
       // Tool call — execute and continue loop
       if (parsed.action === 'tool_call' && toolExecutor) {
         const results = await toolExecutor(parsed.toolCalls, triggerRoomId)
-
         context.push({ role: 'assistant' as const, content: chatResponse.content })
-        context.push({ role: 'user' as const, content: formatToolResults(parsed.toolCalls, results) })
-
+        context.push({ role: 'user' as const, content: formatToolResults(parsed.toolCalls, results, maxToolResultChars) })
         continue
       }
 
       // tool_call without executor — fall back to pass
       if (parsed.action === 'tool_call') {
-        return makeResult({
-          response: { action: 'pass', reason: 'Tool calls not available' },
-          generationMs: totalGenerationMs,
-          triggerRoomId,
-          triggerPeerId,
-        })
+        return makeResult({ response: { action: 'pass', reason: 'Tool calls not available' }, generationMs: totalGenerationMs, triggerRoomId })
       }
 
       // respond or pass — return decision
-      return makeResult({
-        response: parsed,
-        generationMs: totalGenerationMs,
-        triggerRoomId,
-        triggerPeerId,
-      })
+      return makeResult({ response: parsed, generationMs: totalGenerationMs, triggerRoomId })
     }
 
     // Max iterations reached
-    return makeResult({
-      response: { action: 'pass', reason: `Tool call loop exceeded ${maxToolIterations} iterations` },
-      generationMs: totalGenerationMs,
-      triggerRoomId,
-      triggerPeerId,
-    })
+    return makeResult({ response: { action: 'pass', reason: `Tool call loop exceeded ${maxToolIterations} iterations` }, generationMs: totalGenerationMs, triggerRoomId })
   } catch (err) {
     console.error(`[${config.name}] LLM call failed:`, err)
-    return makeResult({
-      response: { action: 'pass', reason: `LLM error: ${err instanceof Error ? err.message : 'unknown'}` },
-      generationMs: totalGenerationMs,
-      triggerRoomId,
-      triggerPeerId,
-    })
+    return makeResult({ response: { action: 'pass', reason: `LLM error: ${err instanceof Error ? err.message : 'unknown'}` }, generationMs: totalGenerationMs, triggerRoomId })
   }
 }

@@ -43,6 +43,6 @@ export const formatToolDescriptions = (tools: ReadonlyArray<Tool>): string => {
 // Appended to response format instructions when text-protocol tools are active.
 export const TOOL_RESPONSE_FORMAT_SUFFIX = `\n- To use a tool, write ONLY ::TOOL:: followed by the tool name on its own line. Do not write anything else — just the tool call. Add JSON arguments after the name if needed.
   Example: ::TOOL:: get_time
-  Example: ::TOOL:: query_agent {"agent": "Alice", "question": "status?"}
+  Example: ::TOOL:: get_room_history {"roomName": "general"}
   You may call multiple tools, one ::TOOL:: per line. After tools run you will receive results and should then write a normal response.
 - IMPORTANT: You do NOT have access to real-time information like the current time or date. When asked about these, you MUST use the appropriate tool. Never guess or make up values for information a tool can provide.`

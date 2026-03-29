@@ -18,17 +18,17 @@ export interface Message {
   readonly content: string
   readonly timestamp: number
   readonly type: MessageType
-  readonly roomId?: string            // present for room messages
-  readonly recipientId?: string       // present for DMs (target agent's ID)
+  readonly roomId: string             // every message lives in a room
   readonly correlationId?: string     // shared across multi-target deliveries
+  readonly inReplyTo?: ReadonlyArray<string>  // IDs of messages this response is causally derived from
   readonly generationMs?: number
   readonly metadata?: Record<string, unknown>
 }
 
 // === Agent History — unified per-agent state across all contexts ===
-// Single structure owned by each AI agent. Sub-fields hold room-specific and
-// DM-specific history. The agent has full access to its complete history;
-// only a historyLimit-sized window is passed to the LLM in each context build.
+// Single structure owned by each AI agent. Sub-fields hold per-room history.
+// The agent has full access to its complete history; only a historyLimit-sized
+// window is passed to the LLM in each context build.
 
 export interface RoomContext {
   readonly profile: RoomProfile
@@ -36,16 +36,10 @@ export interface RoomContext {
   lastActiveAt?: number             // timestamp of last flushIncoming into this context
 }
 
-export interface DMContext {
-  history: ReadonlyArray<Message>   // all processed DMs with this peer (unbounded)
-  lastActiveAt?: number
-}
-
 export interface AgentHistory {
   readonly rooms: Map<string, RoomContext>        // roomId → context
-  readonly dms: Map<string, DMContext>            // peerId → context
   // Intentionally mutable buffer — messages arrive here before evaluation, then
-  // flushIncoming moves processed messages to RoomContext/DMContext history.
+  // flushIncoming moves processed messages to RoomContext history.
   // The `readonly` marker prevents field reassignment, not element mutation.
   // Safe: JavaScript's event loop ensures each flush runs to completion
   // before any other code can observe intermediate state.
@@ -71,18 +65,17 @@ export interface AgentProfile {
 }
 
 // === Message Target — where a response should be delivered ===
-// Names at the LLM boundary, resolved to UUIDs by resolveTarget before delivery.
 
 export interface MessageTarget {
-  readonly rooms?: ReadonlyArray<string>    // room names (LLM) or IDs (internal)
-  readonly agents?: ReadonlyArray<string>   // agent names (LLM) or IDs (internal)
+  readonly rooms: ReadonlyArray<string>    // room IDs (or names for WS/HTTP callers)
 }
 
 // === Room Post Parameters — caller provides content, room stamps id/roomId/timestamp ===
-// FRAGILITY: PostParams is derived from Message via Omit. Adding fields to Message
-// automatically makes them optional here. Always review Message changes against PostParams callers.
+// NOTE: PostParams derives from Message via Omit. Fields added to Message automatically
+// appear here as optional (e.g. correlationId, generationMs, metadata). This is intentional —
+// callers that need those fields set them; others leave them undefined.
 
-export type PostParams = Omit<Message, 'id' | 'roomId' | 'timestamp' | 'recipientId'>
+export type PostParams = Omit<Message, 'id' | 'roomId' | 'timestamp'>
 
 // === Delivery — callback for Room to deliver messages to agents ===
 // History is no longer passed — agents initialise context via join() before
@@ -224,6 +217,9 @@ export interface Room {
   readonly removeTodo: (todoId: string) => boolean
   readonly getTodos: () => ReadonlyArray<TodoItem>
 
+  // Compression tracking — IDs of messages pruned from history (tombstones)
+  readonly getCompressedIds: () => ReadonlySet<string>
+
   // Snapshot restore — bypass delivery, populate state directly
   readonly injectMessages: (msgs: ReadonlyArray<Message>) => void
   readonly restoreState: (state: RoomRestoreParams) => void
@@ -236,6 +232,7 @@ export interface RoomRestoreParams {
   readonly paused: boolean
   readonly flows: ReadonlyArray<Flow>
   readonly todos: ReadonlyArray<TodoItem>
+  readonly compressedIds?: ReadonlyArray<string>
 }
 
 // === CreateResult — returned when name uniqueness is enforced ===
@@ -308,11 +305,10 @@ export interface Agent {
   readonly setInactive?: (value: boolean) => void
 }
 
-// === AIAgent — extended Agent with query + observability ===
+// === AIAgent — extended Agent with observability ===
 
 export interface AIAgent extends Agent {
   readonly whenIdle: (timeoutMs?: number) => Promise<void>
-  readonly query: (question: string, askerId: string, askerName?: string) => Promise<string>
   readonly updateSystemPrompt: (prompt: string) => void
   readonly getSystemPrompt: () => string
   readonly updateModel: (model: string) => void
@@ -340,8 +336,6 @@ export interface Team {
 
 export interface RouterDeps {
   readonly house: House
-  readonly team: Team
-  readonly deliver: DeliverFn
 }
 
 // === RouteMessage — the single coordination function ===
@@ -457,7 +451,7 @@ export interface ChatResponse {
 export interface LLMProvider {
   readonly chat: (request: ChatRequest) => Promise<ChatResponse>
   readonly models: () => Promise<string[]>
-  readonly runningModels: () => Promise<string[]>
+  readonly runningModels?: () => Promise<string[]>
 }
 
 // === WebSocket Protocol — typed inbound/outbound messages ===
