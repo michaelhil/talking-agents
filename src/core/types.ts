@@ -102,7 +102,7 @@ export interface FlowStep {
 }
 
 export interface Flow {
-  readonly id: string              // crypto.randomUUID()
+  readonly id: string              // crypto.randomUUID() — or artifact ID when sourced from an artifact
   readonly name: string
   readonly steps: ReadonlyArray<FlowStep>
   readonly loop: boolean           // repeat or stop after one pass
@@ -124,26 +124,141 @@ export interface FlowDeliveryContext {
   readonly steps: ReadonlyArray<{ readonly agentName: string }>
 }
 
-// --- Todo types ---
+// === Artifact System ===
+// Artifacts are system-level collaborative objects (task lists, polls, flow blueprints, etc.).
+// They live in House (not rooms) and are scoped to rooms via `scope`.
+// The artifact type system mirrors the Tool plugin pattern.
 
-export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
+// --- Embedded task item within a task_list artifact ---
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked'
 
-export interface TodoItem {
-  readonly id: string              // crypto.randomUUID()
-  readonly content: string         // task description
-  readonly status: TodoStatus
-  readonly assignee?: string       // agent name (for LLM readability)
-  readonly assigneeId?: string     // agent UUID (for internal lookups)
-  readonly result?: string         // outcome when completed (persists as context for dependent todos)
-  readonly dependencies?: ReadonlyArray<string>  // other todo IDs
-  readonly createdBy: string       // agent name
+export interface TaskItem {
+  readonly id: string                          // local UUID within the list
+  readonly content: string
+  readonly status: TaskStatus
+  readonly assignee?: string                   // agent name
+  readonly assigneeId?: string                 // agent UUID
+  readonly result?: string                     // resolution comment when completed
+  readonly dependencies?: ReadonlyArray<string>  // other TaskItem ids within same list
+  readonly createdBy: string                   // agent name
   readonly createdAt: number
   readonly updatedAt: number
 }
 
-// --- Room event callbacks ---
+// --- Built-in artifact body types ---
 
-export type OnTodoChanged = (roomId: string, action: 'added' | 'updated' | 'removed', todo: TodoItem) => void
+export interface TaskListBody {
+  readonly description?: string
+  readonly tasks: ReadonlyArray<TaskItem>
+}
+
+export interface PollOption {
+  readonly id: string
+  readonly text: string
+}
+
+export interface PollBody {
+  readonly question: string
+  readonly options: ReadonlyArray<PollOption>   // immutable after creation
+  readonly votes: Record<string, ReadonlyArray<string>>  // optionId → agentId[]
+  readonly allowMultiple: boolean
+}
+
+export interface FlowArtifactBody {
+  readonly steps: ReadonlyArray<FlowStep>
+  readonly loop: boolean
+}
+
+// --- Artifact instance ---
+
+export interface Artifact {
+  readonly id: string
+  readonly type: string                         // artifact type name: 'task_list', 'poll', 'flow'
+  readonly title: string                        // human-readable label
+  readonly body: Record<string, unknown>        // type-specific payload
+  readonly scope: ReadonlyArray<string>         // room IDs; empty = system-wide
+  readonly createdBy: string                    // agent name
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly resolution?: string                  // how/why it was resolved
+  readonly resolvedAt?: number                  // timestamp of resolution
+}
+
+export interface ArtifactCreateConfig {
+  readonly type: string
+  readonly title: string
+  readonly body: Record<string, unknown>
+  readonly scope?: ReadonlyArray<string>        // defaults to []
+  readonly createdBy: string
+}
+
+export interface ArtifactUpdateConfig {
+  readonly title?: string
+  readonly body?: Record<string, unknown>       // type's onUpdate decides merge strategy; default: shallow merge
+  readonly resolution?: string                  // explicit resolution
+}
+
+// Returned by ArtifactTypeDefinition.onUpdate — overrides default shallow merge
+export interface ArtifactUpdateResult {
+  readonly newBody?: Record<string, unknown>    // replaces body if provided; if absent, default merge applies
+  readonly resolution?: string                  // auto-resolves if set
+}
+
+// --- Artifact type definition (plugin contract, mirrors Tool) ---
+// Types that need dependencies (ArtifactStore, Team) are factory functions injected at registration.
+
+export interface ArtifactTypeDefinition {
+  readonly type: string
+  readonly description: string
+  readonly bodySchema: Record<string, unknown>  // JSON Schema for body — used in tool parameters
+  // Lifecycle hooks — all optional
+  readonly onCreate?: (artifact: Artifact, ctx: ToolContext) => void
+  readonly onUpdate?: (artifact: Artifact, updates: ArtifactUpdateConfig, ctx: ToolContext) => ArtifactUpdateResult | void
+  readonly onRemove?: (artifact: Artifact) => void
+  readonly checkAutoResolve?: (artifact: Artifact) => string | undefined
+  // LLM context rendering — optional; generic fallback used if absent
+  readonly formatForContext?: (artifact: Artifact) => string
+  // Controls when a system message is posted to scoped rooms on change
+  readonly postSystemMessageOn?: ReadonlyArray<'added' | 'removed' | 'resolved'>
+}
+
+export interface ArtifactTypeRegistry {
+  readonly register: (def: ArtifactTypeDefinition) => void
+  readonly get: (type: string) => ArtifactTypeDefinition | undefined
+  readonly list: () => ReadonlyArray<ArtifactTypeDefinition>
+}
+
+// --- Artifact store (held by House) ---
+
+export interface ArtifactFilter {
+  readonly type?: string
+  readonly scope?: string    // room ID — returns artifacts scoped to this room + system-wide
+  readonly includeResolved?: boolean  // default false
+}
+
+export interface ArtifactStore {
+  readonly add: (config: ArtifactCreateConfig) => Artifact
+  readonly update: (id: string, updates: ArtifactUpdateConfig, ctx?: ToolContext) => Artifact | undefined
+  readonly remove: (id: string) => boolean
+  readonly get: (id: string) => Artifact | undefined
+  readonly list: (filter?: ArtifactFilter) => ReadonlyArray<Artifact>
+  readonly getForScope: (roomId: string) => ReadonlyArray<Artifact>
+  readonly restore: (artifacts: ReadonlyArray<Artifact>) => void
+}
+
+// --- Callbacks ---
+
+export type OnArtifactChanged = (action: 'added' | 'updated' | 'removed', artifact: Artifact) => void
+
+// === Room event callbacks ===
+
+export type OnMessagePosted = (roomId: string, message: Message) => void
+export type OnDeliveryModeChanged = (roomId: string, mode: DeliveryMode) => void
+export type OnTurnChanged = (roomId: string, agentId?: string, waitingForHuman?: boolean) => void
+export type OnFlowEvent = (roomId: string, event: 'started' | 'step' | 'completed' | 'cancelled', detail?: Record<string, unknown>) => void
+export type OnRoomCreated = (profile: RoomProfile) => void
+export type OnRoomDeleted = (roomId: string, roomName: string) => void
+export type OnMembershipChanged = (roomId: string, roomName: string, agentId: string, agentName: string, action: 'added' | 'removed') => void
 
 // --- Room state snapshot (for UI sync on connect/reconnect) ---
 
@@ -163,16 +278,6 @@ export type AgentDeliveryStatus = 'active' | 'waiting' | 'muted'
 // --- Room dependencies ---
 
 export type ResolveAgentName = (name: string) => string | undefined  // agent name → UUID
-
-// --- Room event callbacks ---
-
-export type OnMessagePosted = (roomId: string, message: Message) => void
-export type OnDeliveryModeChanged = (roomId: string, mode: DeliveryMode) => void
-export type OnTurnChanged = (roomId: string, agentId?: string, waitingForHuman?: boolean) => void
-export type OnFlowEvent = (roomId: string, event: 'started' | 'step' | 'completed' | 'cancelled', detail?: Record<string, unknown>) => void
-export type OnRoomCreated = (profile: RoomProfile) => void
-export type OnRoomDeleted = (roomId: string, roomName: string) => void
-export type OnMembershipChanged = (roomId: string, roomName: string, agentId: string, agentName: string, action: 'added' | 'removed') => void
 
 // === Room — self-contained component: stores messages and delivers to members ===
 
@@ -203,19 +308,10 @@ export interface Room {
   readonly isMuted: (agentId: string) => boolean
   readonly getMutedIds: () => ReadonlySet<string>
 
-  // Flow management
-  readonly addFlow: (config: Omit<Flow, 'id'>) => Flow
-  readonly removeFlow: (flowId: string) => boolean
-  readonly getFlows: () => ReadonlyArray<Flow>
-  readonly startFlow: (flowId: string) => void
+  // Flow execution — blueprint is now an artifact; Room only manages execution
+  readonly startFlow: (flow: Flow) => void   // caller resolves artifact → constructs Flow → passes here
   readonly cancelFlow: () => void
   readonly flowExecution: FlowExecution | undefined
-
-  // Todo management — shared task list, any member can CRUD
-  readonly addTodo: (config: { content: string; assignee?: string; assigneeId?: string; dependencies?: ReadonlyArray<string>; createdBy: string }) => TodoItem
-  readonly updateTodo: (todoId: string, updates: { status?: TodoStatus; assignee?: string; assigneeId?: string; content?: string; result?: string }) => TodoItem | undefined
-  readonly removeTodo: (todoId: string) => boolean
-  readonly getTodos: () => ReadonlyArray<TodoItem>
 
   // Compression tracking — IDs of messages pruned from history (tombstones)
   readonly getCompressedIds: () => ReadonlySet<string>
@@ -230,8 +326,6 @@ export interface RoomRestoreParams {
   readonly muted: ReadonlyArray<string>
   readonly mode: DeliveryMode
   readonly paused: boolean
-  readonly flows: ReadonlyArray<Flow>
-  readonly todos: ReadonlyArray<TodoItem>
   readonly compressedIds?: ReadonlyArray<string>
 }
 
@@ -252,12 +346,12 @@ export interface HouseCallbacks {
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
   readonly onFlowEvent?: OnFlowEvent
-  readonly onTodoChanged?: OnTodoChanged
+  readonly onArtifactChanged?: OnArtifactChanged
   readonly onRoomCreated?: OnRoomCreated
   readonly onRoomDeleted?: OnRoomDeleted
 }
 
-// === House — room collection ===
+// === House — room collection + artifact system ===
 
 export interface House {
   readonly createRoom: (config: RoomConfig) => Room
@@ -271,6 +365,9 @@ export interface House {
   readonly getResponseFormat: () => string
   readonly setResponseFormat: (format: string) => void
   readonly restoreRoom: (profile: RoomProfile) => Room
+  // Artifact system
+  readonly artifacts: ArtifactStore
+  readonly artifactTypes: ArtifactTypeRegistry
 }
 
 export interface RoomConfig {
@@ -470,16 +567,15 @@ export type WSInbound =
   | { readonly type: 'set_paused'; readonly roomName: string; readonly paused: boolean }
   // Muting
   | { readonly type: 'set_muted'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
-  // Flow management (callers provide agentId — no server-side resolution)
-  | { readonly type: 'add_flow'; readonly roomName: string; readonly name: string; readonly steps: ReadonlyArray<FlowStep>; readonly loop?: boolean }
-  | { readonly type: 'remove_flow'; readonly roomName: string; readonly flowId: string }
-  | { readonly type: 'start_flow'; readonly roomName: string; readonly flowId: string; readonly content: string }
+  // Flow execution (blueprint lives in artifacts; these commands control execution only)
+  | { readonly type: 'start_flow'; readonly roomName: string; readonly flowArtifactId: string; readonly content: string }
   | { readonly type: 'cancel_flow'; readonly roomName: string }
   | { readonly type: 'cancel_generation'; readonly name: string }
-  // Todo management
-  | { readonly type: 'add_todo'; readonly roomName: string; readonly content: string; readonly assignee?: string; readonly assigneeId?: string; readonly dependencies?: ReadonlyArray<string> }
-  | { readonly type: 'update_todo'; readonly roomName: string; readonly todoId: string; readonly status?: TodoStatus; readonly assignee?: string; readonly assigneeId?: string; readonly content?: string; readonly result?: string }
-  | { readonly type: 'remove_todo'; readonly roomName: string; readonly todoId: string }
+  // Artifact management
+  | { readonly type: 'add_artifact'; readonly artifactType: string; readonly title: string; readonly body: Record<string, unknown>; readonly scope?: ReadonlyArray<string> }
+  | { readonly type: 'update_artifact'; readonly artifactId: string; readonly title?: string; readonly body?: Record<string, unknown>; readonly resolution?: string }
+  | { readonly type: 'remove_artifact'; readonly artifactId: string }
+  | { readonly type: 'cast_vote'; readonly artifactId: string; readonly optionId: string }
 
 export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
@@ -493,7 +589,7 @@ export type WSOutbound =
   | { readonly type: 'mute_changed'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
   | { readonly type: 'turn_changed'; readonly roomName: string; readonly agentName?: string; readonly waitingForHuman?: boolean }
   | { readonly type: 'flow_event'; readonly roomName: string; readonly event: 'started' | 'step' | 'completed' | 'cancelled'; readonly detail?: Record<string, unknown> }
-  | { readonly type: 'todo_changed'; readonly roomName: string; readonly action: 'added' | 'updated' | 'removed'; readonly todo: TodoItem }
+  | { readonly type: 'artifact_changed'; readonly action: 'added' | 'updated' | 'removed'; readonly artifact: Artifact }
   | { readonly type: 'membership_changed'; readonly roomName: string; readonly agentName: string; readonly action: 'added' | 'removed' }
   | { readonly type: 'room_deleted'; readonly roomName: string }
 

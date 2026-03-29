@@ -104,14 +104,8 @@ export const createServer = (system: System, config?: ServerConfig) => {
     })
   }))
 
-  system.setOnTodoChanged(withAutoSave((roomId, action, todo) => {
-    const room = system.house.getRoom(roomId)
-    wsManager.broadcast({
-      type: 'todo_changed',
-      roomName: room?.profile.name ?? roomId,
-      action,
-      todo,
-    })
+  system.setOnArtifactChanged(withAutoSave((action, artifact) => {
+    wsManager.broadcast({ type: 'artifact_changed', action, artifact })
   }))
 
   const server = Bun.serve<WSData>({

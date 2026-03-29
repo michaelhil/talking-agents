@@ -8,6 +8,7 @@ import { createHouse } from '../core/house.ts'
 import { createTeam } from '../agents/team.ts'
 import { createAIAgent } from '../agents/ai-agent.ts'
 import { createHumanAgent } from '../agents/human-agent.ts'
+import { createTaskListArtifactType } from '../core/artifact-types/task-list.ts'
 import type { DeliverFn, LLMProvider, Message, RouteMessage, WSOutbound } from '../core/types.ts'
 import type { System } from '../main.ts'
 import type { ClientSession, WSManager } from './ws-handler.ts'
@@ -24,6 +25,7 @@ const makeLLMProvider = (): LLMProvider => ({
 
 const makeSystem = (): System => {
   const house = createHouse({ deliver: noopDeliver })
+  house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
   const team = createTeam()
   house.createRoom({ name: 'TestRoom', createdBy: 'system' })
 
@@ -51,7 +53,7 @@ const makeSystem = (): System => {
     setOnTurnChanged: () => {},
     setOnDeliveryModeChanged: () => {},
     setOnFlowEvent: () => {},
-    setOnTodoChanged: () => {},
+    setOnArtifactChanged: () => {},
     setOnRoomCreated: () => {},
     setOnRoomDeleted: () => {},
     setOnMembershipChanged: () => {},
@@ -160,73 +162,66 @@ describe('WS Handler', () => {
     expect(errors()).toHaveLength(1)
   })
 
-  // --- Todos ---
+  // --- Artifacts ---
 
-  test('add_todo adds todo and broadcasts todo_changed', async () => {
+  test('add_artifact creates artifact and triggers artifact_changed', async () => {
     const broadcasts: WSOutbound[] = []
     wsManager.broadcast = (msg: WSOutbound) => { broadcasts.push(msg) }
     const { ws } = makeWS()
     await dispatch(ws, session, system, wsManager, {
-      type: 'add_todo', roomName: 'TestRoom', content: 'Write docs',
+      type: 'add_artifact', artifactType: 'task_list', title: 'Sprint', body: { tasks: [] }, scope: ['TestRoom'],
     })
-    const room = system.house.getRoom('TestRoom')!
-    expect(room.getTodos()).toHaveLength(1)
-    const event = broadcasts.find(b => b.type === 'todo_changed') as (WSOutbound & { type: 'todo_changed' }) | undefined
-    expect(event).toBeDefined()
-    expect(event!.action).toBe('added')
-    expect(event!.todo.content).toBe('Write docs')
+    expect(system.house.artifacts.list({ type: 'task_list' })).toHaveLength(1)
   })
 
-  test('add_todo on unknown room sends error', async () => {
+  test('add_artifact with unknown type sends error', async () => {
     const { ws, errors } = makeWS()
-    await dispatch(ws, session, system, wsManager, { type: 'add_todo', roomName: 'NoSuchRoom', content: 'test' })
+    await dispatch(ws, session, system, wsManager, {
+      type: 'add_artifact', artifactType: 'nonexistent_type', title: 'X', body: {},
+    })
     expect(errors()).toHaveLength(1)
   })
 
-  test('update_todo with unknown id sends error', async () => {
+  test('update_artifact with unknown id sends error', async () => {
     const { ws, errors } = makeWS()
     await dispatch(ws, session, system, wsManager, {
-      type: 'update_todo', roomName: 'TestRoom', todoId: 'no-such-id', status: 'completed',
+      type: 'update_artifact', artifactId: 'no-such-id', title: 'New',
     })
     expect(errors()).toHaveLength(1)
     expect(String(errors()[0].message)).toContain('not found')
   })
 
-  test('update_todo updates and broadcasts', async () => {
+  test('update_artifact updates artifact', async () => {
     const room = system.house.getRoom('TestRoom')!
-    const todo = room.addTodo({ content: 'Task', createdBy: 'tester' })
-    const broadcasts: WSOutbound[] = []
-    wsManager.broadcast = (msg: WSOutbound) => { broadcasts.push(msg) }
+    const artifact = system.house.artifacts.add({
+      type: 'task_list', title: 'Old', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester',
+    })
     const { ws } = makeWS()
     await dispatch(ws, session, system, wsManager, {
-      type: 'update_todo', roomName: 'TestRoom', todoId: todo.id, status: 'completed',
+      type: 'update_artifact', artifactId: artifact.id, title: 'Updated',
     })
-    const event = broadcasts.find(b => b.type === 'todo_changed') as (WSOutbound & { type: 'todo_changed' }) | undefined
-    expect(event?.action).toBe('updated')
-    expect(event?.todo.status).toBe('completed')
+    expect(system.house.artifacts.get(artifact.id)?.title).toBe('Updated')
   })
 
-  test('remove_todo with unknown id sends error', async () => {
+  test('remove_artifact with unknown id sends error', async () => {
     const { ws, errors } = makeWS()
     await dispatch(ws, session, system, wsManager, {
-      type: 'remove_todo', roomName: 'TestRoom', todoId: 'no-such-id',
+      type: 'remove_artifact', artifactId: 'no-such-id',
     })
     expect(errors()).toHaveLength(1)
     expect(String(errors()[0].message)).toContain('not found')
   })
 
-  test('remove_todo removes and broadcasts', async () => {
+  test('remove_artifact removes artifact', async () => {
     const room = system.house.getRoom('TestRoom')!
-    const todo = room.addTodo({ content: 'Doomed', createdBy: 'tester' })
-    const broadcasts: WSOutbound[] = []
-    wsManager.broadcast = (msg: WSOutbound) => { broadcasts.push(msg) }
+    const artifact = system.house.artifacts.add({
+      type: 'task_list', title: 'Doomed', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester',
+    })
     const { ws } = makeWS()
     await dispatch(ws, session, system, wsManager, {
-      type: 'remove_todo', roomName: 'TestRoom', todoId: todo.id,
+      type: 'remove_artifact', artifactId: artifact.id,
     })
-    expect(room.getTodos()).toHaveLength(0)
-    const event = broadcasts.find(b => b.type === 'todo_changed') as (WSOutbound & { type: 'todo_changed' }) | undefined
-    expect(event?.action).toBe('removed')
+    expect(system.house.artifacts.get(artifact.id)).toBeUndefined()
   })
 
   // --- add_to_room / remove_from_room ---

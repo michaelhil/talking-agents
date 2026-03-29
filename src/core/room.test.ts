@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test'
 import { createRoom } from './room.ts'
-import type { Message, RoomProfile } from './types.ts'
+import type { Message, RoomProfile, Flow } from './types.ts'
 import { SYSTEM_SENDER_ID } from './types.ts'
 
 const makeProfile = (overrides?: Partial<RoomProfile>): RoomProfile => ({
@@ -458,28 +458,16 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
 // Flow Tests
 // ============================================================================
 
+// Helper: build a Flow object directly (replaces old room.addFlow pattern)
+const makeFlow = (overrides?: Partial<Flow>): Flow => ({
+  id: 'flow-1',
+  name: 'Test Flow',
+  steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
+  loop: false,
+  ...overrides,
+})
+
 describe('Room — Flow mode', () => {
-  test('addFlow creates a flow with generated ID', () => {
-    const room = createRoom(makeProfile())
-    const flow = room.addFlow({
-      name: 'Test Flow',
-      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
-      loop: false,
-    })
-
-    expect(flow.id).toBeTruthy()
-    expect(flow.name).toBe('Test Flow')
-    expect(flow.steps).toHaveLength(2)
-    expect(room.getFlows()).toHaveLength(1)
-  })
-
-  test('removeFlow deletes a flow', () => {
-    const room = createRoom(makeProfile())
-    const flow = room.addFlow({ name: 'F', steps: [{ agentId: 'a-id', agentName: 'A' }], loop: false })
-    expect(room.removeFlow(flow.id)).toBe(true)
-    expect(room.getFlows()).toHaveLength(0)
-  })
-
   test('startFlow delivers to first step agent', () => {
     const { delivered, deliver } = trackDeliveries()
     const room = createRoom(makeProfile(), { deliver })
@@ -492,13 +480,7 @@ describe('Room — Flow mode', () => {
     room.post({ senderId: 'b', senderName: 'Bob', content: 'hi', type: 'chat' })
     delivered.length = 0
 
-    const flow = room.addFlow({
-      name: 'Pipeline',
-      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
-      loop: false,
-    })
-
-    room.startFlow(flow.id)
+    room.startFlow(makeFlow({ name: 'Pipeline' }))
     expect(room.deliveryMode).toBe('flow')
     expect(delivered).toHaveLength(1)
     expect(delivered[0]!.agentId).toBe('a')
@@ -515,12 +497,7 @@ describe('Room — Flow mode', () => {
     room.post({ senderId: 'b', senderName: 'Bob', content: 'hi', type: 'chat' })
     delivered.length = 0
 
-    const flow = room.addFlow({
-      name: 'Pipeline',
-      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
-      loop: false,
-    })
-    room.startFlow(flow.id)
+    room.startFlow(makeFlow({ name: 'Pipeline' }))
     delivered.length = 0
 
     // Alice responds → flow advances to Bob
@@ -539,12 +516,7 @@ describe('Room — Flow mode', () => {
     room.post({ senderId: 'a', senderName: 'Alice', content: 'hi', type: 'chat' })
     room.post({ senderId: 'b', senderName: 'Bob', content: 'hi', type: 'chat' })
 
-    const flow = room.addFlow({
-      name: 'Pipeline',
-      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
-      loop: false,
-    })
-    room.startFlow(flow.id)
+    room.startFlow(makeFlow({ name: 'Pipeline' }))
     delivered.length = 0
 
     // Alice responds
@@ -571,12 +543,7 @@ describe('Room — Flow mode', () => {
     room.post({ senderId: 'a', senderName: 'Alice', content: 'hi', type: 'chat' })
     room.post({ senderId: 'b', senderName: 'Bob', content: 'hi', type: 'chat' })
 
-    const flow = room.addFlow({
-      name: 'Loop',
-      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
-      loop: true,
-    })
-    room.startFlow(flow.id)
+    room.startFlow(makeFlow({ name: 'Loop', loop: true }))
     delivered.length = 0
 
     // Complete one cycle: Alice → Bob
@@ -603,15 +570,13 @@ describe('Room — Flow mode', () => {
     room.post({ senderId: 'b', senderName: 'Bob', content: 'hi', type: 'chat' })
     deliveredMeta.length = 0
 
-    const flow = room.addFlow({
+    room.startFlow(makeFlow({
       name: 'Prompted',
       steps: [
         { agentId: 'a', agentName: 'Alice', stepPrompt: 'Focus on risks' },
         { agentId: 'b', agentName: 'Bob', stepPrompt: 'Summarize findings' },
       ],
-      loop: false,
-    })
-    room.startFlow(flow.id)
+    }))
 
     // First delivery to Alice should have stepPrompt
     expect(deliveredMeta[0]?.stepPrompt).toBe('Focus on risks')
@@ -630,8 +595,7 @@ describe('Room — Flow mode', () => {
     room.addMember('a')
     room.post({ senderId: 'a', senderName: 'Alice', content: 'hi', type: 'chat' })
 
-    const flow = room.addFlow({ name: 'F', steps: [{ agentId: 'a', agentName: 'Alice' }], loop: true })
-    room.startFlow(flow.id)
+    room.startFlow(makeFlow({ name: 'F', steps: [{ agentId: 'a', agentName: 'Alice' }], loop: true }))
     expect(room.deliveryMode).toBe('flow')
 
     room.cancelFlow()
@@ -651,12 +615,7 @@ describe('Room — Flow mode', () => {
     room.post({ senderId: 'a', senderName: 'Alice', content: 'hi', type: 'chat' })
     room.post({ senderId: 'b', senderName: 'Bob', content: 'hi', type: 'chat' })
 
-    const flow = room.addFlow({
-      name: 'F',
-      steps: [{ agentId: 'a', agentName: 'Alice' }, { agentId: 'b', agentName: 'Bob' }],
-      loop: false,
-    })
-    room.startFlow(flow.id)
+    room.startFlow(makeFlow({ name: 'F' }))
     delivered.length = 0
 
     // Bob posts while Alice has the floor

@@ -157,42 +157,25 @@ export const roomRoutes: RouteEntry[] = [
   },
   {
     method: 'POST',
-    pattern: /^\/api\/rooms\/([^/]+)\/flows$/,
-    handler: async (req, match, { system }) => {
-      const name = decodeURIComponent(match[1]!)
-      const room = system.house.getRoom(name)
-      if (!room) return errorResponse(`Room "${name}" not found`, 404)
-      const body = await parseBody(req)
-      if (typeof body.name !== 'string') return errorResponse('name is required')
-      if (!Array.isArray(body.steps)) return errorResponse('steps must be an array')
-      if (body.loop !== undefined && typeof body.loop !== 'boolean') return errorResponse('loop must be a boolean')
-      const flow = room.addFlow({
-        name: body.name,
-        steps: body.steps as Array<{ agentId: string; agentName: string; stepPrompt?: string }>,
-        loop: (body.loop as boolean | undefined) ?? false,
-      })
-      return json(flow, 201)
-    },
-  },
-  {
-    method: 'GET',
-    pattern: /^\/api\/rooms\/([^/]+)\/flows$/,
-    handler: (_req, match, { system }) => {
-      const name = decodeURIComponent(match[1]!)
-      const room = system.house.getRoom(name)
-      if (!room) return errorResponse(`Room "${name}" not found`, 404)
-      return json(room.getFlows())
-    },
-  },
-  {
-    method: 'POST',
     pattern: /^\/api\/rooms\/([^/]+)\/flows\/start$/,
     handler: async (req, match, { system }) => {
       const name = decodeURIComponent(match[1]!)
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
       const body = await parseBody(req)
-      if (typeof body.flowId !== 'string') return errorResponse('flowId is required')
+      if (typeof body.flowArtifactId !== 'string') return errorResponse('flowArtifactId is required')
+
+      const artifact = system.house.artifacts.get(body.flowArtifactId)
+      if (!artifact || artifact.type !== 'flow') {
+        return errorResponse(`Flow artifact "${body.flowArtifactId}" not found`, 404)
+      }
+      const flowBody = artifact.body as import('../../core/types.ts').FlowArtifactBody
+      const steps = (flowBody.steps ?? []).map(s => ({
+        agentId: s.agentId || (system.team.getAgent(s.agentName)?.id ?? ''),
+        agentName: s.agentName,
+        ...(s.stepPrompt ? { stepPrompt: s.stepPrompt } : {}),
+      }))
+
       if (body.content && body.senderId) {
         room.setPaused(true)
         room.post({
@@ -202,7 +185,12 @@ export const roomRoutes: RouteEntry[] = [
           type: 'chat',
         })
       }
-      room.startFlow(body.flowId)
+      room.startFlow({
+        id: artifact.id,
+        name: artifact.title,
+        steps,
+        loop: flowBody.loop ?? false,
+      })
       return json({ started: true, mode: room.deliveryMode })
     },
   },

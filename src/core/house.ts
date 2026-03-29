@@ -1,13 +1,28 @@
 // ============================================================================
-// House — Room collection. Creates, stores, and retrieves rooms.
-// Accepts an optional DeliverFn, forwarded to every Room for member delivery.
+// House — Room collection + Artifact system.
+//
+// Creates, stores, and retrieves rooms.
+// Hosts the ArtifactStore and ArtifactTypeRegistry for the system.
 //
 // Names are unique (case-insensitive). createRoom throws on collision.
 // createRoomSafe auto-renames on collision and returns CreateResult.
 // ============================================================================
 
-import type { CreateResult, House, HouseCallbacks, Room, RoomConfig, RoomProfile } from './types.ts'
+import type {
+  Artifact,
+  ArtifactStore,
+  ArtifactTypeRegistry,
+  CreateResult,
+  House,
+  HouseCallbacks,
+  OnArtifactChanged,
+  Room,
+  RoomConfig,
+  RoomProfile,
+} from './types.ts'
 import { createRoom, type RoomCallbacks } from './room.ts'
+import { createArtifactStore } from './artifact-store.ts'
+import { createArtifactTypeRegistry } from './artifact-type-registry.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
 const DEFAULT_HOUSE_PROMPT = `You are part of samsinn, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use ::PASS:: only when the conversation genuinely does not need your input.`
@@ -23,11 +38,44 @@ const DEFAULT_RESPONSE_FORMAT = `- By default, just write your message as natura
 
 
 export const createHouse = (callbacks: HouseCallbacks = {}): House => {
-  const { deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent, onTodoChanged, onRoomCreated, onRoomDeleted } = callbacks
+  const {
+    deliver, resolveAgentName, onMessagePosted, onTurnChanged,
+    onDeliveryModeChanged, onFlowEvent, onRoomCreated, onRoomDeleted,
+  } = callbacks
+
   const rooms = new Map<string, Room>()
   const nameIndex = new Map<string, string>()  // lowercase name → room ID
   let housePrompt = DEFAULT_HOUSE_PROMPT
   let responseFormat = DEFAULT_RESPONSE_FORMAT
+
+  // --- Artifact system ---
+
+  const artifactTypeRegistry = createArtifactTypeRegistry()
+
+  // Wire onArtifactChanged to post system messages in scoped rooms on significant events.
+  const artifactChangedHandler: OnArtifactChanged = (action, artifact) => {
+    // Post a system message to scoped rooms for significant events
+    const typeDef = artifactTypeRegistry.get(artifact.type)
+    const postOn = typeDef?.postSystemMessageOn ?? ['added', 'removed', 'resolved']
+    const isResolved = action === 'updated' && artifact.resolvedAt !== undefined
+    const eventKey = isResolved ? 'resolved' : action
+    if (postOn.includes(eventKey as 'added' | 'removed' | 'resolved') && artifact.scope.length > 0) {
+      const verb = action === 'added' ? 'created' : action === 'removed' ? 'deleted' : 'resolved'
+      for (const roomId of artifact.scope) {
+        const room = rooms.get(roomId)
+        room?.post({
+          senderId: 'system',
+          content: `${artifact.type} "${artifact.title}" was ${verb}`,
+          type: 'system',
+        })
+      }
+    }
+    callbacks.onArtifactChanged?.(action, artifact)
+  }
+
+  const artifactStore = createArtifactStore(artifactTypeRegistry, artifactChangedHandler)
+
+  // --- Rooms ---
 
   const getExistingNames = (): ReadonlyArray<string> =>
     [...rooms.values()].map(r => r.profile.name)
@@ -35,12 +83,10 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
   const isNameTaken = (name: string): boolean =>
     nameIndex.has(name.toLowerCase())
 
-  // Shared RoomCallbacks wiring — used by storeRoom and restoreRoom
   const makeRoomCallbacks = (): RoomCallbacks => ({
-    deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent, onTodoChanged,
+    deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent,
   })
 
-  // Internal: creates room without uniqueness check (caller guarantees).
   const storeRoom = (config: RoomConfig, name: string): Room => {
     validateName(name, 'Room')
     const id = crypto.randomUUID()
@@ -74,7 +120,6 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
   const getRoom = (idOrName: string): Room | undefined => {
     const byId = rooms.get(idOrName)
     if (byId) return byId
-    // O(1) name lookup via index
     const idByName = nameIndex.get(idOrName.toLowerCase())
     return idByName ? rooms.get(idByName) : undefined
   }
@@ -107,12 +152,14 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
     getResponseFormat: () => responseFormat,
     setResponseFormat: (format: string) => { responseFormat = format },
 
-    // Snapshot restore — create room with preserved profile (existing ID)
     restoreRoom: (existingProfile: RoomProfile): Room => {
       const room = createRoom(existingProfile, makeRoomCallbacks())
       rooms.set(existingProfile.id, room)
       nameIndex.set(existingProfile.name.toLowerCase(), existingProfile.id)
       return room
     },
+
+    artifacts: artifactStore as ArtifactStore,
+    artifactTypes: artifactTypeRegistry as ArtifactTypeRegistry,
   }
 }

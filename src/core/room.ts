@@ -15,18 +15,20 @@
 //
 // [[AgentName]] addressing overrides any mode — delivers only to addressed agents.
 // Pause flag stops all delivery (join/leave and addressing still work).
+//
+// Flow blueprints are now Artifacts (system-level). Room only manages execution:
+// callers resolve the artifact, construct a Flow object, and pass it to startFlow().
 // ============================================================================
 
 import type {
   DeliverFn, DeliveryMode, Flow, FlowDeliveryContext,
-  Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted, OnTodoChanged,
+  Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted,
   OnTurnChanged, PostParams, ResolveAgentName, Room, RoomProfile, RoomRestoreParams, RoomState,
 } from './types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './types.ts'
 import { parseAddressedAgents } from './addressing.ts'
 import { advanceFlowStep, deliverBroadcast, deliverFlow } from './delivery-modes.ts'
-import { createTodoStore } from './room-todos.ts'
-import { createFlowStore } from './room-flows.ts'
+import { createFlowExecutionState } from './room-flows.ts'
 
 export interface RoomCallbacks {
   readonly deliver?: DeliverFn
@@ -35,7 +37,6 @@ export interface RoomCallbacks {
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
   readonly onFlowEvent?: OnFlowEvent
-  readonly onTodoChanged?: OnTodoChanged
 }
 
 export const createRoom = (
@@ -57,9 +58,7 @@ export const createRoom = (
   let mode: DeliveryMode = 'broadcast'
   let paused = false
 
-  // Sub-systems
-  const todoStore = createTodoStore(profile.id, callbacks?.onTodoChanged)
-  const flowStore = createFlowStore(profile.id, callbacks?.onFlowEvent)
+  const flowState = createFlowExecutionState(profile.id, callbacks?.onFlowEvent)
 
   // --- Eligible set: members minus user-muted ---
 
@@ -77,16 +76,15 @@ export const createRoom = (
   }
 
   const endFlow = (flowId: string, event: 'completed' | 'cancelled'): void => {
-    flowStore.clearExecution()
+    flowState.clearExecution()
     mode = 'broadcast'
     paused = true
-    flowStore.notifyFlowEvent(event, { flowId })
+    flowState.notifyFlowEvent(event, { flowId })
     notifyModeChanged()
   }
 
   // --- Post helpers ---
 
-  // Pure message construction from params + room context
   const createRoomMessage = (params: PostParams): Message => ({
     id: crypto.randomUUID(),
     roomId: profile.id,
@@ -101,7 +99,6 @@ export const createRoom = (
     metadata: params.metadata,
   })
 
-  // Deliver message to addressed agents (override mode dispatch)
   const dispatchToAddressed = (message: Message, addressedNames: ReadonlyArray<string>): boolean => {
     if (!resolveAgentName) return false
     const addressedIds = addressedNames
@@ -143,7 +140,6 @@ export const createRoom = (
       return message
     }
 
-    // [[AgentName]] addressing override — works in ALL modes, even when paused
     const addressedNames = parseAddressedAgents(message.content)
     if (addressedNames.length > 0 && dispatchToAddressed(message, addressedNames)) {
       return message
@@ -157,15 +153,15 @@ export const createRoom = (
         break
 
       case 'flow': {
-        const flowExecution = flowStore.getExecution()
+        const flowExecution = flowState.getExecution()
         if (!flowExecution) break
         const result = deliverFlow(message, flowExecution, eligible, params.senderId, deliver)
         if (result.advanced) {
           if (result.completed) {
             endFlow(flowExecution.flow.id, 'completed')
           } else {
-            flowStore.advanceStep(result.nextStepIndex)
-            flowStore.notifyFlowEvent('step', {
+            flowState.advanceStep(result.nextStepIndex)
+            flowState.notifyFlowEvent('step', {
               flowId: flowExecution.flow.id,
               stepIndex: result.nextStepIndex,
               agentName: result.nextAgentName,
@@ -182,11 +178,11 @@ export const createRoom = (
   // --- Delivery mode controls ---
 
   const setDeliveryMode = (newMode: Exclude<DeliveryMode, 'flow'>): void => {
-    const flowExecution = flowStore.getExecution()
+    const flowExecution = flowState.getExecution()
     if (flowExecution) {
       const flowId = flowExecution.flow.id
-      flowStore.clearExecution()
-      flowStore.notifyFlowEvent('cancelled', { flowId })
+      flowState.clearExecution()
+      flowState.notifyFlowEvent('cancelled', { flowId })
     }
     mode = newMode
     paused = false
@@ -195,9 +191,8 @@ export const createRoom = (
 
   // --- Muting ---
 
-  // When the current flow step agent is muted, skip to the next eligible agent.
   const handleFlowOnMute = (agentId: string, lastChatMsg: Message | undefined): void => {
-    const flowExecution = flowStore.getExecution()
+    const flowExecution = flowState.getExecution()
     if (!flowExecution) return
     const currentStep = flowExecution.flow.steps[flowExecution.stepIndex]
     if (!currentStep || currentStep.agentId !== agentId) return
@@ -207,13 +202,13 @@ export const createRoom = (
     if (result.completed) {
       endFlow(flowExecution.flow.id, 'completed')
     } else if (result.nextAgentId && lastChatMsg) {
-      flowStore.advanceStep(result.nextStepIndex)
+      flowState.advanceStep(result.nextStepIndex)
       const nextStep = flowExecution.flow.steps[result.nextStepIndex]!
       const enriched = nextStep.stepPrompt
         ? { ...lastChatMsg, metadata: { ...lastChatMsg.metadata, stepPrompt: nextStep.stepPrompt } }
         : lastChatMsg
       deliverToOne(result.nextAgentId, enriched)
-      flowStore.notifyFlowEvent('step', {
+      flowState.notifyFlowEvent('step', {
         flowId: flowExecution.flow.id,
         stepIndex: result.nextStepIndex,
         agentName: result.nextAgentName,
@@ -240,8 +235,6 @@ export const createRoom = (
     }
     const displayName = agentName ?? agentId
 
-    // Capture last message BEFORE pushing the mute system message — the flow
-    // advancement below needs to re-deliver the conversation message, not the mute notice.
     const lastChatMsg = messages[messages.length - 1]
 
     const muteMessage: Message = {
@@ -259,28 +252,28 @@ export const createRoom = (
     }
   }
 
-  // --- Flow management ---
+  // --- Flow execution ---
+  // Blueprint is now an Artifact. Caller resolves artifact → constructs Flow → passes here.
 
   const cancelFlow = (): void => {
-    const flowExecution = flowStore.getExecution()
+    const flowExecution = flowState.getExecution()
     if (!flowExecution) return
     endFlow(flowExecution.flow.id, 'cancelled')
   }
 
-  const startFlow = (flowId: string): void => {
-    const flow = flowStore.getFlow(flowId)
+  const startFlow = (flow: Flow): void => {
     if (!flow || flow.steps.length === 0) return
 
-    const flowExecution = flowStore.getExecution()
-    if (flowExecution) {
-      flowStore.notifyFlowEvent('cancelled', { flowId: flowExecution.flow.id })
+    const existingExecution = flowState.getExecution()
+    if (existingExecution) {
+      flowState.notifyFlowEvent('cancelled', { flowId: existingExecution.flow.id })
     }
 
     paused = false
     const lastMsg = messages[messages.length - 1]
     if (!lastMsg || !deliver) return
 
-    flowStore.setExecution({
+    flowState.setExecution({
       flow,
       triggerMessageId: lastMsg.id,
       stepIndex: 0,
@@ -290,19 +283,16 @@ export const createRoom = (
 
     const eligible = computeEligible()
 
-    // Find the first eligible step agent — the first step agent may already be muted/absent.
-    // Create a synthetic execution at step -1 so advanceFlowStep searches from the beginning.
-    const syntheticExec = { ...flowStore.getExecution()!, stepIndex: -1 }
+    const syntheticExec = { ...flowState.getExecution()!, stepIndex: -1 }
     const firstResult = advanceFlowStep(syntheticExec, eligible)
 
     if (firstResult.completed) {
-      // No eligible agents at all — cancel immediately
       endFlow(flow.id, 'completed')
       return
     }
 
     const startIndex = firstResult.nextStepIndex
-    flowStore.advanceStep(startIndex)
+    flowState.advanceStep(startIndex)
 
     const startStep = flow.steps[startIndex]!
     const flowContext: FlowDeliveryContext = {
@@ -321,7 +311,7 @@ export const createRoom = (
       },
     }
     deliverToOne(startStep.agentId, enriched)
-    flowStore.notifyFlowEvent('started', { flowId: flow.id, agentName: startStep.agentName })
+    flowState.notifyFlowEvent('started', { flowId: flow.id, agentName: startStep.agentName })
   }
 
   // --- Room interface ---
@@ -350,7 +340,7 @@ export const createRoom = (
     setPaused: (p: boolean): void => { paused = p },
 
     getRoomState: (): RoomState => {
-      const exec = flowStore.getExecution()
+      const exec = flowState.getExecution()
       return {
         mode,
         paused,
@@ -364,22 +354,12 @@ export const createRoom = (
     isMuted: (agentId: string): boolean => muted.has(agentId),
     getMutedIds: (): ReadonlySet<string> => new Set(muted),
 
-    addFlow: (config: Omit<Flow, 'id'>) => flowStore.addFlow(config),
-    removeFlow: (flowId: string): boolean => flowStore.removeFlow(flowId, cancelFlow),
-    getFlows: (): ReadonlyArray<Flow> => flowStore.getFlows(),
     startFlow,
     cancelFlow,
-    get flowExecution() { return flowStore.getExecution() },
-
-    addTodo: todoStore.addTodo,
-    updateTodo: todoStore.updateTodo,
-    removeTodo: todoStore.removeTodo,
-    getTodos: todoStore.getTodos,
+    get flowExecution() { return flowState.getExecution() },
 
     injectMessages: (msgs: ReadonlyArray<Message>): void => {
-      for (const msg of msgs) {
-        messages.push(msg)
-      }
+      for (const msg of msgs) messages.push(msg)
     },
 
     getCompressedIds: (): ReadonlySet<string> => new Set(compressedIds),
@@ -391,8 +371,6 @@ export const createRoom = (
       for (const id of state.muted) muted.add(id)
       mode = state.mode
       paused = state.paused
-      flowStore.restoreFlows(state.flows)
-      todoStore.restoreTodos(state.todos)
       compressedIds.clear()
       if (state.compressedIds) {
         for (const id of state.compressedIds) compressedIds.add(id)

@@ -1,10 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, test, expect, afterEach } from 'bun:test'
 import { serializeSystem, saveSnapshot, loadSnapshot, restoreFromSnapshot } from './snapshot.ts'
-import type { SystemSnapshot } from './snapshot.ts'
 import { createHouse } from './house.ts'
 import { createTeam } from '../agents/team.ts'
-import type { DeliverFn, Room, Message, RoomProfile } from './types.ts'
-import { SYSTEM_SENDER_ID } from './types.ts'
+import type { DeliverFn } from './types.ts'
 import { unlink, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
@@ -34,7 +32,7 @@ describe('Snapshot', () => {
       const system = createTestSystem()
       const snapshot = serializeSystem(system)
 
-      expect(snapshot.version).toBe('1')
+      expect(snapshot.version).toBe('2')
       expect(snapshot.timestamp).toBeGreaterThan(0)
       expect(snapshot.house.housePrompt).toBeTruthy()
       expect(snapshot.rooms.length).toBe(1) // default Introductions room
@@ -73,28 +71,22 @@ describe('Snapshot', () => {
       expect(roomSnap.members).toContain('agent-1')
     })
 
-    test('serializes flows', () => {
+    test('serializes artifacts at system level', () => {
       const system = createTestSystem()
       const room = system.house.getRoom('Introductions')!
 
-      room.addMember('agent-1')
-      room.addMember('agent-2')
-      room.addFlow({
-        name: 'Test Flow',
-        steps: [
-          { agentId: 'agent-1', agentName: 'Alpha' },
-          { agentId: 'agent-2', agentName: 'Beta', stepPrompt: 'Be concise' },
-        ],
-        loop: true,
+      system.house.artifacts.add({
+        type: 'task_list',
+        title: 'Sprint Tasks',
+        body: { tasks: [] },
+        scope: [room.profile.id],
+        createdBy: 'tester',
       })
 
       const snapshot = serializeSystem(system)
-      const roomSnap = snapshot.rooms[0]!
-
-      expect(roomSnap.flows.length).toBe(1)
-      expect(roomSnap.flows[0]!.name).toBe('Test Flow')
-      expect(roomSnap.flows[0]!.steps.length).toBe(2)
-      expect(roomSnap.flows[0]!.loop).toBe(true)
+      expect(snapshot.artifacts).toHaveLength(1)
+      expect(snapshot.artifacts[0]!.title).toBe('Sprint Tasks')
+      expect(snapshot.artifacts[0]!.type).toBe('task_list')
     })
   })
 
@@ -109,7 +101,7 @@ describe('Snapshot', () => {
 
       const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
       expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('1')
+      expect(loaded!.version).toBe('2')
       expect(loaded!.rooms.length).toBe(snapshot.rooms.length)
 
       const chatMsgs = loaded!.rooms[0]!.messages.filter(m => m.type === 'chat')
@@ -184,14 +176,15 @@ describe('Snapshot', () => {
       expect(restoredRoom!.profile.id).toBe(origRoomId)
     })
 
-    test('restores flows', async () => {
+    test('restores artifacts', async () => {
       const original = createTestSystem()
       const origRoom = original.house.getRoom('Introductions')!
-      origRoom.addMember('a1')
-      origRoom.addFlow({
-        name: 'Pipeline',
-        steps: [{ agentId: 'a1', agentName: 'Alpha' }],
-        loop: false,
+      original.house.artifacts.add({
+        type: 'task_list',
+        title: 'Backlog',
+        body: { tasks: [] },
+        scope: [origRoom.profile.id],
+        createdBy: 'tester',
       })
 
       const snapshot = serializeSystem(original)
@@ -202,10 +195,9 @@ describe('Snapshot', () => {
 
       await restoreFromSnapshot({ house: fresh.house, spawnAIAgent: async () => {} }, snapshot)
 
-      const restoredRoom = fresh.house.getRoom('Introductions')!
-      const flows = restoredRoom.getFlows()
-      expect(flows.length).toBe(1)
-      expect(flows[0]!.name).toBe('Pipeline')
+      const restoredArtifacts = fresh.house.artifacts.list()
+      expect(restoredArtifacts.length).toBe(1)
+      expect(restoredArtifacts[0]!.title).toBe('Backlog')
     })
 
   })

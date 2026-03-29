@@ -5,7 +5,12 @@
 // When run directly (bun run src/main.ts), starts up and prints diagnostics.
 // ============================================================================
 
-import type { Agent, AIAgentConfig, DeliverFn, House, HouseCallbacks, LLMProvider, OnDeliveryModeChanged, OnFlowEvent, OnMembershipChanged, OnMessagePosted, OnRoomCreated, OnRoomDeleted, OnTodoChanged, OnTurnChanged, ResolveAgentName, RouteMessage, Team, ToolRegistry } from './core/types.ts'
+import type {
+  Agent, AIAgentConfig, DeliverFn, House, HouseCallbacks, LLMProvider,
+  OnArtifactChanged, OnDeliveryModeChanged, OnFlowEvent,
+  OnMembershipChanged, OnMessagePosted, OnRoomCreated, OnRoomDeleted,
+  OnTurnChanged, ResolveAgentName, RouteMessage, Team, ToolRegistry,
+} from './core/types.ts'
 import { DEFAULTS } from './core/types.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
@@ -17,7 +22,18 @@ import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
 import { addAgentToRoom, removeAgentFromRoom } from './agents/actions.ts'
-import { createListRoomsTool, createGetTimeTool, createListTodosTool, createAddTodoTool, createUpdateTodoTool, createCreateRoomTool, createDeleteRoomTool, createAddToRoomTool, createRemoveFromRoomTool, createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool, createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool, createPostToRoomTool, createGetRoomHistoryTool } from './tools/built-in/index.ts'
+import {
+  createListRoomsTool, createGetTimeTool,
+  createCreateRoomTool, createDeleteRoomTool, createAddToRoomTool, createRemoveFromRoomTool,
+  createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool,
+  createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool,
+  createPostToRoomTool, createGetRoomHistoryTool,
+  createListArtifactTypesTool, createListArtifactsTool, createAddArtifactTool,
+  createUpdateArtifactTool, createRemoveArtifactTool, createCastVoteTool,
+} from './tools/built-in/index.ts'
+import { createTaskListArtifactType } from './core/artifact-types/task-list.ts'
+import { pollArtifactType } from './core/artifact-types/poll.ts'
+import { createFlowArtifactType } from './core/artifact-types/flow.ts'
 import { createToolCapabilityCache } from './llm/tool-capability.ts'
 
 export interface System {
@@ -36,7 +52,7 @@ export interface System {
   readonly setOnTurnChanged: (callback: OnTurnChanged) => void
   readonly setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => void
   readonly setOnFlowEvent: (callback: OnFlowEvent) => void
-  readonly setOnTodoChanged: (callback: OnTodoChanged) => void
+  readonly setOnArtifactChanged: (callback: OnArtifactChanged) => void
   readonly setOnRoomCreated: (callback: OnRoomCreated) => void
   readonly setOnRoomDeleted: (callback: OnRoomDeleted) => void
   readonly setOnMembershipChanged: (callback: OnMembershipChanged) => void
@@ -45,13 +61,10 @@ export interface System {
 export const createSystem = (ollamaUrl?: string): System => {
   const team = createTeam()
 
-  // Single deliver function — injected into every Room via House for member delivery
   const deliver: DeliverFn = (agentId, message) => {
     team.getAgent(agentId)?.receive(message)
   }
 
-  // Late-binding callbacks — set by server after wsManager is created.
-  // Generic wrapper: creates a proxy function and a setter for the real callback.
   const lateBinding = <T extends (...args: never[]) => void>(): { proxy: T; set: (cb: T) => void } => {
     let real: T | undefined
     const proxy = ((...args: Parameters<T>) => real?.(...args)) as T
@@ -62,12 +75,11 @@ export const createSystem = (ollamaUrl?: string): System => {
   const turnChanged = lateBinding<OnTurnChanged>()
   const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>()
   const flowEvent = lateBinding<OnFlowEvent>()
-  const todoChanged = lateBinding<OnTodoChanged>()
+  const artifactChanged = lateBinding<OnArtifactChanged>()
   const roomCreated = lateBinding<OnRoomCreated>()
   const roomDeleted = lateBinding<OnRoomDeleted>()
   const membershipChanged = lateBinding<OnMembershipChanged>()
 
-  // Agent name → ID resolver for [[AgentName]] addressing in rooms
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
 
   const houseCallbacks: HouseCallbacks = {
@@ -77,7 +89,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     onTurnChanged: turnChanged.proxy,
     onDeliveryModeChanged: deliveryModeChanged.proxy,
     onFlowEvent: flowEvent.proxy,
-    onTodoChanged: todoChanged.proxy,
+    onArtifactChanged: artifactChanged.proxy,
     onRoomCreated: roomCreated.proxy,
     onRoomDeleted: roomDeleted.proxy,
   }
@@ -88,7 +100,12 @@ export const createSystem = (ollamaUrl?: string): System => {
   const toolCapabilityCache = createToolCapabilityCache(resolvedOllamaUrl)
   const toolRegistry = createToolRegistry()
 
-  // System-level membership operations — single implementation used by WS, HTTP, tools
+  // Register built-in artifact types — task_list needs store reference for checkAutoResolve
+  house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
+  house.artifactTypes.register(pollArtifactType)
+  house.artifactTypes.register(createFlowArtifactType(team))
+
+  // System-level membership operations
   const systemAddAgentToRoom = async (agentId: string, roomId: string, invitedBy?: string): Promise<void> => {
     const agent = team.getAgent(agentId)
     const room = house.getRoom(roomId)
@@ -105,7 +122,6 @@ export const createSystem = (ollamaUrl?: string): System => {
     membershipChanged.proxy(roomId, room.profile.name, agentId, agent.name, 'removed')
   }
 
-  // Remove room: cascade agent.leave for all current members, then delete
   const systemRemoveRoom = (roomId: string): boolean => {
     const room = house.getRoom(roomId)
     if (!room) return false
@@ -113,11 +129,8 @@ export const createSystem = (ollamaUrl?: string): System => {
       team.getAgent(agentId)?.leave(roomId)
     }
     return house.removeRoom(roomId)
-    // onRoomDeleted is fired inside house.removeRoom
   }
 
-  // Remove agent from team AND all rooms — posts leave messages and fires membership events
-  // per room, consistent with explicit removeAgentFromRoom calls.
   const removeAgent = (id: string): boolean => {
     const agent = team.getAgent(id)
     if (!agent) return false
@@ -130,7 +143,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     return team.removeAgent(id)
   }
 
-  // Register built-in tools — pass system methods so tools use the single implementation
+  // Register built-in tools
   toolRegistry.registerAll([
     // Room management
     createListRoomsTool(house),
@@ -145,17 +158,19 @@ export const createSystem = (ollamaUrl?: string): System => {
     createListAgentsTool(team),
     createMuteAgentTool(team, house),
     createGetMyContextTool(team, house),
-    // Todo tools
-    createListTodosTool(house),
-    createAddTodoTool(house),
-    createUpdateTodoTool(house),
+    // Artifact tools
+    createListArtifactTypesTool(house),
+    createListArtifactsTool(house),
+    createAddArtifactTool(house),
+    createUpdateArtifactTool(house),
+    createRemoveArtifactTool(house),
+    createCastVoteTool(house),
     // Utility tools
     createGetTimeTool(),
     createGetRoomHistoryTool(house),
     createPostToRoomTool(house),
   ])
 
-  // Bound spawn methods — close over system dependencies
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
     spawnAIAgent(config, ollama, house, team, routeMessage, toolRegistry, {
       ...options,
@@ -180,7 +195,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     setOnTurnChanged: turnChanged.set,
     setOnDeliveryModeChanged: deliveryModeChanged.set,
     setOnFlowEvent: flowEvent.set,
-    setOnTodoChanged: todoChanged.set,
+    setOnArtifactChanged: artifactChanged.set,
     setOnRoomCreated: roomCreated.set,
     setOnRoomDeleted: roomDeleted.set,
     setOnMembershipChanged: membershipChanged.set,

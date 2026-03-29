@@ -10,7 +10,7 @@ import {
   renderRooms,
   renderAgents,
   renderMessage,
-  renderTodos,
+  renderArtifacts,
   renderTypingIndicators,
   openPromptEditor,
   openModelEditor,
@@ -18,7 +18,8 @@ import {
   type UIMessage,
   type RoomProfile,
   type AgentInfo,
-  type TodoInfo,
+  type ArtifactInfo,
+  type ArtifactAction,
 } from './ui-renderer.ts'
 import { openTextEditorModal } from './modal.ts'
 
@@ -36,7 +37,7 @@ type WSOutbound =
   | { type: 'mute_changed'; roomName: string; agentName: string; muted: boolean }
   | { type: 'turn_changed'; roomName: string; agentName?: string; waitingForHuman?: boolean }
   | { type: 'flow_event'; roomName: string; event: string; detail?: Record<string, unknown> }
-  | { type: 'todo_changed'; roomName: string; action: string; todo: TodoInfo }
+  | { type: 'artifact_changed'; action: 'added' | 'updated' | 'removed'; artifact: ArtifactInfo }
   | { type: 'membership_changed'; roomName: string; agentName: string; action: 'added' | 'removed' }
   | { type: 'room_deleted'; roomName: string }
 
@@ -55,12 +56,11 @@ const mutedAgents = new Set<string>()  // agent names that are muted in current 
 let roomPaused = false
 const pausedRooms = new Set<string>()  // room IDs that are paused
 
-// Flow state per room
-interface FlowInfo { id: string; name: string; steps: Array<{ agentName: string; stepPrompt?: string }>; loop: boolean }
-const roomFlows = new Map<string, FlowInfo[]>()  // roomName → flows
+// Artifact state — flat map keyed by artifact ID (all rooms)
+const allArtifacts = new Map<string, ArtifactInfo>()
 
-// Todo state per room
-const roomTodos = new Map<string, TodoInfo[]>()  // roomName → todos
+const getArtifactsForRoom = (roomId: string): ArtifactInfo[] =>
+  [...allArtifacts.values()].filter(a => !a.resolvedAt && (a.scope.length === 0 || a.scope.includes(roomId)))
 
 // Membership state per room
 const roomMembers = new Map<string, Set<string>>()  // roomId → Set<agentId>
@@ -71,15 +71,15 @@ const $ = (sel: string) => document.querySelector(sel)!
 const roomList = $('#room-list') as HTMLElement
 const agentList = $('#agent-list') as HTMLElement
 const noRoomState = $('#no-room-state') as HTMLElement
-const todoPanel = $('#todo-panel') as HTMLElement
-const todoToggle = $('#todo-toggle') as HTMLElement
-const todoHeader = $('#todo-header') as HTMLElement
-const todoCount = $('#todo-count') as HTMLElement
-const todoListEl = $('#todo-list') as HTMLElement
-const todoAddRow = $('#todo-add-row') as HTMLElement
-const todoInput = $('#todo-input') as HTMLInputElement
-const btnTodoSubmit = $('#btn-todo-submit') as HTMLElement
-const btnAddTodo = $('#btn-add-todo') as HTMLElement
+const artifactPanel = $('#artifact-panel') as HTMLElement
+const artifactToggle = $('#artifact-toggle') as HTMLElement
+const artifactHeader = $('#artifact-header') as HTMLElement
+const artifactCount = $('#artifact-count') as HTMLElement
+const artifactListEl = $('#artifact-list') as HTMLElement
+const artifactAddRow = $('#artifact-add-row') as HTMLElement
+const artifactInput = $('#artifact-input') as HTMLInputElement
+const btnArtifactSubmit = $('#btn-artifact-submit') as HTMLElement
+const btnAddArtifact = $('#btn-add-artifact') as HTMLElement
 const roomHeader = $('#room-header') as HTMLElement
 const messagesDiv = $('#messages') as HTMLElement
 const chatForm = $('#chat-form') as HTMLFormElement
@@ -145,19 +145,20 @@ const refreshModeSelector = (): void => {
     modeSelector.appendChild(opt)
   }
 
-  // Flow options
+  // Flow options (from artifact store)
   const room = rooms.get(selectedRoomId)
-  const flows = room ? (roomFlows.get(room.name) ?? []) : []
+  const flowArtifacts = room ? getArtifactsForRoom(room.id).filter(a => a.type === 'flow') : []
   // Flow separator and options — always shown
   const sep = document.createElement('option')
   sep.disabled = true
   sep.textContent = '── Flows ──'
   modeSelector.appendChild(sep)
 
-  for (const flow of flows) {
+  for (const flow of flowArtifacts) {
+    const flowBody = flow.body as { loop?: boolean }
     const opt = document.createElement('option')
     opt.value = `flow:${flow.id}`
-    opt.textContent = `▶ ${flow.name}${flow.loop ? ' ↻' : ''}`
+    opt.textContent = `▶ ${flow.title}${flowBody.loop ? ' ↻' : ''}`
     modeSelector.appendChild(opt)
   }
 
@@ -182,90 +183,79 @@ const refreshModeSelector = (): void => {
   modeSelector.classList.toggle('opacity-50', roomPaused)
 }
 
-const fetchFlowsForRoom = async (roomName: string): Promise<void> => {
+const fetchArtifactsForRoom = async (room: RoomProfile): Promise<void> => {
   try {
-    const res = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/flows`)
+    const res = await fetch(`/api/rooms/${encodeURIComponent(room.name)}/artifacts`)
     if (!res.ok) return
-    const flows = await res.json() as FlowInfo[]
-    roomFlows.set(roomName, flows)
+    const artifacts = await res.json() as ArtifactInfo[]
+    for (const a of artifacts) allArtifacts.set(a.id, a)
+    refreshArtifactPanel(room)
     refreshModeSelector()
   } catch { /* ignore */ }
 }
 
-const fetchTodosForRoom = async (roomName: string): Promise<void> => {
-  try {
-    const res = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/todos`)
-    if (!res.ok) return
-    const todos = await res.json() as TodoInfo[]
-    roomTodos.set(roomName, todos)
-    refreshTodoPanel(roomName)
-  } catch { /* ignore */ }
-}
+let artifactExpanded = false
 
-let todoExpanded = false
+const refreshArtifactPanel = (room: RoomProfile): void => {
+  const artifacts = getArtifactsForRoom(room.id)
 
-const refreshTodoPanel = (roomName: string): void => {
-  const todos = roomTodos.get(roomName) ?? []
+  artifactPanel.classList.toggle('hidden', !selectedRoomId)
+  artifactCount.textContent = artifacts.length > 0 ? `(${artifacts.length})` : ''
+  artifactToggle.textContent = artifactExpanded ? '▼' : '▶'
+  artifactListEl.classList.toggle('hidden', !artifactExpanded)
+  artifactAddRow.classList.toggle('hidden', !artifactExpanded)
 
-  todoPanel.classList.toggle('hidden', !selectedRoomId)
-  todoCount.textContent = todos.length > 0 ? `(${todos.length})` : ''
-  todoToggle.textContent = todoExpanded ? '▼' : '▶'
-  todoListEl.classList.toggle('hidden', !todoExpanded)
-  todoAddRow.classList.toggle('hidden', !todoExpanded)
-
-  if (todoExpanded) {
-    if (todos.length > 0) {
-      renderTodos(
-        todoListEl,
-        todos,
-        (todoId, currentStatus) => {
-          const newStatus = currentStatus === 'completed' ? 'pending' : 'completed'
-          send({ type: 'update_todo', roomName, todoId, status: newStatus })
-        },
-        (todoId) => {
-          send({ type: 'remove_todo', roomName, todoId })
-        },
-      )
+  if (artifactExpanded) {
+    if (artifacts.length > 0) {
+      renderArtifacts(artifactListEl, artifacts, myAgentId, (action: ArtifactAction) => {
+        if (action.kind === 'complete_task') {
+          send({ type: 'update_artifact', artifactId: action.artifactId, body: { op: action.completed ? 'complete_task' : 'update_task', taskId: action.taskId, status: action.completed ? 'completed' : 'pending' } })
+        } else if (action.kind === 'cast_vote') {
+          send({ type: 'cast_vote', artifactId: action.artifactId, optionId: action.optionId })
+        } else if (action.kind === 'remove') {
+          send({ type: 'remove_artifact', artifactId: action.artifactId })
+        }
+      })
     } else {
-      todoListEl.innerHTML = '<p class="text-xs text-gray-400 italic py-0.5">No todos yet</p>'
+      artifactListEl.innerHTML = '<p class="text-xs text-gray-400 italic py-0.5">No artifacts yet</p>'
     }
   }
 }
 
-const submitTodo = (): void => {
+const submitArtifact = (): void => {
   const room = rooms.get(selectedRoomId)
   if (!room) return
-  const content = todoInput.value.trim()
-  if (!content) return
-  send({ type: 'add_todo', roomName: room.name, content })
-  todoInput.value = ''
+  const title = artifactInput.value.trim()
+  if (!title) return
+  send({ type: 'add_artifact', artifactType: 'task_list', title, body: { tasks: [] }, scope: [room.name] })
+  artifactInput.value = ''
 }
 
-todoHeader.onclick = () => {
-  todoExpanded = !todoExpanded
+artifactHeader.onclick = () => {
+  artifactExpanded = !artifactExpanded
   const room = rooms.get(selectedRoomId)
-  if (room) refreshTodoPanel(room.name)
-  if (todoExpanded) setTimeout(() => todoInput.focus(), 50)
+  if (room) refreshArtifactPanel(room)
+  if (artifactExpanded) setTimeout(() => artifactInput.focus(), 50)
 }
 
-btnAddTodo.onclick = (e) => {
+btnAddArtifact.onclick = (e) => {
   e.stopPropagation()
-  if (!todoExpanded) {
-    todoExpanded = true
+  if (!artifactExpanded) {
+    artifactExpanded = true
     const room = rooms.get(selectedRoomId)
-    if (room) refreshTodoPanel(room.name)
+    if (room) refreshArtifactPanel(room)
   }
-  setTimeout(() => todoInput.focus(), 50)
+  setTimeout(() => artifactInput.focus(), 50)
 }
 
-btnTodoSubmit.onclick = (e) => {
+btnArtifactSubmit.onclick = (e) => {
   e.stopPropagation()
-  submitTodo()
+  submitArtifact()
 }
 
-todoInput.onkeydown = (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); submitTodo() }
-  if (e.key === 'Escape') { todoInput.value = ''; todoInput.blur() }
+artifactInput.onkeydown = (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitArtifact() }
+  if (e.key === 'Escape') { artifactInput.value = ''; artifactInput.blur() }
 }
 
 const updateModeUI = () => {
@@ -298,9 +288,8 @@ const selectRoom = (roomId: string) => {
   roomName.textContent = room.name
   refreshRooms()
   updateModeUI()
-  refreshTodoPanel(room.name)
-  fetchFlowsForRoom(room.name)
-  fetchTodosForRoom(room.name)
+  refreshArtifactPanel(room)
+  fetchArtifactsForRoom(room)
 
   messagesDiv.innerHTML = ''
   const cached = roomMessages.get(roomId)
@@ -337,7 +326,7 @@ const handleMessage = (raw: unknown) => {
         localStorage.setItem('ta_session', sessionToken)
       }
       myAgentId = msg.agentId
-      rooms.clear(); agents.clear(); agentStates.clear(); mutedAgents.clear(); pausedRooms.clear(); roomMembers.clear()
+      rooms.clear(); agents.clear(); agentStates.clear(); mutedAgents.clear(); pausedRooms.clear(); roomMembers.clear(); allArtifacts.clear()
       for (const r of msg.rooms) rooms.set(r.id, r)
       for (const a of msg.agents) {
         agents.set(a.id, a)
@@ -350,20 +339,11 @@ const handleMessage = (raw: unknown) => {
           if (rs.members) roomMembers.set(roomId, new Set(rs.members))
         }
       }
-      if (msg.roomStates && selectedRoomId && msg.roomStates[selectedRoomId]) {
-        const rs = msg.roomStates[selectedRoomId] as { mode: string; paused: boolean; muted: string[] }
-        currentDeliveryMode = rs.mode
-        roomPaused = rs.paused
-        for (const id of rs.muted) {
-          const agent = agents.get(id)
-          if (agent) mutedAgents.add(agent.name)
-        }
-      }
       refreshRooms(); refreshAgents(); refreshTyping()
       if (!selectedRoomId && rooms.size > 0) {
         selectRoom(rooms.values().next().value!.id)
       }
-      // Apply room state AFTER selectRoom sets selectedRoomId
+      // Apply selected room state AFTER selectRoom (which may have set selectedRoomId)
       if (msg.roomStates && selectedRoomId && msg.roomStates[selectedRoomId]) {
         const rs2 = msg.roomStates[selectedRoomId] as { mode: string; paused: boolean; muted: string[] }
         currentDeliveryMode = rs2.mode
@@ -467,19 +447,19 @@ const handleMessage = (raw: unknown) => {
       }
       break
     }
-    case 'todo_changed': {
-      // Update local cache for the affected room
-      const current = roomTodos.get(msg.roomName) ?? []
-      if (msg.action === 'added') {
-        roomTodos.set(msg.roomName, [...current, msg.todo as TodoInfo])
-      } else if (msg.action === 'updated') {
-        roomTodos.set(msg.roomName, current.map(t => t.id === msg.todo.id ? msg.todo as TodoInfo : t))
-      } else if (msg.action === 'removed') {
-        roomTodos.set(msg.roomName, current.filter(t => t.id !== msg.todo.id))
+    case 'artifact_changed': {
+      const { action, artifact } = msg
+      if (action === 'removed') {
+        allArtifacts.delete(artifact.id)
+      } else {
+        allArtifacts.set(artifact.id, artifact)
       }
-      // Only refresh panel if this is the currently selected room
-      const selectedRoom = rooms.get(selectedRoomId)
-      if (selectedRoom?.name === msg.roomName) refreshTodoPanel(msg.roomName)
+      // Refresh if current room is affected
+      const affectedRoom = rooms.get(selectedRoomId)
+      if (affectedRoom && (artifact.scope.length === 0 || artifact.scope.includes(selectedRoomId))) {
+        refreshArtifactPanel(affectedRoom)
+        refreshModeSelector()
+      }
       break
     }
     case 'membership_changed': {
@@ -511,7 +491,7 @@ const handleMessage = (raw: unknown) => {
           roomHeader.classList.add('hidden')
           messagesDiv.classList.add('hidden')
           chatForm.classList.add('hidden')
-          todoPanel.classList.add('hidden')
+          artifactPanel.classList.add('hidden')
         }
       }
       refreshRooms()
@@ -547,8 +527,8 @@ chatForm.onsubmit = (e) => {
   // If a flow is selected in the mode dropdown, start it with this message
   const selectedMode = modeSelector.value
   if (selectedMode.startsWith('flow:')) {
-    const flowId = selectedMode.slice(5)
-    send({ type: 'start_flow', roomName: room.name, flowId, content })
+    const flowArtifactId = selectedMode.slice(5)
+    send({ type: 'start_flow', roomName: room.name, flowArtifactId, content })
     chatInput.value = ''
     chatInput.placeholder = 'Type a message...'
     return
@@ -613,22 +593,21 @@ modeSelector.onchange = () => {
   if (val === '__create_flow__') {
     refreshModeSelector()  // revert selector to current state
     openFlowEditorModal(agents, myAgentId, (name, steps, loop) => {
-      send({ type: 'add_flow', roomName: room.name, name, steps, loop })
-      setTimeout(() => fetchFlowsForRoom(room.name), 200)
+      send({ type: 'add_artifact', artifactType: 'flow', title: name, body: { steps, loop }, scope: [room.name] })
     })
     return
   }
 
   // Start a flow
   if (val.startsWith('flow:')) {
-    const flowId = val.slice(5)
+    const flowArtifactId = val.slice(5)
     const content = chatInput.value.trim()
     if (!content) {
       chatInput.placeholder = 'Type a message to start the flow...'
       chatInput.focus()
       return
     }
-    send({ type: 'start_flow', roomName: room.name, flowId, content })
+    send({ type: 'start_flow', roomName: room.name, flowArtifactId, content })
     chatInput.value = ''
     chatInput.placeholder = 'Type a message...'
     return

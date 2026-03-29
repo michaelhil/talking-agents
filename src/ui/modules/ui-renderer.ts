@@ -30,14 +30,36 @@ export interface AgentInfo {
   model?: string
 }
 
-export interface TodoInfo {
+export interface TaskItem {
   id: string
   content: string
-  status: string
+  status: 'pending' | 'in_progress' | 'completed' | 'blocked'
   assignee?: string
-  result?: string
-  dependencies?: ReadonlyArray<string>
 }
+
+export interface PollOption {
+  id: string
+  text: string
+  votes: ReadonlyArray<string>
+}
+
+export interface ArtifactInfo {
+  id: string
+  type: string
+  title: string
+  body: unknown
+  scope: ReadonlyArray<string>
+  createdBy: string
+  createdAt: number
+  updatedAt: number
+  resolution?: string
+  resolvedAt?: number
+}
+
+export type ArtifactAction =
+  | { kind: 'complete_task'; artifactId: string; taskId: string; completed: boolean }
+  | { kind: 'cast_vote'; artifactId: string; optionId: string }
+  | { kind: 'remove'; artifactId: string }
 
 // === Rendering ===
 
@@ -69,86 +91,186 @@ export const renderRooms = (
   }
 }
 
-export const renderTodos = (
-  container: HTMLElement,
-  todos: ReadonlyArray<TodoInfo>,
-  onToggleStatus: (todoId: string, currentStatus: string) => void,
-  onRemove: (todoId: string) => void,
-): void => {
-  container.innerHTML = ''
-  for (const todo of todos) {
+const renderTaskListArtifact = (
+  artifact: ArtifactInfo,
+  onAction: (action: ArtifactAction) => void,
+): HTMLElement => {
+  const tasks = ((artifact.body as { tasks?: TaskItem[] })?.tasks ?? [])
+  const completed = tasks.filter(t => t.status === 'completed').length
+  const wrap = document.createElement('div')
+  wrap.className = 'group space-y-0.5'
+
+  // Header row
+  const header = document.createElement('div')
+  header.className = 'flex items-center gap-1'
+  const titleEl = document.createElement('span')
+  titleEl.className = 'text-xs font-medium text-gray-700 flex-1'
+  titleEl.textContent = artifact.title
+  const progress = document.createElement('span')
+  progress.className = 'text-xs text-gray-400'
+  progress.textContent = tasks.length > 0 ? `${completed}/${tasks.length}` : '0 tasks'
+  const removeBtn = document.createElement('button')
+  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 ml-1 flex-shrink-0'
+  removeBtn.textContent = '✕'
+  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
+  header.appendChild(titleEl)
+  header.appendChild(progress)
+  header.appendChild(removeBtn)
+  wrap.appendChild(header)
+
+  for (const task of tasks) {
     const row = document.createElement('div')
-    row.className = 'flex items-center gap-2 text-xs group'
-
-    // Status checkbox
-    const checkbox = document.createElement('input')
-    checkbox.type = 'checkbox'
-    checkbox.checked = todo.status === 'completed'
-    checkbox.className = 'rounded flex-shrink-0'
-    checkbox.onchange = () => onToggleStatus(todo.id, todo.status)
-
-    // Content
-    const content = document.createElement('span')
-    content.className = `flex-1 ${todo.status === 'completed' ? 'line-through text-gray-400' : 'text-gray-700'}`
-    content.textContent = todo.content
-
-    // Result (if completed)
-    if (todo.result) {
-      const result = document.createElement('span')
-      result.className = 'text-green-600 text-xs truncate max-w-[120px]'
-      result.title = todo.result
-      result.textContent = `→ ${todo.result}`
-      content.appendChild(document.createTextNode(' '))
-      content.appendChild(result)
-    }
-
-    row.appendChild(checkbox)
-    row.appendChild(content)
-
-    // Assignee badge
-    if (todo.assignee) {
+    row.className = 'flex items-center gap-1.5 pl-2 text-xs'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = task.status === 'completed'
+    cb.className = 'rounded flex-shrink-0'
+    cb.onchange = () => onAction({ kind: 'complete_task', artifactId: artifact.id, taskId: task.id, completed: cb.checked })
+    const label = document.createElement('span')
+    label.className = `flex-1 ${task.status === 'completed' ? 'line-through text-gray-400' : task.status === 'blocked' ? 'text-red-400' : 'text-gray-700'}`
+    label.textContent = task.content
+    row.appendChild(cb)
+    row.appendChild(label)
+    if (task.assignee) {
       const badge = document.createElement('span')
-      badge.className = 'text-xs bg-blue-100 text-blue-600 px-1 rounded flex-shrink-0'
-      badge.textContent = todo.assignee
+      badge.className = 'text-xs bg-blue-50 text-blue-500 px-1 rounded flex-shrink-0'
+      badge.textContent = task.assignee
       row.appendChild(badge)
     }
+    wrap.appendChild(row)
+  }
+  if (artifact.resolution) {
+    const res = document.createElement('div')
+    res.className = 'text-xs text-green-600 pl-2 italic'
+    res.textContent = `✓ ${artifact.resolution}`
+    wrap.appendChild(res)
+  }
+  return wrap
+}
 
-    // Dependencies badge — shows count, tooltip resolves IDs to content
-    if (todo.dependencies && todo.dependencies.length > 0) {
-      const depContents = todo.dependencies
-        .map(depId => todos.find(t => t.id === depId)?.content ?? depId)
-        .join(', ')
-      const depsEl = document.createElement('span')
-      const n = todo.dependencies.length
-      depsEl.className = 'text-xs text-orange-400 flex-shrink-0 cursor-help'
-      depsEl.title = `Depends on: ${depContents}`
-      depsEl.textContent = `↳ ${n} dep${n > 1 ? 's' : ''}`
-      row.appendChild(depsEl)
-    }
+const renderPollArtifact = (
+  artifact: ArtifactInfo,
+  myAgentId: string,
+  onAction: (action: ArtifactAction) => void,
+): HTMLElement => {
+  const body = artifact.body as { question?: string; options?: PollOption[]; allowMultiple?: boolean }
+  const wrap = document.createElement('div')
+  wrap.className = 'group space-y-1'
 
-    // Status indicator for blocked/in_progress
-    if (todo.status === 'blocked') {
-      const blocked = document.createElement('span')
-      blocked.className = 'text-xs text-red-400 flex-shrink-0'
-      blocked.textContent = '⊘'
-      blocked.title = 'Blocked'
-      row.appendChild(blocked)
-    } else if (todo.status === 'in_progress') {
-      const progress = document.createElement('span')
-      progress.className = 'text-xs text-yellow-500 flex-shrink-0'
-      progress.textContent = '◉'
-      progress.title = 'In progress'
-      row.appendChild(progress)
-    }
+  const header = document.createElement('div')
+  header.className = 'flex items-center gap-1'
+  const titleEl = document.createElement('span')
+  titleEl.className = 'text-xs font-medium text-gray-700 flex-1'
+  titleEl.textContent = artifact.title
+  const removeBtn = document.createElement('button')
+  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 ml-1 flex-shrink-0'
+  removeBtn.textContent = '✕'
+  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
+  header.appendChild(titleEl)
+  header.appendChild(removeBtn)
+  wrap.appendChild(header)
 
-    // Remove button (visible on hover)
-    const removeBtn = document.createElement('button')
-    removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
-    removeBtn.textContent = '✕'
-    removeBtn.onclick = () => onRemove(todo.id)
-    row.appendChild(removeBtn)
+  if (body.question) {
+    const q = document.createElement('div')
+    q.className = 'text-xs text-gray-500 pl-2 italic'
+    q.textContent = body.question
+    wrap.appendChild(q)
+  }
 
-    container.appendChild(row)
+  for (const opt of (body.options ?? [])) {
+    const row = document.createElement('div')
+    row.className = 'flex items-center gap-1.5 pl-2 text-xs'
+    const hasVoted = opt.votes.includes(myAgentId)
+    const voteBtn = document.createElement('button')
+    voteBtn.className = `px-1.5 py-0.5 rounded text-xs flex-shrink-0 ${hasVoted ? 'bg-blue-100 text-blue-600 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`
+    voteBtn.textContent = hasVoted ? '✓' : 'Vote'
+    voteBtn.disabled = artifact.resolvedAt !== undefined
+    voteBtn.onclick = () => onAction({ kind: 'cast_vote', artifactId: artifact.id, optionId: opt.id })
+    const optLabel = document.createElement('span')
+    optLabel.className = 'flex-1 text-gray-700'
+    optLabel.textContent = opt.text
+    const count = document.createElement('span')
+    count.className = 'text-gray-400 flex-shrink-0'
+    count.textContent = `${opt.votes.length}`
+    row.appendChild(voteBtn)
+    row.appendChild(optLabel)
+    row.appendChild(count)
+    wrap.appendChild(row)
+  }
+
+  if (artifact.resolution) {
+    const res = document.createElement('div')
+    res.className = 'text-xs text-green-600 pl-2 italic'
+    res.textContent = `✓ ${artifact.resolution}`
+    wrap.appendChild(res)
+  }
+  return wrap
+}
+
+const renderFlowArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactAction) => void): HTMLElement => {
+  const body = artifact.body as { steps?: Array<{ agentName: string }>; loop?: boolean }
+  const wrap = document.createElement('div')
+  wrap.className = 'group'
+  const row = document.createElement('div')
+  row.className = 'flex items-center gap-1 text-xs'
+  const titleEl = document.createElement('span')
+  titleEl.className = 'font-medium text-purple-700 flex-1'
+  titleEl.textContent = artifact.title
+  const steps = (body.steps ?? []).map(s => s.agentName).join(' → ')
+  const stepsEl = document.createElement('span')
+  stepsEl.className = 'text-gray-400 truncate max-w-[120px]'
+  stepsEl.title = steps
+  stepsEl.textContent = steps
+  const loopEl = body.loop ? document.createElement('span') : null
+  if (loopEl) { loopEl.className = 'text-purple-400 flex-shrink-0'; loopEl.textContent = '↻' }
+  const removeBtn = document.createElement('button')
+  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
+  removeBtn.textContent = '✕'
+  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
+  row.appendChild(titleEl)
+  row.appendChild(stepsEl)
+  if (loopEl) row.appendChild(loopEl)
+  row.appendChild(removeBtn)
+  wrap.appendChild(row)
+  return wrap
+}
+
+const renderGenericArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactAction) => void): HTMLElement => {
+  const wrap = document.createElement('div')
+  wrap.className = 'group flex items-center gap-1 text-xs'
+  const titleEl = document.createElement('span')
+  titleEl.className = 'flex-1 text-gray-700'
+  titleEl.textContent = artifact.title
+  const typeEl = document.createElement('span')
+  typeEl.className = 'text-gray-400 flex-shrink-0'
+  typeEl.textContent = `[${artifact.type}]`
+  const removeBtn = document.createElement('button')
+  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
+  removeBtn.textContent = '✕'
+  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
+  wrap.appendChild(titleEl)
+  wrap.appendChild(typeEl)
+  wrap.appendChild(removeBtn)
+  return wrap
+}
+
+export const renderArtifacts = (
+  container: HTMLElement,
+  artifacts: ReadonlyArray<ArtifactInfo>,
+  myAgentId: string,
+  onAction: (action: ArtifactAction) => void,
+): void => {
+  container.innerHTML = ''
+  for (const artifact of artifacts) {
+    const wrap = document.createElement('div')
+    wrap.className = 'py-1 border-b border-gray-100 last:border-0'
+    let inner: HTMLElement
+    if (artifact.type === 'task_list') inner = renderTaskListArtifact(artifact, onAction)
+    else if (artifact.type === 'poll') inner = renderPollArtifact(artifact, myAgentId, onAction)
+    else if (artifact.type === 'flow') inner = renderFlowArtifact(artifact, onAction)
+    else inner = renderGenericArtifact(artifact, onAction)
+    wrap.appendChild(inner)
+    container.appendChild(wrap)
   }
 }
 

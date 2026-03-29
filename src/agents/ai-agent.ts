@@ -22,10 +22,11 @@ import type {
   AIAgent,
   AgentHistory,
   AIAgentConfig,
+  Artifact,
+  ArtifactTypeDefinition,
   LLMProvider,
   Message,
   Room,
-  TodoItem,
   ToolDefinition,
   ToolExecutor,
 } from '../core/types.ts'
@@ -46,7 +47,8 @@ export interface AIAgentOptions {
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
   readonly getHousePrompt?: () => string
   readonly getResponseFormat?: () => string
-  readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
+  readonly getArtifactsForScope?: (roomId: string) => ReadonlyArray<Artifact>
+  readonly getArtifactTypeDef?: (type: string) => ArtifactTypeDefinition | undefined
   readonly getCompressedIds?: (roomId: string) => ReadonlySet<string>
 }
 
@@ -79,7 +81,8 @@ export const createAIAgent = (
   const toolDefinitions = options?.toolDefinitions
   const getHousePrompt = options?.getHousePrompt
   const getResponseFormat = options?.getResponseFormat
-  const getRoomTodos = options?.getRoomTodos
+  const getArtifactsForScope = options?.getArtifactsForScope
+  const getArtifactTypeDef = options?.getArtifactTypeDef
   const getCompressedIds = options?.getCompressedIds
 
   // --- Name resolution ---
@@ -101,7 +104,8 @@ export const createAIAgent = (
     toolDescriptions,
     historyLimit,
     resolveName,
-    getRoomTodos,
+    getArtifactsForScope,
+    getArtifactTypeDef,
     getCompressedIds,
   })
 

@@ -4,7 +4,7 @@
 // Pure request→response functions. No WebSocket or server lifecycle concerns.
 // All routes delegate to System methods — no business logic here.
 //
-// Route modules live in routes/: rooms, agents, todos, messages, house.
+// Route modules live in routes/: rooms, agents, artifacts, messages, house.
 // The dispatcher iterates the route table, matches method+pattern, calls handler.
 // ============================================================================
 
@@ -12,7 +12,7 @@ import type { System } from '../main.ts'
 import type { WSOutbound } from '../core/types.ts'
 import { houseRoutes } from './routes/house.ts'
 import { roomRoutes } from './routes/rooms.ts'
-import { todoRoutes } from './routes/todos.ts'
+import { artifactRoutes } from './routes/artifacts.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { messageRoutes } from './routes/messages.ts'
 import type { RouteContext } from './routes/types.ts'
@@ -47,9 +47,8 @@ export const extractParam = (pathname: string, pattern: string): string | null =
 
 const allRoutes = [
   ...houseRoutes,
-  // Todos (before rooms to avoid /todos/:id being shadowed)
-  ...todoRoutes,
-  // Flows (before rooms)
+  // Artifacts before rooms (avoids /rooms/:name/artifacts being shadowed)
+  ...artifactRoutes,
   ...roomRoutes,
   ...agentRoutes,
   ...messageRoutes,

@@ -11,12 +11,13 @@
 // ============================================================================
 
 import type {
+  Artifact,
+  ArtifactTypeDefinition,
   AgentHistory,
   AgentProfile,
   ChatRequest,
   FlowDeliveryContext,
   Message,
-  TodoItem,
 } from '../core/types.ts'
 import { SYSTEM_SENDER_ID } from '../core/types.ts'
 import { TOOL_RESPONSE_FORMAT_SUFFIX } from '../tools/format.ts'
@@ -57,8 +58,6 @@ export const formatMessage = (
 }
 
 // === Flush incoming buffer after evaluation ===
-// Moves processed messages from incoming into the appropriate RoomContext.
-// Full history is preserved (no cap); buildContext slices at historyLimit when reading.
 
 export const flushIncoming = (
   info: FlushInfo,
@@ -123,7 +122,8 @@ export interface BuildContextDeps {
   readonly toolDescriptions?: string
   readonly historyLimit: number
   readonly resolveName: (senderId: string) => string
-  readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
+  readonly getArtifactsForScope?: (roomId: string) => ReadonlyArray<Artifact>
+  readonly getArtifactTypeDef?: (type: string) => ArtifactTypeDefinition | undefined
   readonly getCompressedIds?: (roomId: string) => ReadonlySet<string>
 }
 
@@ -138,16 +138,20 @@ const buildParticipantsSection = (
   return `Other participants:\n${lines.join('\n')}`
 }
 
-const buildTodosSection = (todos: ReadonlyArray<TodoItem>): string => {
-  const todoLines = todos.map(t => {
-    const check = t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : t.status === 'blocked' ? '!' : ' '
-    let line = `- [${check}] ${t.content} [id: ${t.id}]`
-    if (t.assignee) line += ` (assigned to: ${t.assignee})`
-    line += ` [${t.status}]`
-    if (t.result) line += ` → Result: ${t.result}`
-    return line
-  })
-  return `Room todos:\n${todoLines.join('\n')}`
+const formatArtifact = (artifact: Artifact, getTypeDef?: (type: string) => ArtifactTypeDefinition | undefined): string => {
+  const typeDef = getTypeDef?.(artifact.type)
+  if (typeDef?.formatForContext) return typeDef.formatForContext(artifact)
+  // Generic fallback
+  return `${artifact.type}: "${artifact.title}" [id: ${artifact.id}]`
+}
+
+const buildArtifactsSection = (
+  artifacts: ReadonlyArray<Artifact>,
+  getTypeDef?: (type: string) => ArtifactTypeDefinition | undefined,
+): string => {
+  if (artifacts.length === 0) return ''
+  const lines = artifacts.map(a => formatArtifact(a, getTypeDef))
+  return `Room artifacts:\n${lines.join('\n\n')}`
 }
 
 const buildFlowSection = (fc: FlowDeliveryContext, stepIndex: number): string => {
@@ -169,15 +173,7 @@ const buildActivitySection = (
   for (const [roomId, ctx] of deps.history.rooms) {
     if (roomId === triggerRoomId) continue
     const timeStr = relativeTime(ctx.lastActiveAt)
-    let line = `- Room "${ctx.profile.name}" [id: ${roomId}]: ${timeStr}`
-    if (deps.getRoomTodos) {
-      const inProgress = deps.getRoomTodos(roomId).filter(t => t.status === 'in_progress')
-      if (inProgress.length > 0) {
-        const todoStrs = inProgress.map(t => `"${t.content}" [id: ${t.id}]`).join(', ')
-        line += `\n  → In-progress todos: ${todoStrs}`
-      }
-    }
-    activityLines.push(line)
+    activityLines.push(`- Room "${ctx.profile.name}" [id: ${roomId}]: ${timeStr}`)
   }
 
   return `Your activity in other contexts:\n${activityLines.join('\n')}`
@@ -212,8 +208,7 @@ const buildSystemMessage = (
   )
   if (latestWithFlow) {
     const fc = (latestWithFlow.metadata as Record<string, unknown>).flowContext as FlowDeliveryContext
-    const stepIndex = fc.stepIndex
-    contextLines.push(buildFlowSection(fc, stepIndex))
+    contextLines.push(buildFlowSection(fc, fc.stepIndex))
   }
 
   const participants = getParticipantsForRoom(triggerRoomId, deps.history, deps.agentId)
@@ -221,14 +216,13 @@ const buildSystemMessage = (
     contextLines.push(buildParticipantsSection(participants))
   }
 
-  if (deps.getRoomTodos) {
-    const todos = deps.getRoomTodos(triggerRoomId)
-    if (todos.length > 0) {
-      contextLines.push(buildTodosSection(todos))
-    }
+  // Artifacts scoped to this room (system-wide artifacts excluded from per-room context)
+  if (deps.getArtifactsForScope) {
+    const artifacts = deps.getArtifactsForScope(triggerRoomId)
+    const artifactsSection = buildArtifactsSection(artifacts, deps.getArtifactTypeDef)
+    if (artifactsSection) contextLines.push(artifactsSection)
   }
 
-  // Other-room activity (only include when there are other rooms)
   if (deps.history.rooms.size > 1) {
     contextLines.push(buildActivitySection(deps, triggerRoomId))
   }
@@ -274,7 +268,6 @@ export const buildContext = (
 
   const ctx = deps.history.rooms.get(triggerRoomId)
   const all = ctx?.history ?? []
-  // Apply historyLimit window at read time — full history preserved in AgentHistory
   const old = all.length > deps.historyLimit ? all.slice(-deps.historyLimit) : all
   const fresh = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
   const roomCompressedIds = deps.getCompressedIds?.(triggerRoomId)

@@ -7,6 +7,7 @@ import { handleAPI } from './http-routes.ts'
 import { createHouse } from '../core/house.ts'
 import { createTeam } from '../agents/team.ts'
 import { createToolRegistry } from '../core/tool-registry.ts'
+import { createTaskListArtifactType } from '../core/artifact-types/task-list.ts'
 import type { DeliverFn, LLMProvider, WSOutbound } from '../core/types.ts'
 import type { System } from '../main.ts'
 
@@ -18,6 +19,7 @@ const noopSubscribe = (_id: string, _name: string): void => {}
 
 const makeSystem = (): System => {
   const house = createHouse({ deliver: noopDeliver })
+  house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
   const team = createTeam()
   const toolRegistry = createToolRegistry()
   const ollama: LLMProvider = {
@@ -38,7 +40,7 @@ const makeSystem = (): System => {
     setOnTurnChanged: () => {},
     setOnDeliveryModeChanged: () => {},
     setOnFlowEvent: () => {},
-    setOnTodoChanged: () => {},
+    setOnArtifactChanged: () => {},
     setOnRoomCreated: () => {},
     setOnRoomDeleted: () => {},
     setOnMembershipChanged: () => {},
@@ -159,92 +161,71 @@ describe('HTTP Routes', () => {
     expect(res?.status).toBe(400)
   })
 
-  // --- Todos ---
+  // --- Artifacts ---
 
-  test('GET /api/rooms/:name/todos returns empty array initially', async () => {
-    const res = await call(system, req('GET', '/api/rooms/TestRoom/todos'), '/api/rooms/TestRoom/todos')
+  test('GET /api/rooms/:name/artifacts returns empty array initially', async () => {
+    const res = await call(system, req('GET', '/api/rooms/TestRoom/artifacts'), '/api/rooms/TestRoom/artifacts')
     expect(res?.status).toBe(200)
     expect(await res!.json()).toHaveLength(0)
   })
 
-  test('POST /api/rooms/:name/todos creates todo', async () => {
-    const res = await call(system, req('POST', '/api/rooms/TestRoom/todos', { content: 'Write tests', createdBy: 'tester' }), '/api/rooms/TestRoom/todos')
+  test('GET /api/artifacts returns all artifacts', async () => {
+    const room = system.house.getRoom('TestRoom')!
+    system.house.artifacts.add({ type: 'task_list', title: 'Tasks', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester' })
+    const res = await call(system, req('GET', '/api/artifacts'), '/api/artifacts')
+    expect(res?.status).toBe(200)
+    const data = await res!.json() as unknown[]
+    expect(data.length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('POST /api/artifacts creates artifact', async () => {
+    const res = await call(system, req('POST', '/api/artifacts', {
+      artifactType: 'task_list',
+      title: 'Sprint',
+      body: { tasks: [] },
+      scope: ['TestRoom'],
+    }), '/api/artifacts')
     expect(res?.status).toBe(201)
-    const data = await res!.json()
-    expect(data.content).toBe('Write tests')
-    expect(data.status).toBe('pending')
+    const data = await res!.json() as { title: string; type: string; id: string }
+    expect(data.title).toBe('Sprint')
+    expect(data.type).toBe('task_list')
     expect(typeof data.id).toBe('string')
   })
 
-  test('POST /api/rooms/:name/todos missing content returns 400', async () => {
-    const res = await call(system, req('POST', '/api/rooms/TestRoom/todos', {}), '/api/rooms/TestRoom/todos')
+  test('POST /api/artifacts missing artifactType returns 400', async () => {
+    const res = await call(system, req('POST', '/api/artifacts', { title: 'No Type', body: {} }), '/api/artifacts')
     expect(res?.status).toBe(400)
   })
 
-  test('PUT /api/rooms/:name/todos/:id updates todo status', async () => {
+  test('PUT /api/artifacts/:id updates artifact', async () => {
     const room = system.house.getRoom('TestRoom')!
-    const todo = room.addTodo({ content: 'Original', createdBy: 'tester' })
-    const path = `/api/rooms/TestRoom/todos/${todo.id}`
-    const res = await call(system, req('PUT', path, { status: 'completed', result: 'Done' }), path)
+    const artifact = system.house.artifacts.add({ type: 'task_list', title: 'Old', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester' })
+    const path = `/api/artifacts/${artifact.id}`
+    const res = await call(system, req('PUT', path, { title: 'New Title' }), path)
     expect(res?.status).toBe(200)
-    const data = await res!.json()
-    expect(data.status).toBe('completed')
-    expect(data.result).toBe('Done')
+    const data = await res!.json() as { title: string }
+    expect(data.title).toBe('New Title')
   })
 
-  test('PUT /api/rooms/:name/todos/:id unknown id returns 404', async () => {
-    const path = '/api/rooms/TestRoom/todos/no-such-id'
-    const res = await call(system, req('PUT', path, { status: 'completed' }), path)
+  test('PUT /api/artifacts/:id unknown id returns 404', async () => {
+    const path = '/api/artifacts/no-such-id'
+    const res = await call(system, req('PUT', path, { title: 'X' }), path)
     expect(res?.status).toBe(404)
   })
 
-  test('DELETE /api/rooms/:name/todos/:id removes todo', async () => {
+  test('DELETE /api/artifacts/:id removes artifact', async () => {
     const room = system.house.getRoom('TestRoom')!
-    const todo = room.addTodo({ content: 'To delete', createdBy: 'tester' })
-    const path = `/api/rooms/TestRoom/todos/${todo.id}`
+    const artifact = system.house.artifacts.add({ type: 'task_list', title: 'Doomed', body: { tasks: [] }, scope: [room.profile.id], createdBy: 'tester' })
+    const path = `/api/artifacts/${artifact.id}`
     const res = await call(system, req('DELETE', path), path)
     expect(res?.status).toBe(200)
-    expect(room.getTodos()).toHaveLength(0)
+    expect(system.house.artifacts.get(artifact.id)).toBeUndefined()
   })
 
-  test('DELETE /api/rooms/:name/todos/:id unknown id returns 404', async () => {
-    const path = '/api/rooms/TestRoom/todos/no-such-id'
+  test('DELETE /api/artifacts/:id unknown id returns 404', async () => {
+    const path = '/api/artifacts/no-such-id'
     const res = await call(system, req('DELETE', path), path)
     expect(res?.status).toBe(404)
-  })
-
-  // --- Flows ---
-
-  test('POST /api/rooms/:name/flows creates flow', async () => {
-    const res = await call(system, req('POST', '/api/rooms/TestRoom/flows', {
-      name: 'MyFlow',
-      steps: [{ agentId: 'a-1', agentName: 'Alpha' }],
-      loop: false,
-    }), '/api/rooms/TestRoom/flows')
-    expect(res?.status).toBe(201)
-    const data = await res!.json()
-    expect(data.name).toBe('MyFlow')
-    expect(data.steps).toHaveLength(1)
-  })
-
-  test('POST /api/rooms/:name/flows missing name returns 400', async () => {
-    const res = await call(system, req('POST', '/api/rooms/TestRoom/flows', { steps: [] }), '/api/rooms/TestRoom/flows')
-    expect(res?.status).toBe(400)
-  })
-
-  test('POST /api/rooms/:name/flows non-array steps returns 400', async () => {
-    const res = await call(system, req('POST', '/api/rooms/TestRoom/flows', { name: 'Flow', steps: 'bad' }), '/api/rooms/TestRoom/flows')
-    expect(res?.status).toBe(400)
-  })
-
-  test('GET /api/rooms/:name/flows lists flows', async () => {
-    const room = system.house.getRoom('TestRoom')!
-    room.addFlow({ name: 'F1', steps: [{ agentId: 'a-1', agentName: 'Alpha' }], loop: false })
-    const res = await call(system, req('GET', '/api/rooms/TestRoom/flows'), '/api/rooms/TestRoom/flows')
-    expect(res?.status).toBe(200)
-    const data = await res!.json()
-    expect(data).toHaveLength(1)
-    expect(data[0].name).toBe('F1')
   })
 
   // --- Members ---
