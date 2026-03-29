@@ -109,6 +109,24 @@ Todo fields: content, status (`pending` / `in_progress` / `completed` / `blocked
 
 The `delegate` tool creates a todo, sends the task to another agent, waits for the result, then marks the todo complete with the result — enabling tracked multi-agent task delegation.
 
+### Agent Memory
+
+Agents operate with two distinct memory layers:
+
+**Session memory** is managed automatically. Each agent maintains a snapshot of the conversation history it has processed, plus an *incoming buffer* of messages it has received since its last response. When an agent responds, the buffer is flushed into the snapshot and tagged messages become history. The history is limited (`historyLimit`, default 50 messages per room), so when an agent joins a room with a long history it receives an LLM-generated summary as its first context. Session memory is in-process and is not persisted between restarts beyond what is stored in the snapshot.
+
+**Persistent memory** is opt-in, via the `memory.ts` tools. These store data on the filesystem per-agent:
+
+| Tool | Storage |
+|---|---|
+| `note` / `my_notes` | Append-only log at `~/.samsinn/memory/<name>/notes.log` |
+| `remember` / `recall` / `forget` | Key-value store at `~/.samsinn/memory/<name>/facts.json` |
+| `think` | Scratchpad (in-memory only — not stored) |
+
+Persistent memory survives restarts and is completely independent of the room message history. An agent can `remember` a user preference or conclusion from one session and `recall` it in the next. Memory is private to each agent — one agent cannot read another's notes.
+
+---
+
 ### Tools
 
 Agents invoke tools using the `::TOOL::` syntax (or native function-calling on supported models):
@@ -513,6 +531,10 @@ Tests cover: room logic, delivery modes, agent behaviour, tool execution, snapsh
 **LLM context structure** — every agent evaluation assembles: house rules → room prompt → agent system prompt → auto-generated context (room, flow, participants, todos, tools) → response format → history (old + `[NEW]` tagged recent messages). The `context-builder.ts` is the single source of truth for what agents see.
 
 **External tools** — the `loadExternalTools()` function scans `./tools/`, `~/.samsinn/tools/`, and `SAMSINN_TOOLS_DIR` for `.ts` files with a default Tool or Tool[] export. Loaded before snapshot restore so restored agents have access to them. Conflicts with built-in tool names are silently skipped.
+
+**Agent memory** — two independent layers. Session memory lives in each agent's two-buffer architecture: a `roomHistory` snapshot of everything seen so far plus an `incoming` buffer of messages received since the last response. Persistent memory is filesystem-based (via `memory.ts` tools) and survives restarts. The two layers are deliberately separate: session context is automatic; persistent facts are intentional.
+
+**Tool descriptions** — every `Tool` can declare a `usage` field (when to use / when not to) and a `returns` field (what to expect back). These are injected into the agent's system prompt alongside the parameter schema, giving the LLM the guidance it needs to pick the right tool and interpret its output.
 
 ---
 
