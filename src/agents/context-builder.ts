@@ -1,17 +1,22 @@
 // ============================================================================
-// Context Builder — Assembles LLM context from message buffers.
+// Context Builder — Assembles LLM context from AgentHistory.
 //
 // Two-buffer architecture: room-sourced history (old) + incoming buffer (new).
 // Messages in incoming are tagged [NEW] so the LLM can prioritise them.
-// After evaluation, flushIncoming moves processed messages out of incoming.
+// After evaluation, flushIncoming moves processed messages out of incoming
+// and appends them to the relevant RoomContext or DMContext in AgentHistory.
+//
+// Full history is preserved in AgentHistory; only a historyLimit-sized
+// window is passed to the LLM on each context build.
 // ============================================================================
 
 import type {
+  AgentHistory,
   AgentProfile,
   ChatRequest,
   FlowDeliveryContext,
   Message,
-  RoomProfile,
+  RoomContext,
   TodoItem,
 } from '../core/types.ts'
 import { SYSTEM_SENDER_ID } from '../core/types.ts'
@@ -32,7 +37,8 @@ export interface ContextResult {
   readonly flushInfo: FlushInfo
 }
 
-// === Trigger key — unified identifier for rooms and DM peers ===
+// === Trigger key — unified string key for generatingContexts/pendingContexts sets ===
+// Kept here as it defines the canonical format used in state context strings.
 
 export const triggerKey = (roomId?: string, peerId?: string): string =>
   roomId ? `room:${roomId}` : `dm:${peerId}`
@@ -56,33 +62,41 @@ export const formatMessage = (
 }
 
 // === Flush incoming buffer after evaluation ===
+// Moves processed messages from incoming into the appropriate RoomContext or DMContext.
+// Full history is preserved (no cap); buildContext slices at historyLimit when reading.
 
 export const flushIncoming = (
   info: FlushInfo,
-  incoming: Message[],
-  roomHistory: Map<string, ReadonlyArray<Message>>,
-  addDMMessage: (msg: Message) => void,
+  history: AgentHistory,
+  agentId: string,
 ): void => {
   if (info.ids.size === 0) return
 
-  // Collect flushed messages before removing
-  const flushed = incoming.filter(m => info.ids.has(m.id))
+  const flushed = history.incoming.filter(m => info.ids.has(m.id))
+  const remaining = history.incoming.filter(m => !info.ids.has(m.id))
+  history.incoming.length = 0
+  history.incoming.push(...remaining)
 
-  // Remove from incoming
-  const remaining = incoming.filter(m => !info.ids.has(m.id))
-  incoming.length = 0
-  incoming.push(...remaining)
-
-  // Append flushed room messages to history snapshot for re-eval continuity
+  // Append flushed room messages to RoomContext history
   if (info.triggerRoomId && flushed.length > 0) {
-    const key = triggerKey(info.triggerRoomId, undefined)
-    const current = roomHistory.get(key) ?? []
-    roomHistory.set(key, [...current, ...flushed])
+    const ctx = history.rooms.get(info.triggerRoomId)
+    if (ctx) {
+      ctx.history = [...ctx.history, ...flushed]
+      ctx.lastActiveAt = Date.now()
+    }
   }
 
-  // Move flushed DMs to persistent DM store
+  // Append flushed DMs to DMContext
   for (const msg of info.dmMessages) {
-    addDMMessage(msg)
+    const peerId = msg.senderId === agentId ? msg.recipientId! : msg.senderId
+    if (!peerId) continue
+    let ctx = history.dms.get(peerId)
+    if (!ctx) {
+      ctx = { history: [], lastActiveAt: undefined }
+      history.dms.set(peerId, ctx)
+    }
+    ctx.history.push(msg)
+    ctx.lastActiveAt = Date.now()
   }
 }
 
@@ -90,15 +104,13 @@ export const flushIncoming = (
 
 export const getParticipantsForRoom = (
   roomId: string,
-  incoming: ReadonlyArray<Message>,
-  roomHistory: Map<string, ReadonlyArray<Message>>,
+  history: AgentHistory,
   agentId: string,
-  agentProfiles: Map<string, AgentProfile>,
 ): ReadonlyArray<AgentProfile | string> => {
-  const key = triggerKey(roomId, undefined)
-  const history = roomHistory.get(key) ?? []
-  const fresh = incoming.filter(m => m.roomId === roomId)
-  const allMsgs = [...history, ...fresh]
+  const ctx = history.rooms.get(roomId)
+  const historyMsgs = ctx?.history ?? []
+  const fresh = history.incoming.filter(m => m.roomId === roomId)
+  const allMsgs = [...historyMsgs, ...fresh]
 
   const senderIds = new Set<string>()
   for (const msg of allMsgs) {
@@ -106,26 +118,35 @@ export const getParticipantsForRoom = (
       senderIds.add(msg.senderId)
     }
   }
-  return [...senderIds].map(id => agentProfiles.get(id) ?? id)
+  return [...senderIds].map(id => history.agentProfiles.get(id) ?? id)
 }
 
-// === Build full LLM context ===
+// === Format relative time ===
+
+const relativeTime = (ts: number | undefined): string => {
+  if (!ts) return 'idle'
+  const secs = Math.floor((Date.now() - ts) / 1000)
+  if (secs < 60) return `${secs}s ago`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m ago`
+  return `${Math.floor(mins / 60)}h ago`
+}
+
+// === Build deps ===
 
 export interface BuildContextDeps {
   readonly agentId: string
   readonly systemPrompt: string
   readonly housePrompt?: string
   readonly responseFormat?: string
-  readonly incoming: Message[]
-  readonly roomHistory: Map<string, ReadonlyArray<Message>>
-  readonly roomProfiles: Map<string, RoomProfile>
-  readonly agentProfiles: Map<string, AgentProfile>
+  readonly history: AgentHistory
   readonly toolDescriptions?: string
   readonly historyLimit: number
   readonly resolveName: (senderId: string) => string
-  readonly getDMMessagesForPeer: (peerId: string) => ReadonlyArray<Message>
   readonly getRoomTodos?: (roomId: string) => ReadonlyArray<TodoItem>
 }
+
+// === Build full LLM context ===
 
 export const buildContext = (
   deps: BuildContextDeps,
@@ -143,9 +164,9 @@ export const buildContext = (
 
   // === ROOM === (contextual instructions)
   if (triggerRoomId) {
-    const roomProfile = deps.roomProfiles.get(triggerRoomId)
-    if (roomProfile?.roomPrompt) {
-      sections.push(`=== ROOM: ${roomProfile.name} ===\n${roomProfile.roomPrompt}`)
+    const roomCtx = deps.history.rooms.get(triggerRoomId)
+    if (roomCtx?.profile.roomPrompt) {
+      sections.push(`=== ROOM: ${roomCtx.profile.name} ===\n${roomCtx.profile.roomPrompt}`)
     }
   }
 
@@ -156,13 +177,13 @@ export const buildContext = (
   const contextLines: string[] = []
 
   if (triggerRoomId) {
-    const roomProfile = deps.roomProfiles.get(triggerRoomId)
-    if (roomProfile) {
-      contextLines.push(`You are in room "${roomProfile.name}".`)
+    const roomCtx = deps.history.rooms.get(triggerRoomId)
+    if (roomCtx) {
+      contextLines.push(`You are in room "${roomCtx.profile.name}" [id: ${triggerRoomId}].`)
     }
 
     // Flow context — injected via message metadata when agent is triggered in a flow
-    const freshForRoom = deps.incoming.filter(m => m.roomId === triggerRoomId)
+    const freshForRoom = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
     const latestWithFlow = [...freshForRoom].reverse().find(
       m => (m.metadata as Record<string, unknown> | undefined)?.flowContext,
     )
@@ -180,9 +201,7 @@ export const buildContext = (
       )
     }
 
-    const participants = getParticipantsForRoom(
-      triggerRoomId, deps.incoming, deps.roomHistory, deps.agentId, deps.agentProfiles,
-    )
+    const participants = getParticipantsForRoom(triggerRoomId, deps.history, deps.agentId)
     if (participants.length > 0) {
       const lines = participants.map(p =>
         typeof p === 'string' ? `- ${p}` : `- ${p.name} (${p.kind})`,
@@ -196,7 +215,7 @@ export const buildContext = (
       if (todos.length > 0) {
         const todoLines = todos.map(t => {
           const check = t.status === 'completed' ? 'x' : t.status === 'in_progress' ? '~' : t.status === 'blocked' ? '!' : ' '
-          let line = `- [${check}] ${t.content}`
+          let line = `- [${check}] ${t.content} [id: ${t.id}]`
           if (t.assignee) line += ` (assigned to: ${t.assignee})`
           line += ` [${t.status}]`
           if (t.result) line += ` → Result: ${t.result}`
@@ -206,17 +225,43 @@ export const buildContext = (
       }
     }
   } else if (triggerPeerId) {
-    const peerProfile = deps.agentProfiles.get(triggerPeerId)
+    const peerProfile = deps.history.agentProfiles.get(triggerPeerId)
     const peerName = peerProfile?.name ?? triggerPeerId
-    contextLines.push(`This is a direct conversation with ${peerName}.`)
+    contextLines.push(`This is a direct conversation with ${peerName} [id: ${triggerPeerId}].`)
   }
 
-  if (deps.roomProfiles.size > 0) {
-    const roomNames = [...deps.roomProfiles.values()].map(p => `"${p.name}"`)
-    contextLines.push(`Your rooms: ${roomNames.join(', ')}`)
+  // === YOUR CURRENT ACTIVITY (cross-context situation awareness) ===
+  // Shows all contexts OTHER than the triggering one, with IDs for tool use.
+  const activityLines: string[] = []
+
+  for (const [roomId, ctx] of deps.history.rooms) {
+    if (roomId === triggerRoomId) continue  // triggering room already fully contextualised above
+    const timeStr = relativeTime(ctx.lastActiveAt)
+    let line = `- Room "${ctx.profile.name}" [id: ${roomId}]: ${timeStr}`
+
+    // Show in-progress todos for this room
+    if (deps.getRoomTodos) {
+      const inProgress = deps.getRoomTodos(roomId).filter(t => t.status === 'in_progress')
+      if (inProgress.length > 0) {
+        const todoStrs = inProgress.map(t => `"${t.content}" [id: ${t.id}]`).join(', ')
+        line += `\n  → In-progress todos: ${todoStrs}`
+      }
+    }
+    activityLines.push(line)
   }
 
-  const knownAgents = [...deps.agentProfiles.values()].filter(a => a.id !== deps.agentId)
+  for (const [peerId, ctx] of deps.history.dms) {
+    if (peerId === triggerPeerId) continue  // triggering DM already contextualised above
+    if (ctx.history.length === 0 && !ctx.lastActiveAt) continue  // skip empty DM contexts
+    const peerName = deps.history.agentProfiles.get(peerId)?.name ?? peerId
+    activityLines.push(`- DM with ${peerName} [peerId: ${peerId}]: ${relativeTime(ctx.lastActiveAt)}`)
+  }
+
+  if (activityLines.length > 0) {
+    contextLines.push(`Your activity in other contexts:\n${activityLines.join('\n')}`)
+  }
+
+  const knownAgents = [...deps.history.agentProfiles.values()].filter(a => a.id !== deps.agentId)
   if (knownAgents.length > 0) {
     const agentNames = knownAgents.map(a => `"${a.name}" (${a.kind})`)
     contextLines.push(`Known agents: ${agentNames.join(', ')}`)
@@ -246,11 +291,13 @@ export const buildContext = (
     { role: 'system' as const, content: systemContent },
   ]
 
-  // Room context: history (old) + incoming (new)
+  // Room context: history window (old) + incoming (new)
   if (triggerRoomId) {
-    const key = triggerKey(triggerRoomId, undefined)
-    const old = deps.roomHistory.get(key) ?? []
-    const fresh = deps.incoming.filter(m => m.roomId === triggerRoomId)
+    const ctx = deps.history.rooms.get(triggerRoomId)
+    const all = ctx?.history ?? []
+    // Apply historyLimit window at read time — full history preserved in AgentHistory
+    const old = all.length > deps.historyLimit ? all.slice(-deps.historyLimit) : all
+    const fresh = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
 
     for (const msg of old) {
       const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName)
@@ -263,10 +310,12 @@ export const buildContext = (
     }
   }
 
-  // DM context: local DM history (old) + incoming DMs (new)
+  // DM context: history window (old) + incoming DMs (new)
   if (triggerPeerId) {
-    const old = deps.getDMMessagesForPeer(triggerPeerId)
-    const fresh = deps.incoming.filter(m =>
+    const ctx = deps.history.dms.get(triggerPeerId)
+    const all = ctx?.history ?? []
+    const old = all.length > deps.historyLimit ? all.slice(-deps.historyLimit) : all
+    const fresh = deps.history.incoming.filter(m =>
       m.roomId === undefined && (m.senderId === triggerPeerId || m.recipientId === triggerPeerId),
     )
 

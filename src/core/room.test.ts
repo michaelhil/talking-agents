@@ -12,9 +12,9 @@ const makeProfile = (overrides?: Partial<RoomProfile>): RoomProfile => ({
 })
 
 const trackDeliveries = () => {
-  const delivered: Array<{ agentId: string; content: string; historyLen: number }> = []
-  const deliver = (agentId: string, message: Message, history: ReadonlyArray<Message>) => {
-    delivered.push({ agentId, content: message.content, historyLen: history.length })
+  const delivered: Array<{ agentId: string; content: string }> = []
+  const deliver = (agentId: string, message: Message) => {
+    delivered.push({ agentId, content: message.content })
   }
   return { delivered, deliver }
 }
@@ -62,31 +62,9 @@ describe('Room — self-contained component', () => {
     room.post({ senderId: 'alice', content: 'Hi', type: 'chat' })
     expect(delivered).toHaveLength(2)
     expect(delivered.map(d => d.agentId).sort()).toEqual(['alice', 'bob'])
-    expect(delivered[0]!.historyLen).toBe(0)
-
     delivered.length = 0
     room.post({ senderId: 'bob', content: 'Hey', type: 'chat' })
     expect(delivered).toHaveLength(2)
-    expect(delivered.every(d => d.historyLen === 1)).toBe(true)
-  })
-
-  test('post delivers history excluding the new message', () => {
-    const histories: ReadonlyArray<Message>[] = []
-    const room = createRoom(makeProfile(), {
-      deliver: (_agentId, _message, history) => { histories.push(history) },
-    })
-
-    room.addMember('alice')
-    room.addMember('bob')
-
-    room.post({ senderId: 'alice', content: 'msg-1', type: 'chat' })
-    room.post({ senderId: 'alice', content: 'msg-2', type: 'chat' })
-    room.post({ senderId: 'alice', content: 'msg-3', type: 'chat' })
-
-    const lastHistory = histories[histories.length - 1]!
-    expect(lastHistory).toHaveLength(2)
-    expect(lastHistory[0]!.content).toBe('msg-1')
-    expect(lastHistory[1]!.content).toBe('msg-2')
   })
 
   test('works without deliver callback', () => {

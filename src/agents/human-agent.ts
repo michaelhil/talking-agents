@@ -39,7 +39,7 @@ export const createHumanAgent = (
     subscribe: () => () => {},
   }
 
-  const receive = (message: Message, _history?: ReadonlyArray<Message>): void => {
+  const receive = (message: Message): void => {
     // Don't echo own messages back over transport
     if (message.senderId === agentId) return
 

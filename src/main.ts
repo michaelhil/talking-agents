@@ -46,8 +46,8 @@ export const createSystem = (ollamaUrl?: string): System => {
   const team = createTeam()
 
   // Single deliver function — used by both Room (via House) and DMs (via message router)
-  const deliver: DeliverFn = (agentId, message, history) => {
-    team.getAgent(agentId)?.receive(message, history)
+  const deliver: DeliverFn = (agentId, message) => {
+    team.getAgent(agentId)?.receive(message)
   }
 
   // Late-binding callbacks — set by server after wsManager is created.

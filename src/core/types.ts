@@ -25,6 +25,29 @@ export interface Message {
   readonly metadata?: Record<string, unknown>
 }
 
+// === Agent History — unified per-agent state across all contexts ===
+// Single structure owned by each AI agent. Sub-fields hold room-specific and
+// DM-specific history. The agent has full access to its complete history;
+// only a historyLimit-sized window is passed to the LLM in each context build.
+
+export interface RoomContext {
+  readonly profile: RoomProfile
+  history: ReadonlyArray<Message>   // all processed messages in this room (unbounded)
+  lastActiveAt?: number             // timestamp of last flushIncoming into this context
+}
+
+export interface DMContext {
+  history: Message[]                // all processed DMs with this peer (unbounded)
+  lastActiveAt?: number
+}
+
+export interface AgentHistory {
+  readonly rooms: Map<string, RoomContext>        // roomId → context
+  readonly dms: Map<string, DMContext>            // peerId → context
+  readonly incoming: Message[]                    // unprocessed messages (all contexts)
+  readonly agentProfiles: Map<string, AgentProfile>
+}
+
 // === Profiles — what agents know about rooms and other agents ===
 
 export interface RoomProfile {
@@ -55,8 +78,10 @@ export interface MessageTarget {
 export type PostParams = Omit<Message, 'id' | 'roomId' | 'timestamp' | 'recipientId'>
 
 // === Delivery — callback for Room to deliver messages to agents ===
+// History is no longer passed — agents initialise context via join() before
+// the first message arrives, so delivered history is redundant.
 
-export type DeliverFn = (agentId: string, message: Message, history: ReadonlyArray<Message>) => void
+export type DeliverFn = (agentId: string, message: Message) => void
 
 // === Delivery Modes — room has exactly one active mode ===
 // [[AgentName]] addressing and muting work as universal overrides in all modes.
@@ -250,7 +275,7 @@ export interface Agent {
   readonly kind: 'ai' | 'human'
   readonly metadata: Record<string, unknown>
   readonly state: AgentState
-  readonly receive: (message: Message, history?: ReadonlyArray<Message>) => void
+  readonly receive: (message: Message) => void
   readonly join: (room: Room) => Promise<void>
   readonly leave: (roomId: string) => void
   readonly inactive?: boolean

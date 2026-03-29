@@ -44,8 +44,8 @@ export const createMessageRouter = (house: House, team: Team, deliver: DeliverFn
           metadata: params.metadata,
         }
         delivered.push(dmMessage)
-        deliver(recipient.id, dmMessage, [])
-        deliver(params.senderId, dmMessage, [])
+        deliver(recipient.id, dmMessage)
+        deliver(params.senderId, dmMessage)
       }
     }
 

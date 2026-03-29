@@ -74,7 +74,7 @@ export const createRoom = (
 
   const deliverToOne = (agentId: string, message: Message): void => {
     if (!deliver) return
-    deliverToAgent(agentId, message, messages, deliver)
+    deliverToAgent(agentId, message, deliver)
   }
 
   const notifyTurnChanged = (agentId?: string, waitingForHuman?: boolean): void => {
@@ -147,7 +147,7 @@ export const createRoom = (
 
     // Join/leave messages are always broadcast regardless of mode and pause
     if (message.type === 'join' || message.type === 'leave') {
-      deliverBroadcast(message, eligible, messages, deliver)
+      deliverBroadcast(message, eligible, deliver)
       return message
     }
 
@@ -174,13 +174,13 @@ export const createRoom = (
     // Mode dispatch
     switch (mode) {
       case 'broadcast':
-        deliverBroadcast(message, eligible, messages, deliver)
+        deliverBroadcast(message, eligible, deliver)
         break
 
       case 'flow': {
         if (!flowExecution?.active) break
         const result = deliverFlow(
-          message, messages, flowExecution, eligible,
+          message, flowExecution, eligible,
           params.senderId, deliver,
         )
         if (result.advanced) {

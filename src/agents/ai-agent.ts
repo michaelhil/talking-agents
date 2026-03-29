@@ -4,12 +4,14 @@
 // Orchestrates context building (context-builder.ts) and LLM evaluation
 // (evaluation.ts) with message buffering and concurrency control.
 //
-// Two-buffer architecture for message context:
-// - Room messages: Room is the source of truth. Room delivers each message
-//   with the full history preceding it. The agent stores a history snapshot
-//   (accepted when the incoming buffer is empty for that context) and an
-//   incoming buffer (fresh messages not yet seen by the LLM).
-// - DM messages: stored locally (no Room involved).
+// History architecture: a single AgentHistory struct owns all per-agent state.
+//   - rooms: per-room processed history + room profile + last-active timestamp
+//   - dms: per-peer DM history + last-active timestamp
+//   - incoming: shared buffer of unprocessed messages across all contexts
+//   - agentProfiles: knowledge about other agents in the system
+//
+// join() initialises the RoomContext (with profile) before the first message
+// arrives, so receive() never needs to handle first-contact lazily.
 //
 // ID Architecture: The agent generates its own UUID. The LLM sees names only.
 // Names are resolved to UUIDs externally by resolveTarget in spawn.ts.
@@ -19,6 +21,7 @@
 
 import type {
   AIAgent,
+  AgentHistory,
   AgentProfile,
   AgentState,
   AIAgentConfig,
@@ -62,16 +65,13 @@ export const createAIAgent = (
 ): AIAgent => {
   const agentId = overrideId ?? crypto.randomUUID()
 
-  // Room message context: history snapshot from Room + incoming buffer
-  const roomHistory = new Map<string, ReadonlyArray<Message>>()
-  const incoming: Message[] = []
-
-  // DM messages: indexed by peer ID for O(1) lookup
-  const dmByPeer = new Map<string, Message[]>()
-
-  // Agent knowledge
-  const roomProfiles = new Map<string, RoomProfile>()
-  const agentProfiles = new Map<string, AgentProfile>()
+  // Single unified history structure — all agent state in one place
+  const agentHistory: AgentHistory = {
+    rooms: new Map(),
+    dms: new Map(),
+    incoming: [],
+    agentProfiles: new Map(),
+  }
 
   // Concurrency control
   const generatingContexts = new Set<string>()
@@ -110,28 +110,8 @@ export const createAIAgent = (
   const resolveName = (senderId: string): string => {
     if (senderId === SYSTEM_SENDER_ID) return 'System'
     if (senderId === agentId) return config.name
-    return agentProfiles.get(senderId)?.name ?? senderId
+    return agentHistory.agentProfiles.get(senderId)?.name ?? senderId
   }
-
-  // --- DM message management ---
-
-  const addDMMessage = (message: Message): void => {
-    const peerId = message.senderId === agentId ? message.recipientId : message.senderId
-    if (!peerId) return
-    let peerMsgs = dmByPeer.get(peerId)
-    if (!peerMsgs) {
-      peerMsgs = []
-      dmByPeer.set(peerId, peerMsgs)
-    }
-    peerMsgs.push(message)
-    // Truncate oldest if over limit
-    if (peerMsgs.length > historyLimit) {
-      peerMsgs.splice(0, peerMsgs.length - historyLimit)
-    }
-  }
-
-  const getDMMessagesForPeer = (peerId: string): ReadonlyArray<Message> =>
-    dmByPeer.get(peerId) ?? []
 
   // --- Idle detection ---
 
@@ -156,21 +136,17 @@ export const createAIAgent = (
     })
   }
 
-  // --- Context deps (shared state reference for buildContext) ---
+  // --- Context deps ---
 
   const contextDeps = (): BuildContextDeps => ({
     agentId,
     systemPrompt: currentSystemPrompt,
     housePrompt: getHousePrompt?.(),
     responseFormat: getResponseFormat?.(),
-    incoming,
-    roomHistory,
-    roomProfiles,
-    agentProfiles,
+    history: agentHistory,
     toolDescriptions,
     historyLimit,
     resolveName,
-    getDMMessagesForPeer,
     getRoomTodos,
   })
 
@@ -196,11 +172,9 @@ export const createAIAgent = (
         // Discard results if generation was cancelled
         if (epochAtStart !== generationEpoch) return
 
-        // Only flush incoming when the LLM actually responded.
-        // On pass, keep messages in incoming so they stay [NEW] on re-eval.
-        if (decision.response.action === 'respond') {
-          flushIncoming(flushInfo, incoming, roomHistory, addDMMessage)
-        }
+        // Flush incoming always — on both respond and pass.
+        // On pass, the agent has consciously evaluated these messages; they belong in history.
+        flushIncoming(flushInfo, agentHistory, agentId)
         onDecision(decision)
       })
       .catch(err => {
@@ -222,28 +196,24 @@ export const createAIAgent = (
   }
 
   // --- Receive ---
+  // History is no longer delivered via receive() — RoomContext is initialised
+  // in join() before the first message arrives. Own messages go straight to
+  // room history (not incoming) for re-evaluation continuity.
 
-  const receive = (message: Message, history?: ReadonlyArray<Message>): void => {
-    extractProfile(message, agentId, agentProfiles)
+  const receive = (message: Message): void => {
+    extractProfile(message, agentId, agentHistory.agentProfiles)
 
     if (message.roomId) {
-      const key = triggerKey(message.roomId, undefined)
-      const hasUnprocessed = incoming.some(m =>
-        m.roomId === message.roomId && m.type !== 'room_summary' && m.senderId !== agentId,
-      )
-      if (history && !hasUnprocessed) {
-        roomHistory.set(key, history)
-      }
       if (message.senderId === agentId) {
-        // Own room messages go straight to history (not incoming) so they're
-        // visible as assistant context during re-evaluations.
-        const current = roomHistory.get(key) ?? []
-        roomHistory.set(key, [...current, message])
+        // Own room messages go straight to history so they're visible as
+        // assistant context during re-evaluations without triggering a new eval.
+        const ctx = agentHistory.rooms.get(message.roomId)
+        if (ctx) ctx.history = [...ctx.history, message]
       } else {
-        incoming.push(message)
+        agentHistory.incoming.push(message)
       }
     } else {
-      incoming.push(message)
+      agentHistory.incoming.push(message)
     }
 
     if (message.senderId === agentId) return
@@ -257,15 +227,22 @@ export const createAIAgent = (
   }
 
   // --- Join ---
+  // Initialises RoomContext (profile + empty history) BEFORE any messages are
+  // delivered. Generates an LLM summary of recent room history for onboarding.
 
   const join = async (room: Room): Promise<void> => {
-    roomProfiles.set(room.profile.id, room.profile)
+    // Initialise context — profile available here, before messages arrive
+    agentHistory.rooms.set(room.profile.id, {
+      profile: room.profile,
+      history: [],
+      lastActiveAt: undefined,
+    })
 
     const recent = room.getRecent(historyLimit)
     if (recent.length === 0) return
 
     for (const msg of recent) {
-      extractProfile(msg, agentId, agentProfiles)
+      extractProfile(msg, agentId, agentHistory.agentProfiles)
     }
 
     const messageLines = recent
@@ -299,7 +276,7 @@ export const createAIAgent = (
         timestamp: Date.now(),
         type: 'room_summary',
       }
-      incoming.push(summaryMessage)
+      agentHistory.incoming.push(summaryMessage)
     } catch (err) {
       console.error(`[${config.name}] Failed to generate join summary for ${room.profile.name}:`, err)
     }
@@ -315,7 +292,7 @@ export const createAIAgent = (
     queryActive = true
 
     try {
-      const name = askerName ?? agentProfiles.get(askerId)?.name ?? askerId
+      const name = askerName ?? agentHistory.agentProfiles.get(askerId)?.name ?? askerId
       const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error(`Query to ${config.name} timed out after ${QUERY_TIMEOUT_MS}ms`)), QUERY_TIMEOUT_MS),
       )
@@ -345,7 +322,7 @@ export const createAIAgent = (
     receive,
     join,
     leave: (roomId: string): void => {
-      roomProfiles.delete(roomId)
+      agentHistory.rooms.delete(roomId)
     },
     whenIdle,
     query,

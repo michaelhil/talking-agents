@@ -17,14 +17,9 @@ import type { DeliverFn, FlowDeliveryContext, FlowExecution, Message } from './t
 export const deliverToAgent = (
   agentId: string,
   message: Message,
-  allMessages: ReadonlyArray<Message>,
   deliver: DeliverFn,
 ): void => {
-  // History = all messages before the current one.
-  // indexOf returns -1 if not found (shouldn't happen, but guard anyway).
-  const msgIndex = allMessages.indexOf(message)
-  const history = msgIndex > 0 ? allMessages.slice(0, msgIndex) : []
-  deliver(agentId, message, history)
+  deliver(agentId, message)
 }
 
 // --- Broadcast mode ---
@@ -32,11 +27,10 @@ export const deliverToAgent = (
 export const deliverBroadcast = (
   message: Message,
   eligible: ReadonlySet<string>,
-  allMessages: ReadonlyArray<Message>,
   deliver: DeliverFn,
 ): void => {
   for (const id of eligible) {
-    deliverToAgent(id, message, allMessages, deliver)
+    deliverToAgent(id, message, deliver)
   }
 }
 
@@ -52,7 +46,6 @@ export interface FlowResult {
 
 export const deliverFlow = (
   message: Message,
-  allMessages: ReadonlyArray<Message>,
   execution: FlowExecution,
   eligible: ReadonlySet<string>,
   senderId: string,
@@ -89,7 +82,7 @@ export const deliverFlow = (
         flowContext,
       },
     }
-    deliverToAgent(result.nextAgentId, enriched, allMessages, deliver)
+    deliverToAgent(result.nextAgentId, enriched, deliver)
   }
 
   return { advanced: true, ...result }

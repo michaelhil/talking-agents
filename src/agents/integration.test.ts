@@ -19,8 +19,8 @@ const FAST_MODEL = 'llama3.2:latest'
 
 const createSystem = () => {
   const team = createTeam()
-  const deliver = (agentId: string, message: Message, history: ReadonlyArray<Message>) => {
-    team.getAgent(agentId)?.receive(message, history)
+  const deliver = (agentId: string, message: Message) => {
+    team.getAgent(agentId)?.receive(message)
   }
   const house = createHouse(deliver)
   const routeMessage = createMessageRouter(house, team, deliver)
@@ -163,6 +163,7 @@ describe('Integration — Full message lifecycle', () => {
     )
     team.addAgent(agent)
     intro.addMember(agent.id)
+    await agent.join(intro)  // initialise RoomContext before first message
 
     // First message triggers eval
     routeMessage(
@@ -186,14 +187,16 @@ describe('Integration — Full message lifecycle', () => {
     // Two LLM calls: initial + re-eval
     expect(callCount).toBe(2)
 
-    // After a pass, incoming is NOT flushed — all messages stay [NEW] on re-eval
+    // After a pass, incoming IS flushed — msg-1 is now in history (not [NEW]).
+    // msg-2 and msg-3 arrived during the first eval, so they are [NEW] in re-eval.
     const lastContext = capturedContexts[1]!
     const userMsgs = lastContext.filter(m => m.role === 'user')
     const newMsgs = userMsgs.filter(m => m.content.includes('[NEW]'))
-    expect(newMsgs.length).toBeGreaterThanOrEqual(3)
-    expect(newMsgs.some(m => m.content.includes('msg-1'))).toBe(true)
+    expect(newMsgs.length).toBeGreaterThanOrEqual(2)
     expect(newMsgs.some(m => m.content.includes('msg-2'))).toBe(true)
     expect(newMsgs.some(m => m.content.includes('msg-3'))).toBe(true)
+    // msg-1 was flushed to history — should NOT appear as [NEW]
+    expect(newMsgs.some(m => m.content.includes('msg-1'))).toBe(false)
   })
 
   test('agent sees own response in re-evaluation context', async () => {
@@ -228,6 +231,7 @@ describe('Integration — Full message lifecycle', () => {
     )
     team.addAgent(agent)
     intro.addMember(agent.id)
+    await agent.join(intro)  // initialise RoomContext before first message
 
     // First message triggers eval
     routeMessage(
@@ -407,10 +411,10 @@ describe('Integration — Full message lifecycle', () => {
     expect(summaryMsg).toBeDefined()
   })
 
-  test('room history snapshot delivered with each message', async () => {
+  test('pass flushes to history — second eval sees prior message as context not [NEW]', async () => {
     const { house, team, routeMessage } = createSystem()
 
-    const room = house.createRoom({ name: 'History',  createdBy: SYSTEM_SENDER_ID })
+    const room = house.createRoom({ name: 'History', createdBy: SYSTEM_SENDER_ID })
 
     const capturedContexts: Array<ReadonlyArray<{ role: string; content: string }>> = []
     const provider: LLMProvider = {
@@ -428,6 +432,7 @@ describe('Integration — Full message lifecycle', () => {
     )
     team.addAgent(agent)
     room.addMember(agent.id)
+    await agent.join(room)  // initialise RoomContext
 
     // Post two messages in sequence, waiting for processing after each
     routeMessage({ rooms: [room.profile.id] }, { senderId: 'alice', content: 'First message', type: 'chat' })
@@ -438,21 +443,21 @@ describe('Integration — Full message lifecycle', () => {
 
     expect(capturedContexts).toHaveLength(2)
 
-    // First eval: only "First message" as [NEW]
+    // First eval: "First message" arrives as [NEW]
     const firstUserMsgs = capturedContexts[0]!.filter(m => m.role === 'user')
     expect(firstUserMsgs).toHaveLength(1)
     expect(firstUserMsgs[0]!.content).toContain('[NEW]')
     expect(firstUserMsgs[0]!.content).toContain('First message')
 
-    // Second eval: both messages are [NEW] since the pass didn't flush "First message"
+    // Second eval: "First message" is now in history (pass flushed it), "Second message" is [NEW]
     const secondUserMsgs = capturedContexts[1]!.filter(m => m.role === 'user')
     expect(secondUserMsgs).toHaveLength(2)
     const firstMsg = secondUserMsgs.find(m => m.content.includes('First message'))
     const secondMsg = secondUserMsgs.find(m => m.content.includes('Second message'))
     expect(firstMsg).toBeDefined()
-    expect(firstMsg!.content).toContain('[NEW]')
+    expect(firstMsg!.content).not.toContain('[NEW]')   // in history, not new
     expect(secondMsg).toBeDefined()
-    expect(secondMsg!.content).toContain('[NEW]')
+    expect(secondMsg!.content).toContain('[NEW]')       // freshly arrived
   })
 
   test('concurrent rooms — each room has independent context', async () => {
