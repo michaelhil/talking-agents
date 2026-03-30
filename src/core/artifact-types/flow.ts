@@ -35,6 +35,7 @@ export const createFlowArtifactType = (team: Team): ArtifactTypeDefinition => ({
         },
       },
       loop: { type: 'boolean', description: 'Whether the flow repeats after all steps complete' },
+      description: { type: 'string', description: 'Optional description of the flow purpose' },
     },
     required: ['steps', 'loop'],
   },
@@ -67,12 +68,18 @@ export const createFlowArtifactType = (team: Team): ArtifactTypeDefinition => ({
     const steps = body.steps ?? []
     const sequence = steps.map(s => s.agentName).join(' → ')
     const loopTag = body.loop ? ' [loops]' : ''
-    return [
+    const desc = artifact.description ?? body.description
+    const lines = [
       `Flow: "${artifact.title}" [id: ${artifact.id}]${loopTag}`,
+      ...(desc ? [`  Purpose: ${desc}`] : []),
       `  Sequence: ${sequence || '(no steps)'}`,
       `  Start with: start_flow { roomName: "<room>", flowArtifactId: "${artifact.id}", content: "<trigger>" }`,
-    ].join('\n')
+    ]
+    return lines.join('\n')
   },
 
-  postSystemMessageOn: ['added', 'removed'],
+  formatUpdateMessage: (artifact: Artifact): string =>
+    `flow "${artifact.title}" was updated`,
+
+  postSystemMessageOn: ['added', 'updated', 'removed'],
 })

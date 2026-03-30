@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { MessageTarget, FlowArtifactBody } from '../../../core/types.ts'
+import type { MessageTarget } from '../../../core/types.ts'
 import type { System } from '../../../main.ts'
+import { resolveFlowArtifact, isFlowError } from '../../../core/flow-artifact.ts'
 import { textResult, errorResult, resolveRoom } from './helpers.ts'
 
 export const registerMessageTools = (mcpServer: McpServer, system: System): void => {
@@ -61,23 +62,14 @@ export const registerMessageTools = (mcpServer: McpServer, system: System): void
       try {
         const room = resolveRoom(system, roomName)
         const artifact = system.house.artifacts.get(flowArtifactId)
-        if (!artifact || artifact.type !== 'flow') {
-          return errorResult(`Flow artifact "${flowArtifactId}" not found`)
-        }
-        const flowBody = artifact.body as FlowArtifactBody
-        const steps = (flowBody.steps ?? []).map(s => ({
-          agentId: s.agentId || (system.team.getAgent(s.agentName)?.id ?? ''),
-          agentName: s.agentName,
-          ...(s.stepPrompt ? { stepPrompt: s.stepPrompt } : {}),
-        }))
-        if (steps.length === 0) return errorResult('Flow has no steps')
-        const unresolvedStep = steps.find(s => !s.agentId)
-        if (unresolvedStep) return errorResult(`Flow step agent "${unresolvedStep.agentName}" not found`)
+        if (!artifact) return errorResult(`Flow artifact "${flowArtifactId}" not found`)
+        const flow = resolveFlowArtifact(artifact, system.team, room.profile.roomPrompt)
+        if (isFlowError(flow)) return errorResult(flow.error)
         if (content) {
           room.setPaused(true)
           room.post({ senderId, senderName: senderName ?? senderId, content, type: 'chat' })
         }
-        room.startFlow({ id: artifact.id, name: artifact.title, steps, loop: flowBody.loop ?? false })
+        room.startFlow(flow)
         return textResult({ started: true, mode: room.deliveryMode })
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to start flow')
@@ -154,10 +146,11 @@ export const registerMessageTools = (mcpServer: McpServer, system: System): void
     {
       type: z.string().describe('Artifact type (e.g. task_list, poll, flow)'),
       title: z.string().describe('Human-readable title'),
+      description: z.string().optional().describe('Optional longer description'),
       body: z.record(z.unknown()).describe('Type-specific body (see list_artifact_types for schema)'),
       scope: z.array(z.string()).optional().describe('Room names to scope this artifact to (empty = system-wide)'),
     },
-    async ({ type, title, body, scope }) => {
+    async ({ type, title, description, body, scope }) => {
       try {
         const typeDef = system.house.artifactTypes.get(type)
         if (!typeDef) return errorResult(`Unknown artifact type "${type}"`)
@@ -170,6 +163,7 @@ export const registerMessageTools = (mcpServer: McpServer, system: System): void
         const artifact = system.house.artifacts.add({
           type,
           title,
+          ...(description !== undefined ? { description } : {}),
           body,
           scope: scopeIds,
           createdBy: 'mcp-client',

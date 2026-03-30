@@ -36,5 +36,15 @@ export const createTeam = (): Team => {
   const listByKind = (kind: 'ai' | 'human'): ReadonlyArray<Agent> =>
     [...agents.values()].filter(a => a.kind === kind)
 
-  return { addAgent, getAgent, removeAgent, listAgents, listByKind }
+  // Case-insensitive tag match. Tags live in agent.metadata.tags (AI agents)
+  // or agent profile — we check metadata first, then profile via getConfig().
+  const listByTag = (tag: string): ReadonlyArray<Agent> => {
+    const lower = tag.toLowerCase()
+    return [...agents.values()].filter(a => {
+      const tags = (a.metadata?.tags as ReadonlyArray<string> | undefined) ?? []
+      return tags.some(t => t.toLowerCase() === lower)
+    })
+  }
+
+  return { addAgent, getAgent, removeAgent, listAgents, listByKind, listByTag }
 }

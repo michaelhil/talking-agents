@@ -274,8 +274,8 @@ describe('Room — Delivery modes', () => {
 
   test('setDeliveryMode switches mode', () => {
     const room = createRoom(makeProfile())
-    room.setDeliveryMode('flow')
-    expect(room.deliveryMode).toBe('flow')
+    room.setDeliveryMode('staleness')
+    expect(room.deliveryMode).toBe('staleness')
     room.setDeliveryMode('broadcast')
     expect(room.deliveryMode).toBe('broadcast')
   })

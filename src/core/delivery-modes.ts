@@ -10,7 +10,21 @@
 //   flow       — deliver to current step agent (if eligible)
 // ============================================================================
 
-import type { DeliverFn, FlowDeliveryContext, FlowExecution, Message } from './types.ts'
+import type { DeliverFn, Flow, FlowDeliveryContext, FlowExecution, Message } from './types.ts'
+
+// --- Shared flow context builder ---
+// Single source of truth for FlowDeliveryContext construction.
+// Used by both startFlow (room.ts) and deliverFlow (subsequent steps).
+
+export const buildFlowDeliveryContext = (flow: Flow, stepIndex: number): FlowDeliveryContext => ({
+  flowName: flow.name,
+  stepIndex,
+  totalSteps: flow.steps.length,
+  loop: flow.loop,
+  steps: flow.steps.map(s => ({ agentName: s.agentName })),
+  ...(flow.artifactDescription !== undefined ? { artifactDescription: flow.artifactDescription } : {}),
+  ...(flow.goalChain !== undefined ? { goalChain: flow.goalChain } : {}),
+})
 
 // --- Broadcast mode ---
 
@@ -57,13 +71,7 @@ export const deliverFlow = (
 
   if (!result.completed && result.nextAgentId) {
     const nextStep = execution.flow.steps[result.nextStepIndex]!
-    const flowContext: FlowDeliveryContext = {
-      flowName: execution.flow.name,
-      stepIndex: result.nextStepIndex,
-      totalSteps: execution.flow.steps.length,
-      loop: execution.flow.loop,
-      steps: execution.flow.steps.map(s => ({ agentName: s.agentName })),
-    }
+    const flowContext = buildFlowDeliveryContext(execution.flow, result.nextStepIndex)
     const enriched = {
       ...message,
       metadata: {

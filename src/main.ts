@@ -9,7 +9,7 @@ import type {
   Agent, AIAgentConfig, DeliverFn, House, HouseCallbacks, LLMProvider,
   OnArtifactChanged, OnDeliveryModeChanged, OnFlowEvent,
   OnMembershipChanged, OnMessagePosted, OnRoomCreated, OnRoomDeleted,
-  OnTurnChanged, ResolveAgentName, RouteMessage, Team, ToolRegistry,
+  OnTurnChanged, ResolveAgentName, ResolveTagFn, RouteMessage, Team, ToolRegistry,
 } from './core/types.ts'
 import { DEFAULTS } from './core/types.ts'
 import { createHouse } from './core/house.ts'
@@ -81,10 +81,12 @@ export const createSystem = (ollamaUrl?: string): System => {
   const membershipChanged = lateBinding<OnMembershipChanged>()
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
+  const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
 
   const houseCallbacks: HouseCallbacks = {
     deliver,
     resolveAgentName,
+    resolveTag,
     onMessagePosted: messagePosted.proxy,
     onTurnChanged: turnChanged.proxy,
     onDeliveryModeChanged: deliveryModeChanged.proxy,

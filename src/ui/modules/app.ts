@@ -583,8 +583,8 @@ modeSelector.onchange = () => {
   // Create flow
   if (val === '__create_flow__') {
     refreshModeSelector()  // revert selector to current state
-    openFlowEditorModal(agents, myAgentId, (name, steps, loop) => {
-      send({ type: 'add_artifact', artifactType: 'flow', title: name, body: { steps, loop }, scope: [room.name] })
+    openFlowEditorModal(agents, myAgentId, (name, steps, loop, description) => {
+      send({ type: 'add_artifact', artifactType: 'flow', title: name, body: { steps, loop }, scope: [room.name], ...(description !== undefined ? { description } : {}) })
     })
     return
   }
@@ -624,12 +624,15 @@ roomForm.onsubmit = (e) => {
 agentForm.onsubmit = (e) => {
   e.preventDefault()
   const data = new FormData(agentForm)
+  const rawTags = (data.get('tags') as string | null)?.trim() ?? ''
+  const tags = rawTags ? rawTags.split(',').map(t => t.trim()).filter(Boolean) : undefined
   send({
     type: 'create_agent',
     config: {
       name: data.get('name') as string,
       model: data.get('model') as string,
       systemPrompt: data.get('systemPrompt') as string,
+      ...(tags && tags.length > 0 ? { tags } : {}),
     },
   })
   agentModal.close()

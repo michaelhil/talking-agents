@@ -104,5 +104,14 @@ export const pollArtifactType: ArtifactTypeDefinition = {
     return lines.join('\n')
   },
 
-  postSystemMessageOn: ['added', 'removed', 'resolved'],
+  formatUpdateMessage: (artifact: Artifact): string => {
+    const body = artifact.body as PollBody
+    const votes = body.votes ?? {}
+    const tallies = body.options
+      .map(opt => `${opt.text}: ${(votes[opt.id] ?? []).length}`)
+      .join(', ')
+    return `poll "${body.question}" was updated — ${tallies}`
+  },
+
+  postSystemMessageOn: ['added', 'updated', 'removed', 'resolved'],
 }

@@ -132,9 +132,11 @@ export interface BuildContextDeps {
 const buildParticipantsSection = (
   participants: ReadonlyArray<AgentProfile | string>,
 ): string => {
-  const lines = participants.map(p =>
-    typeof p === 'string' ? `- ${p}` : `- ${p.name} (${p.kind})`,
-  )
+  const lines = participants.map(p => {
+    if (typeof p === 'string') return `- ${p}`
+    const tagStr = p.tags && p.tags.length > 0 ? ` [tags: ${p.tags.join(', ')}]` : ''
+    return `- ${p.name} (${p.kind})${tagStr}`
+  })
   return `Other participants:\n${lines.join('\n')}`
 }
 
@@ -161,7 +163,13 @@ const buildFlowSection = (fc: FlowDeliveryContext, stepIndex: number): string =>
     i === stepIndex ? `${s.agentName} (you)` : s.agentName,
   )
   if (fc.loop) sequenceParts.push('(repeats)')
-  return `Flow: "${fc.flowName}" · step ${stepNum} of ${fc.totalSteps}${loopTag}\nSequence: ${sequenceParts.join(' → ')}`
+  const lines = [`Flow: "${fc.flowName}" · step ${stepNum} of ${fc.totalSteps}${loopTag}`]
+  if (fc.artifactDescription) lines.push(`Purpose: ${fc.artifactDescription}`)
+  if (fc.goalChain && fc.goalChain.length > 1) {
+    lines.push(`Goal context: ${fc.goalChain.join(' → ')}`)
+  }
+  lines.push(`Sequence: ${sequenceParts.join(' → ')}`)
+  return lines.join('\n')
 }
 
 const buildActivitySection = (

@@ -234,7 +234,7 @@ export const createAIAgent = (
     id: agentId,
     name: config.name,
     kind: 'ai',
-    metadata: { model: currentModel },
+    metadata: { model: currentModel, ...(config.tags ? { tags: config.tags } : {}) },
     state: cm.state,
     receive,
     join,

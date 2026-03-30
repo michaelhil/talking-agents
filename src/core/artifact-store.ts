@@ -53,6 +53,7 @@ export const createArtifactStore = (
       id: crypto.randomUUID(),
       type: config.type,
       title: config.title,
+      ...(config.description !== undefined ? { description: config.description } : {}),
       body: config.body,
       scope: config.scope ?? [],
       createdBy: config.createdBy,
@@ -95,6 +96,7 @@ export const createArtifactStore = (
     const updated: Artifact = {
       ...existing,
       ...(updates.title !== undefined ? { title: updates.title } : {}),
+      ...(updates.description !== undefined ? { description: updates.description } : {}),
       body: newBody,
       updatedAt: Date.now(),
       ...(resolution !== undefined && !existing.resolvedAt ? { resolution, resolvedAt: Date.now() } : {}),

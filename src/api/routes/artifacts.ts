@@ -52,6 +52,7 @@ export const artifactRoutes: RouteEntry[] = [
       const artifact = system.house.artifacts.add({
         type: body.artifactType,
         title: body.title,
+        ...(body.description !== undefined ? { description: body.description as string } : {}),
         body: body.body as Record<string, unknown>,
         scope,
         createdBy: (body.createdBy as string) ?? 'system',
@@ -79,6 +80,7 @@ export const artifactRoutes: RouteEntry[] = [
       const body = await parseBody(req)
       const updated = system.house.artifacts.update(id, {
         title: body.title as string | undefined,
+        description: body.description as string | undefined,
         body: body.body as Record<string, unknown> | undefined,
         resolution: body.resolution as string | undefined,
       })

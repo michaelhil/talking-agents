@@ -34,12 +34,14 @@ const DEFAULT_RESPONSE_FORMAT = `- By default, just write your message as natura
 - To direct a message to a specific agent, use [[AgentName]] in your response. The addressed agent(s) will respond next. Other agents will see your message as context later.
   Example: [[Analyst-1]] can you elaborate on that point?
   You can address multiple agents: [[Analyst-1]] [[Researcher-2]] compare notes.
+- To address all agents with a given tag (role/capability), use [[tag:TagName]].
+  Example: [[tag:Reviewer]] please review this before we proceed.
 - Never wrap your response in JSON or data structures.`
 
 
 export const createHouse = (callbacks: HouseCallbacks = {}): House => {
   const {
-    deliver, resolveAgentName, onMessagePosted, onTurnChanged,
+    deliver, resolveAgentName, resolveTag, onMessagePosted, onTurnChanged,
     onDeliveryModeChanged, onFlowEvent, onRoomCreated, onRoomDeleted,
   } = callbacks
 
@@ -52,22 +54,35 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
 
   const artifactTypeRegistry = createArtifactTypeRegistry()
 
+  // Classify a raw artifact action into the event key used for postSystemMessageOn checks.
+  // A plain update that also resolves is classified as 'resolved', not 'updated'.
+  const classifyArtifactEvent = (
+    action: 'added' | 'updated' | 'removed',
+    artifact: Artifact,
+  ): 'added' | 'updated' | 'removed' | 'resolved' => {
+    if (action === 'updated' && artifact.resolvedAt !== undefined) return 'resolved'
+    return action
+  }
+
   // Wire onArtifactChanged to post system messages in scoped rooms on significant events.
   const artifactChangedHandler: OnArtifactChanged = (action, artifact) => {
-    // Post a system message to scoped rooms for significant events
     const typeDef = artifactTypeRegistry.get(artifact.type)
     const postOn = typeDef?.postSystemMessageOn ?? ['added', 'removed', 'resolved']
-    const isResolved = action === 'updated' && artifact.resolvedAt !== undefined
-    const eventKey = isResolved ? 'resolved' : action
-    if (postOn.includes(eventKey as 'added' | 'removed' | 'resolved') && artifact.scope.length > 0) {
-      const verb = action === 'added' ? 'created' : action === 'removed' ? 'deleted' : 'resolved'
+    const eventKey = classifyArtifactEvent(action, artifact)
+
+    if ((postOn as ReadonlyArray<string>).includes(eventKey) && artifact.scope.length > 0) {
+      let content: string
+      if (eventKey === 'updated') {
+        // Prefer type-specific message; fall back to generic
+        const custom = typeDef?.formatUpdateMessage?.(artifact)
+        content = custom ?? `${artifact.type} "${artifact.title}" was updated`
+      } else {
+        const verb = eventKey === 'added' ? 'created' : eventKey === 'removed' ? 'deleted' : 'resolved'
+        content = `${artifact.type} "${artifact.title}" was ${verb}`
+      }
       for (const roomId of artifact.scope) {
         const room = rooms.get(roomId)
-        room?.post({
-          senderId: 'system',
-          content: `${artifact.type} "${artifact.title}" was ${verb}`,
-          type: 'system',
-        })
+        room?.post({ senderId: 'system', content, type: 'system' })
       }
     }
     callbacks.onArtifactChanged?.(action, artifact)
@@ -84,7 +99,7 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
     nameIndex.has(name.toLowerCase())
 
   const makeRoomCallbacks = (): RoomCallbacks => ({
-    deliver, resolveAgentName, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent,
+    deliver, resolveAgentName, resolveTag, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent,
   })
 
   const storeRoom = (config: RoomConfig, name: string): Room => {

@@ -19,20 +19,26 @@ export const extractAgentProfile = (
   const kind = meta.agentKind
 
   if (typeof name === 'string' && (kind === 'ai' || kind === 'human')) {
+    const tags = Array.isArray(meta.agentTags) ? (meta.agentTags as ReadonlyArray<string>) : undefined
     profiles.set(message.senderId, {
       id: message.senderId,
       name,
       kind,
+      ...(tags ? { tags } : {}),
     })
   }
 }
 
 // Build join message metadata from an agent's public fields.
 // Used by spawn.ts and actions.ts when posting join messages.
-export const makeJoinMetadata = (agent: Agent) => ({
-  agentName: agent.name,
-  agentKind: agent.kind,
-})
+export const makeJoinMetadata = (agent: Agent) => {
+  const tags = agent.metadata?.tags as ReadonlyArray<string> | undefined
+  return {
+    agentName: agent.name,
+    agentKind: agent.kind,
+    ...(tags && tags.length > 0 ? { agentTags: tags } : {}),
+  }
+}
 
 // Type-safe AI agent narrowing. Returns AIAgent if kind === 'ai', undefined otherwise.
 // Use instead of manual `agent.kind === 'ai'` + `as AIAgent` casts.

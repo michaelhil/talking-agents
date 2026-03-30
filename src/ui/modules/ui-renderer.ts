@@ -28,6 +28,7 @@ export interface AgentInfo {
   kind: string
   state?: string
   model?: string
+  tags?: ReadonlyArray<string>
 }
 
 export interface TaskItem {
@@ -47,6 +48,7 @@ export interface ArtifactInfo {
   id: string
   type: string
   title: string
+  description?: string
   body: unknown
   scope: ReadonlyArray<string>
   createdBy: string
@@ -420,6 +422,19 @@ const renderAgentRow = (
   div.appendChild(nameRow)
   div.appendChild(kindRow)
 
+  if (agent.tags && agent.tags.length > 0) {
+    const tagRow = document.createElement('div')
+    tagRow.className = 'flex flex-wrap gap-1 mt-0.5'
+    for (const tag of agent.tags) {
+      const chip = document.createElement('span')
+      chip.className = 'text-xs bg-purple-900/40 text-purple-300 px-1.5 py-0 rounded cursor-default'
+      chip.title = `Tag: ${tag} — address with [[tag:${tag}]]`
+      chip.textContent = tag
+      tagRow.appendChild(chip)
+    }
+    div.appendChild(tagRow)
+  }
+
   return div
 }
 
@@ -666,10 +681,11 @@ interface FlowStepInput {
 export const openFlowEditorModal = (
   agents: Map<string, AgentInfo>,
   myAgentId: string,
-  onSave: (name: string, steps: ReadonlyArray<{ agentId: string; agentName: string; stepPrompt?: string }>, loop: boolean) => void,
+  onSave: (name: string, steps: ReadonlyArray<{ agentId: string; agentName: string; stepPrompt?: string }>, loop: boolean, description?: string) => void,
   existingName?: string,
   existingSteps?: ReadonlyArray<FlowStepInput>,
   existingLoop?: boolean,
+  existingDescription?: string,
 ): void => {
   const steps: FlowStepInput[] = existingSteps
     ? existingSteps.map(s => ({ ...s }))
@@ -687,6 +703,12 @@ export const openFlowEditorModal = (
   nameInput.className = 'w-full px-3 py-2 border rounded text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-purple-300'
   nameInput.placeholder = 'Flow name'
   nameInput.value = existingName ?? ''
+
+  // Description
+  const descInput = document.createElement('input')
+  descInput.className = 'w-full px-3 py-2 border rounded text-sm mb-3 focus:outline-none focus:ring-1 focus:ring-purple-300'
+  descInput.placeholder = 'Description / goal (optional)'
+  descInput.value = existingDescription ?? ''
 
   // Loop toggle
   const loopRow = document.createElement('label')
@@ -811,7 +833,8 @@ export const openFlowEditorModal = (
         agentName: s.agentName,
         ...(s.stepPrompt.trim() ? { stepPrompt: s.stepPrompt.trim() } : {}),
       }))
-      onSave(flowName, cleanSteps, loopCheckbox.checked)
+      const desc = descInput.value.trim() || undefined
+      onSave(flowName, cleanSteps, loopCheckbox.checked, desc)
       close()
     },
     'Save Flow',
@@ -819,6 +842,7 @@ export const openFlowEditorModal = (
   )
 
   modal.appendChild(nameInput)
+  modal.appendChild(descInput)
   modal.appendChild(loopRow)
   modal.appendChild(stepsContainer)
   modal.appendChild(addStepBtn)

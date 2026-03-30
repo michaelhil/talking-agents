@@ -1,4 +1,5 @@
-import type { Artifact, FlowArtifactBody, FlowStep, WSInbound } from '../../core/types.ts'
+import type { WSInbound } from '../../core/types.ts'
+import { resolveFlowArtifact, isFlowError } from '../../core/flow-artifact.ts'
 import { requireRoom, sendError, type CommandContext } from './types.ts'
 
 export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): boolean => {
@@ -26,6 +27,7 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
       system.house.artifacts.add({
         type: msg.artifactType,
         title: msg.title,
+        ...(msg.description !== undefined ? { description: msg.description } : {}),
         body: msg.body,
         scope,
         createdBy: session.agent.name,
@@ -76,26 +78,13 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
       if (!room) return true
 
       const artifact = system.house.artifacts.get(msg.flowArtifactId)
-      if (!artifact || artifact.type !== 'flow') {
+      if (!artifact) {
         sendError(ws, `Flow artifact "${msg.flowArtifactId}" not found`)
         return true
       }
-      const flowBody = artifact.body as FlowArtifactBody
-      // Resolve any steps missing agentId (forward-compat with old data)
-      const steps: FlowStep[] = (flowBody.steps ?? []).map(s => ({
-        agentId: s.agentId || (system.team.getAgent(s.agentName)?.id ?? ''),
-        agentName: s.agentName,
-        ...(s.stepPrompt ? { stepPrompt: s.stepPrompt } : {}),
-      }))
-
-      if (steps.length === 0) {
-        sendError(ws, 'Flow has no steps')
-        return true
-      }
-
-      const unresolvedStep = steps.find(s => !s.agentId)
-      if (unresolvedStep) {
-        sendError(ws, `Flow step agent "${unresolvedStep.agentName}" not found`)
+      const flow = resolveFlowArtifact(artifact, system.team, room.profile.roomPrompt)
+      if (isFlowError(flow)) {
+        sendError(ws, flow.error)
         return true
       }
 
@@ -106,12 +95,7 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
         content: msg.content,
         type: 'chat',
       })
-      room.startFlow({
-        id: artifact.id,
-        name: artifact.title,
-        steps,
-        loop: flowBody.loop ?? false,
-      })
+      room.startFlow(flow)
       return true
     }
 

@@ -62,6 +62,7 @@ export interface AgentProfile {
   readonly name: string
   readonly kind: 'ai' | 'human'
   readonly model?: string
+  readonly tags?: ReadonlyArray<string>
 }
 
 // === Message Target — where a response should be delivered ===
@@ -106,6 +107,9 @@ export interface Flow {
   readonly name: string
   readonly steps: ReadonlyArray<FlowStep>
   readonly loop: boolean           // repeat or stop after one pass
+  // Goal ancestry — set when flow is sourced from an artifact
+  readonly artifactDescription?: string
+  readonly goalChain?: ReadonlyArray<string>
 }
 
 export interface FlowExecution {
@@ -122,6 +126,9 @@ export interface FlowDeliveryContext {
   readonly totalSteps: number
   readonly loop: boolean
   readonly steps: ReadonlyArray<{ readonly agentName: string }>
+  // Goal ancestry — present when flow was sourced from an artifact
+  readonly artifactDescription?: string
+  readonly goalChain?: ReadonlyArray<string>
 }
 
 // === Artifact System ===
@@ -167,6 +174,7 @@ export interface PollBody {
 export interface FlowArtifactBody {
   readonly steps: ReadonlyArray<FlowStep>
   readonly loop: boolean
+  readonly description?: string
 }
 
 // --- Artifact instance ---
@@ -175,6 +183,7 @@ export interface Artifact {
   readonly id: string
   readonly type: string                         // artifact type name: 'task_list', 'poll', 'flow'
   readonly title: string                        // human-readable label
+  readonly description?: string                 // optional longer description
   readonly body: Record<string, unknown>        // type-specific payload
   readonly scope: ReadonlyArray<string>         // room IDs; empty = system-wide
   readonly createdBy: string                    // agent name
@@ -187,6 +196,7 @@ export interface Artifact {
 export interface ArtifactCreateConfig {
   readonly type: string
   readonly title: string
+  readonly description?: string
   readonly body: Record<string, unknown>
   readonly scope?: ReadonlyArray<string>        // defaults to []
   readonly createdBy: string
@@ -194,6 +204,7 @@ export interface ArtifactCreateConfig {
 
 export interface ArtifactUpdateConfig {
   readonly title?: string
+  readonly description?: string
   readonly body?: Record<string, unknown>       // type's onUpdate decides merge strategy; default: shallow merge
   readonly resolution?: string                  // explicit resolution
 }
@@ -218,8 +229,11 @@ export interface ArtifactTypeDefinition {
   readonly checkAutoResolve?: (artifact: Artifact) => string | undefined
   // LLM context rendering — optional; generic fallback used if absent
   readonly formatForContext?: (artifact: Artifact) => string
+  // Custom update notification message — called when action is 'updated' and type opts in
+  readonly formatUpdateMessage?: (artifact: Artifact) => string | undefined
   // Controls when a system message is posted to scoped rooms on change
-  readonly postSystemMessageOn?: ReadonlyArray<'added' | 'removed' | 'resolved'>
+  // Include 'updated' to opt into blackboard update notifications
+  readonly postSystemMessageOn?: ReadonlyArray<'added' | 'updated' | 'removed' | 'resolved'>
 }
 
 export interface ArtifactTypeRegistry {
@@ -278,6 +292,7 @@ export type AgentDeliveryStatus = 'active' | 'waiting' | 'muted'
 // --- Room dependencies ---
 
 export type ResolveAgentName = (name: string) => string | undefined  // agent name → UUID
+export type ResolveTagFn = (tag: string) => ReadonlyArray<string>    // tag → agent UUIDs
 
 // === Room — self-contained component: stores messages and delivers to members ===
 
@@ -342,6 +357,7 @@ export interface CreateResult<T> {
 export interface HouseCallbacks {
   readonly deliver?: DeliverFn
   readonly resolveAgentName?: ResolveAgentName
+  readonly resolveTag?: ResolveTagFn
   readonly onMessagePosted?: OnMessagePosted
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
@@ -427,6 +443,7 @@ export interface Team {
   readonly removeAgent: (id: string) => boolean
   readonly listAgents: () => ReadonlyArray<Agent>
   readonly listByKind: (kind: 'ai' | 'human') => ReadonlyArray<Agent>
+  readonly listByTag: (tag: string) => ReadonlyArray<Agent>
 }
 
 // === RouterDeps — configuration object for createMessageRouter ===
@@ -489,6 +506,7 @@ export interface AIAgentConfig {
   readonly tools?: ReadonlyArray<string>        // tool names this agent can use
   readonly maxToolIterations?: number           // default 5
   readonly maxToolResultChars?: number          // default: 4000
+  readonly tags?: ReadonlyArray<string>         // capability/role tags for [[tag:X]] addressing
 }
 
 // === Agent Response (parsed from LLM plain text output) ===
@@ -572,7 +590,7 @@ export type WSInbound =
   | { readonly type: 'cancel_flow'; readonly roomName: string }
   | { readonly type: 'cancel_generation'; readonly name: string }
   // Artifact management
-  | { readonly type: 'add_artifact'; readonly artifactType: string; readonly title: string; readonly body: Record<string, unknown>; readonly scope?: ReadonlyArray<string> }
+  | { readonly type: 'add_artifact'; readonly artifactType: string; readonly title: string; readonly description?: string; readonly body: Record<string, unknown>; readonly scope?: ReadonlyArray<string> }
   | { readonly type: 'update_artifact'; readonly artifactId: string; readonly title?: string; readonly body?: Record<string, unknown>; readonly resolution?: string }
   | { readonly type: 'remove_artifact'; readonly artifactId: string }
   | { readonly type: 'cast_vote'; readonly artifactId: string; readonly optionId: string }

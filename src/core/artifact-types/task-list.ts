@@ -132,8 +132,9 @@ export const createTaskListArtifactType = (store: ArtifactStore): ArtifactTypeDe
   formatForContext: (artifact: Artifact): string => {
     const body = artifact.body as TaskListBody
     const tasks = body.tasks ?? []
+    const desc = artifact.description ?? body.description
     const lines: string[] = [`Task list: "${artifact.title}" [id: ${artifact.id}]`]
-    if (body.description) lines.push(`  ${body.description}`)
+    if (desc) lines.push(`  ${desc}`)
     if (tasks.length === 0) {
       lines.push('  (no tasks)')
     } else {
@@ -148,5 +149,12 @@ export const createTaskListArtifactType = (store: ArtifactStore): ArtifactTypeDe
     return lines.join('\n')
   },
 
-  postSystemMessageOn: ['added', 'removed', 'resolved'],
+  formatUpdateMessage: (artifact: Artifact): string => {
+    const body = artifact.body as TaskListBody
+    const tasks = body.tasks ?? []
+    const done = tasks.filter(t => t.status === 'completed').length
+    return `task_list "${artifact.title}" was updated — ${done}/${tasks.length} tasks complete`
+  },
+
+  postSystemMessageOn: ['added', 'updated', 'removed', 'resolved'],
 })

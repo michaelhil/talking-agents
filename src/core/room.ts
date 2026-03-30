@@ -23,16 +23,17 @@
 import type {
   DeliverFn, DeliveryMode, Flow, FlowDeliveryContext,
   Message, OnDeliveryModeChanged, OnFlowEvent, OnMessagePosted,
-  OnTurnChanged, PostParams, ResolveAgentName, Room, RoomProfile, RoomRestoreParams, RoomState,
+  OnTurnChanged, PostParams, ResolveAgentName, ResolveTagFn, Room, RoomProfile, RoomRestoreParams, RoomState,
 } from './types.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from './types.ts'
 import { parseAddressedAgents } from './addressing.ts'
-import { advanceFlowStep, deliverBroadcast, deliverFlow } from './delivery-modes.ts'
+import { advanceFlowStep, buildFlowDeliveryContext, deliverBroadcast, deliverFlow } from './delivery-modes.ts'
 import { createFlowExecutionState } from './room-flows.ts'
 
 export interface RoomCallbacks {
   readonly deliver?: DeliverFn
   readonly resolveAgentName?: ResolveAgentName
+  readonly resolveTag?: ResolveTagFn
   readonly onMessagePosted?: OnMessagePosted
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
@@ -53,6 +54,7 @@ export const createRoom = (
 
   const deliver = callbacks?.deliver
   const resolveAgentName = callbacks?.resolveAgentName
+  const resolveTag = callbacks?.resolveTag
 
   // --- State ---
   let mode: DeliveryMode = 'broadcast'
@@ -99,13 +101,20 @@ export const createRoom = (
     metadata: params.metadata,
   })
 
-  const dispatchToAddressed = (message: Message, addressedNames: ReadonlyArray<string>): boolean => {
-    if (!resolveAgentName) return false
-    const addressedIds = addressedNames
-      .map(resolveAgentName)
-      .filter((id): id is string => id !== undefined && members.has(id) && !muted.has(id))
-    if (addressedIds.length === 0) return false
-    for (const id of addressedIds) deliverToOne(id, message)
+  const dispatchToAddressed = (message: Message, targets: ReturnType<typeof parseAddressedAgents>): boolean => {
+    const ids = new Set<string>()
+    for (const target of targets) {
+      if (target.kind === 'name' && resolveAgentName) {
+        const id = resolveAgentName(target.value)
+        if (id && members.has(id) && !muted.has(id)) ids.add(id)
+      } else if (target.kind === 'tag' && resolveTag) {
+        for (const id of resolveTag(target.value)) {
+          if (members.has(id) && !muted.has(id)) ids.add(id)
+        }
+      }
+    }
+    if (ids.size === 0) return false
+    for (const id of ids) deliverToOne(id, message)
     return true
   }
 
@@ -295,13 +304,7 @@ export const createRoom = (
     flowState.advanceStep(startIndex)
 
     const startStep = flow.steps[startIndex]!
-    const flowContext: FlowDeliveryContext = {
-      flowName: flow.name,
-      stepIndex: startIndex,
-      totalSteps: flow.steps.length,
-      loop: flow.loop,
-      steps: flow.steps.map(s => ({ agentName: s.agentName })),
-    }
+    const flowContext = buildFlowDeliveryContext(flow, startIndex)
     const enriched = {
       ...lastMsg,
       metadata: {
