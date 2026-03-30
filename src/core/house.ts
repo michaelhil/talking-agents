@@ -43,6 +43,7 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
   const {
     deliver, resolveAgentName, resolveTag, onMessagePosted, onTurnChanged,
     onDeliveryModeChanged, onFlowEvent, onRoomCreated, onRoomDeleted,
+    callSystemLLM,
   } = callbacks
 
   const rooms = new Map<string, Room>()
@@ -176,5 +177,6 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
 
     artifacts: artifactStore as ArtifactStore,
     artifactTypes: artifactTypeRegistry as ArtifactTypeRegistry,
+    callSystemLLM,
   }
 }

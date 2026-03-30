@@ -18,6 +18,7 @@ import { createMessageRouter } from './core/delivery.ts'
 import { createOllamaProvider } from './llm/ollama.ts'
 import { createToolRegistry } from './core/tool-registry.ts'
 import { spawnAIAgent, spawnHumanAgent, type SpawnOptions } from './agents/spawn.ts'
+import { callLLM } from './agents/evaluation.ts'
 import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
@@ -83,6 +84,10 @@ export const createSystem = (ollamaUrl?: string): System => {
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
 
+  const resolvedOllamaUrl = ollamaUrl ?? DEFAULTS.ollamaBaseUrl
+  const ollama = createOllamaProvider(resolvedOllamaUrl)
+  const toolCapabilityCache = createToolCapabilityCache(resolvedOllamaUrl)
+
   const houseCallbacks: HouseCallbacks = {
     deliver,
     resolveAgentName,
@@ -94,12 +99,10 @@ export const createSystem = (ollamaUrl?: string): System => {
     onArtifactChanged: artifactChanged.proxy,
     onRoomCreated: roomCreated.proxy,
     onRoomDeleted: roomDeleted.proxy,
+    callSystemLLM: (options) => callLLM(ollama, options),
   }
   const house = createHouse(houseCallbacks)
   const routeMessage = createMessageRouter({ house })
-  const resolvedOllamaUrl = ollamaUrl ?? DEFAULTS.ollamaBaseUrl
-  const ollama = createOllamaProvider(resolvedOllamaUrl)
-  const toolCapabilityCache = createToolCapabilityCache(resolvedOllamaUrl)
   const toolRegistry = createToolRegistry()
 
   // Register built-in artifact types — task_list needs store reference for checkAutoResolve

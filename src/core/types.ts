@@ -365,6 +365,7 @@ export interface HouseCallbacks {
   readonly onArtifactChanged?: OnArtifactChanged
   readonly onRoomCreated?: OnRoomCreated
   readonly onRoomDeleted?: OnRoomDeleted
+  readonly callSystemLLM?: (options: LLMCallOptions) => Promise<string>
 }
 
 // === House — room collection + artifact system ===
@@ -384,6 +385,8 @@ export interface House {
   // Artifact system
   readonly artifacts: ArtifactStore
   readonly artifactTypes: ArtifactTypeRegistry
+  // System-level LLM access — available when callSystemLLM is provided via HouseCallbacks
+  readonly callSystemLLM?: (options: LLMCallOptions) => Promise<string>
 }
 
 export interface RoomConfig {
@@ -473,6 +476,9 @@ export interface ToolContext {
   readonly callerId: string
   readonly callerName: string
   readonly roomId?: string    // current trigger room ID — available when tool is called from a room context
+  // LLM access — model is inherited from the calling agent at spawn time.
+  // Note: does not track subsequent model updates (updateModel calls).
+  readonly llm?: (request: ToolLLMRequest) => Promise<string>
 }
 
 export interface Tool {
@@ -507,6 +513,7 @@ export interface AIAgentConfig {
   readonly maxToolIterations?: number           // default 5
   readonly maxToolResultChars?: number          // default: 4000
   readonly tags?: ReadonlyArray<string>         // capability/role tags for [[tag:X]] addressing
+  readonly compressionThreshold?: number        // history length triggering LLM compression (default: 3 × historyLimit)
 }
 
 // === Agent Response (parsed from LLM plain text output) ===
@@ -567,6 +574,32 @@ export interface LLMProvider {
   readonly chat: (request: ChatRequest) => Promise<ChatResponse>
   readonly models: () => Promise<string[]>
   readonly runningModels?: () => Promise<string[]>
+}
+
+// === Standalone LLM call options ===
+// Used by callLLM(), ToolContext.llm, and HouseCallbacks.callSystemLLM.
+// No agent lifecycle, no history, no routing, no protocol parsing.
+// Note: tool loop support (tools + toolExecutor fields) is planned for a future phase.
+export interface LLMCallOptions {
+  readonly model: string
+  readonly systemPrompt?: string
+  readonly messages: ReadonlyArray<{
+    readonly role: 'user' | 'assistant'
+    readonly content: string
+  }>
+  readonly temperature?: number
+  readonly jsonMode?: boolean
+}
+
+// Options for tool-internal LLM calls — model is inherited from the calling agent.
+export interface ToolLLMRequest {
+  readonly systemPrompt?: string
+  readonly messages: ReadonlyArray<{
+    readonly role: 'user' | 'assistant'
+    readonly content: string
+  }>
+  readonly temperature?: number
+  readonly jsonMode?: boolean
 }
 
 // === WebSocket Protocol — typed inbound/outbound messages ===

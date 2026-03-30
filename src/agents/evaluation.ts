@@ -14,6 +14,7 @@
 import type {
   AgentResponse,
   AIAgentConfig,
+  LLMCallOptions,
   LLMProvider,
   NativeToolCall,
   ToolCall,
@@ -197,4 +198,27 @@ export const evaluate = async (
     console.error(`[${config.name}] LLM call failed:`, err)
     return makeResult({ response: { action: 'pass', reason: `LLM error: ${err instanceof Error ? err.message : 'unknown'}` }, generationMs: totalGenerationMs, triggerRoomId })
   }
+}
+
+// === Standalone LLM call ===
+// Single-shot call with no agent state, no history management, no protocol parsing.
+// Returns raw model output. Use jsonMode for structured extraction.
+// Tool loop support is planned for a future phase — for now, tools are not supported.
+
+export const callLLM = async (
+  provider: LLMProvider,
+  options: LLMCallOptions,
+): Promise<string> => {
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = []
+  if (options.systemPrompt) {
+    messages.push({ role: 'system', content: options.systemPrompt })
+  }
+  for (const m of options.messages) messages.push(m)
+  const response = await provider.chat({
+    model: options.model,
+    messages,
+    temperature: options.temperature,
+    jsonMode: options.jsonMode,
+  })
+  return response.content
 }

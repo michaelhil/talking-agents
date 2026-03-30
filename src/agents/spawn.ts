@@ -27,6 +27,7 @@ import type {
 } from '../core/types.ts'
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
+import { callLLM } from './evaluation.ts'
 import { addAgentToRoom } from './actions.ts'
 import { toolsToDefinitions } from '../llm/tool-capability.ts'
 import type { ToolCapabilityCache } from '../llm/tool-capability.ts'
@@ -121,10 +122,12 @@ const resolveAgentTools = async (
 
   if (availableTools.length === 0) return {}
 
-  // Late-binding context: agentRef is filled after createAIAgent returns
+  // Late-binding context: agentRef is filled after createAIAgent returns.
+  // llm uses config.model (spawn-time value); does not track updateModel() calls.
   const lazyContext: ToolContext = {
     get callerId() { return agentRef.id },
     get callerName() { return agentRef.name },
+    llm: (request) => callLLM(llmProvider, { ...request, model: config.model }),
   }
   const toolExecutor = createToolExecutor(toolRegistry, requestedTools, lazyContext)
 
