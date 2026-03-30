@@ -5,3 +5,4 @@ export { createListAgentsTool, createMuteAgentTool, createGetMyContextTool } fro
 export { createListArtifactTypesTool, createListArtifactsTool, createAddArtifactTool, createUpdateArtifactTool, createRemoveArtifactTool, createCastVoteTool } from './artifact-tools.ts'
 export { createGetTimeTool, createPostToRoomTool, createGetRoomHistoryTool } from './utility-tools.ts'
 export { createWebTools } from './web-tools.ts'
+export { createWriteDocumentSectionTool, parseStreamedBlocks } from './document-tools.ts'

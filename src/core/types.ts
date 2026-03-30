@@ -177,6 +177,19 @@ export interface FlowArtifactBody {
   readonly description?: string
 }
 
+// --- Document artifact body types ---
+export type BlockType = 'heading1' | 'heading2' | 'heading3' | 'paragraph' | 'code' | 'quote' | 'list'
+
+export interface DocumentBlock {
+  readonly id: string          // stable UUID — safe for concurrent insert/delete
+  readonly type: BlockType
+  readonly content: string
+}
+
+export interface DocumentBody {
+  readonly blocks: ReadonlyArray<DocumentBlock>
+}
+
 // --- Artifact instance ---
 
 export interface Artifact {
@@ -262,7 +275,7 @@ export interface ArtifactStore {
 
 // --- Callbacks ---
 
-export type OnArtifactChanged = (action: 'added' | 'updated' | 'removed', artifact: Artifact) => void
+export type OnArtifactChanged = (action: 'added' | 'updated' | 'removed' | 'resolved', artifact: Artifact) => void
 
 // === Room event callbacks ===
 
@@ -477,6 +490,7 @@ export interface ToolContext {
   readonly callerName: string
   readonly roomId?: string          // current trigger room ID — available when tool is called from a room context
   readonly llm?: (request: ToolLLMRequest) => Promise<string>  // model inherited from calling agent at spawn time
+  readonly llmStream?: (request: ToolLLMRequest) => AsyncIterable<string>  // streaming variant — yields raw deltas
   readonly maxResultChars?: number  // evaluation loop's context budget for this tool's result — tools should pre-size output to fit
 }
 
@@ -569,8 +583,15 @@ export interface ChatResponse {
   readonly toolCalls?: ReadonlyArray<NativeToolCall>
 }
 
+// A single streamed token/delta from the LLM
+export interface StreamChunk {
+  readonly delta: string   // raw text fragment — may be empty for final done chunk
+  readonly done: boolean
+}
+
 export interface LLMProvider {
   readonly chat: (request: ChatRequest) => Promise<ChatResponse>
+  readonly stream?: (request: ChatRequest) => AsyncIterable<StreamChunk>
   readonly models: () => Promise<string[]>
   readonly runningModels?: () => Promise<string[]>
 }
@@ -639,7 +660,7 @@ export type WSOutbound =
   | { readonly type: 'mute_changed'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
   | { readonly type: 'turn_changed'; readonly roomName: string; readonly agentName?: string; readonly waitingForHuman?: boolean }
   | { readonly type: 'flow_event'; readonly roomName: string; readonly event: 'started' | 'step' | 'completed' | 'cancelled'; readonly detail?: Record<string, unknown> }
-  | { readonly type: 'artifact_changed'; readonly action: 'added' | 'updated' | 'removed'; readonly artifact: Artifact }
+  | { readonly type: 'artifact_changed'; readonly action: 'added' | 'updated' | 'removed' | 'resolved'; readonly artifact: Artifact }
   | { readonly type: 'membership_changed'; readonly roomName: string; readonly agentName: string; readonly action: 'added' | 'removed' }
   | { readonly type: 'room_deleted'; readonly roomName: string }
 

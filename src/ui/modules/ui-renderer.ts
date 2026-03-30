@@ -255,6 +255,89 @@ const renderFlowArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactA
   return wrap
 }
 
+const MAX_VISIBLE_BLOCKS = 20
+
+const renderDocumentArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactAction) => void): HTMLElement => {
+  const body = artifact.body as { blocks?: Array<{ id: string; type: string; content: string }> }
+  const allBlocks = body.blocks ?? []
+  const blocks = allBlocks.slice(-MAX_VISIBLE_BLOCKS)
+
+  const wrap = document.createElement('div')
+  wrap.className = 'group'
+
+  // Header row
+  const header = document.createElement('div')
+  header.className = 'flex items-center gap-1 text-xs mb-1'
+  const titleEl = document.createElement('span')
+  titleEl.className = 'font-medium text-indigo-700 flex-1'
+  titleEl.textContent = artifact.title
+  const countEl = document.createElement('span')
+  countEl.className = 'text-gray-400 flex-shrink-0'
+  countEl.textContent = `${allBlocks.length} block${allBlocks.length === 1 ? '' : 's'}`
+  const removeBtn = document.createElement('button')
+  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
+  removeBtn.textContent = '✕'
+  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
+  header.appendChild(titleEl)
+  header.appendChild(countEl)
+  header.appendChild(removeBtn)
+  wrap.appendChild(header)
+
+  if (allBlocks.length > MAX_VISIBLE_BLOCKS) {
+    const moreEl = document.createElement('div')
+    moreEl.className = 'text-xs text-gray-400 italic mb-1'
+    moreEl.textContent = `… ${allBlocks.length - MAX_VISIBLE_BLOCKS} earlier blocks`
+    wrap.appendChild(moreEl)
+  }
+
+  // Block content
+  for (const block of blocks) {
+    const blockEl = document.createElement('div')
+    blockEl.className = 'text-xs text-gray-700 leading-snug mb-0.5'
+    switch (block.type) {
+      case 'heading1':
+        blockEl.className = 'text-sm font-bold text-gray-900 mb-0.5'
+        blockEl.textContent = block.content
+        break
+      case 'heading2':
+        blockEl.className = 'text-xs font-semibold text-gray-800 mb-0.5'
+        blockEl.textContent = block.content
+        break
+      case 'heading3':
+        blockEl.className = 'text-xs font-medium text-gray-700 mb-0.5'
+        blockEl.textContent = block.content
+        break
+      case 'code': {
+        const pre = document.createElement('pre')
+        pre.className = 'text-xs bg-gray-50 rounded p-1 mb-0.5 overflow-x-auto whitespace-pre-wrap break-words'
+        pre.textContent = block.content
+        wrap.appendChild(pre)
+        continue
+      }
+      case 'quote':
+        blockEl.className = 'text-xs text-gray-600 border-l-2 border-gray-300 pl-2 italic mb-0.5'
+        blockEl.textContent = block.content
+        break
+      case 'list':
+        blockEl.className = 'text-xs text-gray-700 mb-0.5'
+        blockEl.textContent = `• ${block.content}`
+        break
+      default:
+        blockEl.textContent = block.content
+    }
+    wrap.appendChild(blockEl)
+  }
+
+  if (allBlocks.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'text-xs text-gray-400 italic'
+    empty.textContent = '(empty document)'
+    wrap.appendChild(empty)
+  }
+
+  return wrap
+}
+
 const renderGenericArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactAction) => void): HTMLElement => {
   const wrap = document.createElement('div')
   wrap.className = 'group flex items-center gap-1 text-xs'
@@ -288,6 +371,7 @@ export const renderArtifacts = (
     if (artifact.type === 'task_list') inner = renderTaskListArtifact(artifact, onAction)
     else if (artifact.type === 'poll') inner = renderPollArtifact(artifact, myAgentId, onAction)
     else if (artifact.type === 'flow') inner = renderFlowArtifact(artifact, onAction)
+    else if (artifact.type === 'document') inner = renderDocumentArtifact(artifact, onAction)
     else inner = renderGenericArtifact(artifact, onAction)
     wrap.appendChild(inner)
     container.appendChild(wrap)

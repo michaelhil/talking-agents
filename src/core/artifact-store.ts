@@ -31,20 +31,22 @@ export const createArtifactStore = (
 ): ArtifactStore => {
   const artifacts = new Map<string, Artifact>()
 
-  const notify = (action: 'added' | 'updated' | 'removed', artifact: Artifact): void => {
+  const notify = (action: 'added' | 'updated' | 'removed' | 'resolved', artifact: Artifact): void => {
     onChanged?.(action, artifact)
   }
 
-  // Run checkAutoResolve; if it returns a resolution string, stamp and re-notify.
-  const maybeAutoResolve = (artifact: Artifact): Artifact => {
-    if (artifact.resolvedAt) return artifact  // already resolved — never re-resolve
+  // Run checkAutoResolve; if it returns a resolution string, stamp and fire 'resolved'.
+  // Returns { artifact, didResolve } so callers can skip their secondary notify.
+  const maybeAutoResolve = (artifact: Artifact): { artifact: Artifact; didResolve: boolean } => {
+    if (artifact.resolvedAt) return { artifact, didResolve: false }  // already resolved — never re-resolve
     const typeDef = typeRegistry.get(artifact.type)
-    if (!typeDef?.checkAutoResolve) return artifact
+    if (!typeDef?.checkAutoResolve) return { artifact, didResolve: false }
     const resolution = typeDef.checkAutoResolve(artifact)
-    if (!resolution) return artifact
+    if (!resolution) return { artifact, didResolve: false }
     const resolved: Artifact = { ...artifact, resolution, resolvedAt: Date.now() }
     artifacts.set(resolved.id, resolved)
-    return resolved
+    notify('resolved', resolved)
+    return { artifact: resolved, didResolve: true }
   }
 
   const add = (config: ArtifactCreateConfig): Artifact => {
@@ -65,7 +67,7 @@ export const createArtifactStore = (
     const typeDef = typeRegistry.get(artifact.type)
     typeDef?.onCreate?.(artifact, { callerId: 'system', callerName: config.createdBy })
 
-    const finalArtifact = maybeAutoResolve(artifact)
+    const { artifact: finalArtifact } = maybeAutoResolve(artifact)
     notify('added', finalArtifact)
     return finalArtifact
   }
@@ -103,8 +105,10 @@ export const createArtifactStore = (
     }
     artifacts.set(updated.id, updated)
 
-    const finalArtifact = updated.resolvedAt ? updated : maybeAutoResolve(updated)
-    notify('updated', finalArtifact)
+    const { artifact: finalArtifact, didResolve } = updated.resolvedAt
+      ? { artifact: updated, didResolve: false }
+      : maybeAutoResolve(updated)
+    if (!didResolve) notify('updated', finalArtifact)
     return finalArtifact
   }
 

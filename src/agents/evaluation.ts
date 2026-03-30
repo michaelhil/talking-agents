@@ -222,3 +222,31 @@ export const callLLM = async (
   })
   return response.content
 }
+
+// Streaming variant — yields raw deltas as they arrive. Falls back to callLLM if
+// the provider does not support streaming, emitting the full response as one chunk.
+export const streamLLM = async function* (
+  provider: LLMProvider,
+  options: LLMCallOptions,
+): AsyncGenerator<string> {
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = []
+  if (options.systemPrompt) messages.push({ role: 'system', content: options.systemPrompt })
+  for (const m of options.messages) messages.push(m)
+
+  const request = {
+    model: options.model,
+    messages,
+    temperature: options.temperature,
+    jsonMode: options.jsonMode,
+  }
+
+  if (provider.stream) {
+    for await (const chunk of provider.stream(request)) {
+      if (chunk.delta) yield chunk.delta
+    }
+  } else {
+    // Provider doesn't support streaming — emit full response as a single delta
+    const response = await provider.chat(request)
+    yield response.content
+  }
+}

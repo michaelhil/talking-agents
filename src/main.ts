@@ -31,11 +31,12 @@ import {
   createPostToRoomTool, createGetRoomHistoryTool,
   createListArtifactTypesTool, createListArtifactsTool, createAddArtifactTool,
   createUpdateArtifactTool, createRemoveArtifactTool, createCastVoteTool,
-  createWebTools,
+  createWebTools, createWriteDocumentSectionTool,
 } from './tools/built-in/index.ts'
 import { createTaskListArtifactType } from './core/artifact-types/task-list.ts'
 import { pollArtifactType } from './core/artifact-types/poll.ts'
 import { createFlowArtifactType } from './core/artifact-types/flow.ts'
+import { documentArtifactType } from './core/artifact-types/document.ts'
 import { createToolCapabilityCache } from './llm/tool-capability.ts'
 
 export interface System {
@@ -110,6 +111,7 @@ export const createSystem = (ollamaUrl?: string): System => {
   house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
   house.artifactTypes.register(pollArtifactType)
   house.artifactTypes.register(createFlowArtifactType(team))
+  house.artifactTypes.register(documentArtifactType)
 
   // System-level membership operations
   const systemAddAgentToRoom = async (agentId: string, roomId: string, invitedBy?: string): Promise<void> => {
@@ -184,6 +186,9 @@ export const createSystem = (ollamaUrl?: string): System => {
     googleApiKey: process.env.GOOGLE_CSE_API_KEY,
     googleCseId: process.env.GOOGLE_CSE_ID,
   }))
+
+  // Document tool — collaborative structured writing with streaming LLM output
+  toolRegistry.register(createWriteDocumentSectionTool(house.artifacts))
 
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
     spawnAIAgent(config, ollama, house, team, routeMessage, toolRegistry, {

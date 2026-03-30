@@ -1,4 +1,4 @@
-import type { LLMProvider, ChatRequest, ChatResponse } from '../core/types.ts'
+import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk } from '../core/types.ts'
 
 interface OllamaToolCall {
   readonly function: {
@@ -32,6 +32,7 @@ interface OllamaPsResponse {
 
 const CHAT_TIMEOUT_MS = 300_000 // 5 minutes — large models can be slow
 const TAGS_TIMEOUT_MS = 10_000
+const STREAM_IDLE_TIMEOUT_MS = 30_000  // abort if no chunk arrives within 30s
 
 const fetchWithTimeout = async (
   url: string,
@@ -142,6 +143,76 @@ export const createOllamaProvider = (baseUrl: string): LLMProvider => {
     }
   }
 
+  const stream = async function* (request: ChatRequest): AsyncIterable<StreamChunk> {
+    const body: Record<string, unknown> = {
+      model: request.model,
+      messages: request.messages.map(m => ({ role: m.role, content: m.content })),
+      stream: true,
+    }
+    if (request.temperature !== undefined) body.options = { temperature: request.temperature }
+    if (request.maxTokens !== undefined) {
+      body.options = { ...(body.options as Record<string, unknown> | undefined), num_predict: request.maxTokens }
+    }
+
+    const controller = new AbortController()
+    let idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
+
+    const response = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      clearTimeout(idleTimer)
+      const text = await response.text()
+      throw new Error(`Ollama stream error ${response.status}: ${text}`)
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      clearTimeout(idleTimer)
+      throw new Error('Ollama stream: no response body')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    try {
+      while (true) {
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
+
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+          let parsed: { message?: { content?: string }; done?: boolean }
+          try { parsed = JSON.parse(line) } catch { continue }
+          const delta = parsed.message?.content ?? ''
+          const isDone = parsed.done === true
+          yield { delta, done: isDone }
+          if (isDone) return
+        }
+      }
+      // Flush any remaining buffer content
+      if (buffer.trim()) {
+        try {
+          const parsed = JSON.parse(buffer) as { message?: { content?: string }; done?: boolean }
+          yield { delta: parsed.message?.content ?? '', done: true }
+        } catch { /* ignore malformed final chunk */ }
+      }
+    } finally {
+      clearTimeout(idleTimer)
+      reader.releaseLock()
+    }
+  }
+
   const models = async (): Promise<string[]> => {
     const response = await fetchWithTimeout(
       `${baseUrl}/api/tags`,
@@ -174,5 +245,5 @@ export const createOllamaProvider = (baseUrl: string): LLMProvider => {
     return data.models.map(m => m.name)
   }
 
-  return { chat, models, runningModels }
+  return { chat, stream, models, runningModels }
 }
