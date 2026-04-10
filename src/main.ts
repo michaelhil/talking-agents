@@ -33,7 +33,7 @@ import {
   createListArtifactTypesTool, createListArtifactsTool, createAddArtifactTool,
   createUpdateArtifactTool, createRemoveArtifactTool, createCastVoteTool,
   createWebTools, createWriteDocumentSectionTool,
-  createWriteSkillTool, createWriteToolTool, createListSkillsTool,
+  createWriteSkillTool, createWriteToolTool, createTestToolTool, createListSkillsTool,
 } from './tools/built-in/index.ts'
 import { createTaskListArtifactType } from './core/artifact-types/task-list.ts'
 import { pollArtifactType } from './core/artifact-types/poll.ts'
@@ -52,6 +52,7 @@ export interface System {
   readonly toolRegistry: ToolRegistry
   readonly skillStore: SkillStore
   readonly skillsDir: string
+  readonly knowledgeDir: string
   readonly removeAgent: (id: string) => boolean
   readonly removeRoom: (roomId: string) => boolean
   readonly addAgentToRoom: (agentId: string, roomId: string, invitedBy?: string) => Promise<void>
@@ -225,6 +226,7 @@ export const createSystem = (ollamaUrl?: string): System => {
 
   toolRegistry.register(createWriteSkillTool(skillStore, skillsDir))
   toolRegistry.register(createWriteToolTool(toolRegistry, skillStore, refreshAllAgentTools))
+  toolRegistry.register(createTestToolTool(toolRegistry))
   toolRegistry.register(createListSkillsTool(skillStore))
 
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
@@ -242,6 +244,7 @@ export const createSystem = (ollamaUrl?: string): System => {
 
   return {
     house, team, routeMessage, ollama, toolRegistry, skillStore, skillsDir,
+    knowledgeDir: join(homedir(), '.samsinn', 'knowledge'),
     removeAgent,
     removeRoom: systemRemoveRoom,
     addAgentToRoom: systemAddAgentToRoom,

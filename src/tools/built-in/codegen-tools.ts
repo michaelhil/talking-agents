@@ -2,8 +2,13 @@
 // Code Generation Tools — Runtime skill and tool authoring by agents.
 //
 // write_skill: Creates a skill directory with SKILL.md.
-// write_tool: Creates a .ts tool file inside a skill's tools/ subdirectory.
+// write_tool: Writes a complete .ts module into a skill's tools/ directory.
+// test_tool: Runs a registered tool with sample input.
 // list_skills: Lists all loaded skills with their bundled tools.
+//
+// Code generation intelligence lives in the skill-builder skill
+// (skills/skill-builder/tools/generate_tool_code.ts), not here.
+// These tools are mechanical — filesystem, registry, validation.
 // ============================================================================
 
 import type { Tool, ToolRegistry } from '../../core/types.ts'
@@ -57,7 +62,6 @@ export const createWriteSkillTool = (
     const dirPath = join(skillsDir, name)
     await mkdir(dirPath, { recursive: true })
 
-    // Build SKILL.md with frontmatter
     const scopeLine = scope && scope.length > 0
       ? `\nscope: [${scope.join(', ')}]`
       : ''
@@ -71,9 +75,7 @@ export const createWriteSkillTool = (
     }
 
     store.register({
-      name,
-      description,
-      body,
+      name, description, body,
       scope: scope ?? [],
       tools: [],
       dirPath,
@@ -89,29 +91,25 @@ export const createWriteToolTool = (
   refreshAll: RefreshAllFn,
 ): Tool => ({
   name: 'write_tool',
-  description: 'Creates a new executable tool inside a skill directory. The tool is registered immediately and available to all agents.',
-  usage: 'Use when you need functionality that no existing tool provides. The tool is bundled with a skill — create the skill first with write_skill if it does not exist. The code parameter is the body of an async function with signature (params, context) => { ... } that must return a ToolResult.',
-  returns: 'Object with the registered tool name and file path.',
+  description: 'Writes a complete TypeScript tool module into a skill\'s tools/ directory. The tool is imported, validated, and registered immediately.',
+  usage: 'Use after generate_tool_code has produced the source code. Pass the code string directly — do not modify it. The code must be a complete .ts module that exports a tool object as default.',
+  returns: 'Object with the registered tool name, skill, and file path.',
   parameters: {
     type: 'object',
     properties: {
       skill: { type: 'string', description: 'Name of the skill to bundle this tool with (must exist)' },
-      name: { type: 'string', description: 'Tool name (letters, digits, underscores, hyphens only)' },
-      description: { type: 'string', description: 'What the tool does' },
-      parameters: { type: 'object', description: 'JSON Schema for the tool parameters' },
-      code: { type: 'string', description: 'Function body of async (params, context) => { ... }. Must return { success: true, data: ... } or { success: false, error: "..." }' },
+      name: { type: 'string', description: 'Tool name — used as filename (letters, digits, underscores, hyphens only)' },
+      code: { type: 'string', description: 'Complete TypeScript module source that exports a tool as default' },
     },
-    required: ['skill', 'name', 'description', 'parameters', 'code'],
+    required: ['skill', 'name', 'code'],
   },
   execute: async (params) => {
     const skillName = params.skill as string
     const name = params.name as string
-    const description = params.description as string
-    const parameters = params.parameters as Record<string, unknown>
     const code = params.code as string
 
-    if (!skillName || !name || !description || !code) {
-      return { success: false, error: 'skill, name, description, and code are required' }
+    if (!skillName || !name || !code) {
+      return { success: false, error: 'skill, name, and code are required' }
     }
 
     const skill = store.get(skillName)
@@ -123,31 +121,13 @@ export const createWriteToolTool = (
       return { success: false, error: `Invalid tool name "${name}" — use letters, digits, underscores, hyphens` }
     }
 
-    if (registry.has(name)) {
-      return { success: false, error: `Tool "${name}" already exists in registry` }
-    }
-
     const toolsDir = join(skill.dirPath, 'tools')
     await mkdir(toolsDir, { recursive: true })
 
     const filePath = join(toolsDir, `${name}.ts`)
 
-    const source = `import type { Tool } from '../../../src/core/types.ts'
-
-const tool: Tool = {
-  name: ${JSON.stringify(name)},
-  description: ${JSON.stringify(description)},
-  parameters: ${JSON.stringify(parameters, null, 2)},
-  execute: async (params: Record<string, unknown>, context) => {
-    ${code}
-  },
-}
-
-export default tool
-`
-
     try {
-      await writeFile(filePath, source, 'utf-8')
+      await writeFile(filePath, code, 'utf-8')
     } catch (err) {
       return { success: false, error: `Failed to write file: ${err instanceof Error ? err.message : String(err)}` }
     }
@@ -157,21 +137,23 @@ export default tool
     try {
       mod = await import(`${filePath}?t=${Date.now()}`)
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
       await unlink(filePath).catch(() => {})
-      return { success: false, error: `Import failed (file deleted): ${err instanceof Error ? err.message : String(err)}` }
+      return { success: false, error: `Import failed (file deleted): ${errMsg}\n\nGenerated code:\n${code}` }
     }
 
     const tool = mod.default
     if (!isTool(tool)) {
       await unlink(filePath).catch(() => {})
-      return { success: false, error: 'Generated module does not export a valid Tool. File deleted.' }
+      return { success: false, error: `Module does not export a valid Tool (needs name, description, parameters, execute). File deleted.\n\nGenerated code:\n${code}` }
     }
 
     registry.register(tool as Tool)
 
-    // Update skill's tool list
-    const updatedSkill = { ...skill, tools: [...skill.tools, name] }
-    store.register(updatedSkill)
+    // Update skill's tool list if this is a new tool
+    if (!skill.tools.includes(name)) {
+      store.register({ ...skill, tools: [...skill.tools, name] })
+    }
 
     try {
       await refreshAll()
@@ -180,6 +162,37 @@ export default tool
     }
 
     return { success: true, data: { name, skill: skillName, path: filePath } }
+  },
+})
+
+export const createTestToolTool = (
+  registry: ToolRegistry,
+): Tool => ({
+  name: 'test_tool',
+  description: 'Runs a registered tool with sample input and returns the result. Use to verify a tool works after creating it.',
+  returns: 'The tool\'s result — either { success: true, data: ... } or { success: false, error: "..." }.',
+  parameters: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'Name of the registered tool to test' },
+      input: { type: 'object', description: 'Sample parameters to pass to the tool' },
+    },
+    required: ['name', 'input'],
+  },
+  execute: async (params, context) => {
+    const name = params.name as string
+    const input = params.input as Record<string, unknown>
+
+    if (!name) return { success: false, error: 'name is required' }
+
+    const tool = registry.get(name)
+    if (!tool) return { success: false, error: `Tool "${name}" not found in registry` }
+
+    try {
+      return await tool.execute(input ?? {}, context)
+    } catch (err) {
+      return { success: false, error: `Tool threw: ${err instanceof Error ? err.message : String(err)}` }
+    }
   },
 })
 

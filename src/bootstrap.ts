@@ -38,6 +38,7 @@ export const bootstrap = async (): Promise<void> => {
 
   // Load filesystem tools and skills before snapshot restore so restored agents get them
   await loadExternalTools(system.toolRegistry)
+  await loadSkills(resolve(process.cwd(), 'skills'), system.skillStore, system.toolRegistry)
   await loadSkills(system.skillsDir, system.skillStore, system.toolRegistry)
 
   // Restore from snapshot if available

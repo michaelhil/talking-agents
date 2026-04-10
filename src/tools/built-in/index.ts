@@ -6,4 +6,4 @@ export { createListArtifactTypesTool, createListArtifactsTool, createAddArtifact
 export { createGetTimeTool, createPostToRoomTool, createGetRoomHistoryTool } from './utility-tools.ts'
 export { createWebTools } from './web-tools.ts'
 export { createWriteDocumentSectionTool, parseStreamedBlocks } from './document-tools.ts'
-export { createWriteSkillTool, createWriteToolTool, createListSkillsTool } from './codegen-tools.ts'
+export { createWriteSkillTool, createWriteToolTool, createTestToolTool, createListSkillsTool } from './codegen-tools.ts'
