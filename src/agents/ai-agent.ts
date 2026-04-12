@@ -77,6 +77,7 @@ export const createAIAgent = (
   let currentSystemPrompt: string = config.systemPrompt
   let currentModel: string = config.model
   let currentTemperature: number | undefined = config.temperature
+  let currentThinking: boolean = config.thinking ?? false
   let historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
   const maxToolIterations = config.maxToolIterations ?? 5
   let toolExecutor = options?.toolExecutor
@@ -146,7 +147,7 @@ export const createAIAgent = (
     const contextResult = buildContext(contextDeps(), triggerRoomId)
     const epoch = cm.epochAtStart()
 
-    const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt, temperature: currentTemperature, historyLimit }
+    const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt, temperature: currentTemperature, thinking: currentThinking, historyLimit }
     const inReplyTo = contextResult.flushInfo.ids.size > 0 ? [...contextResult.flushInfo.ids] : undefined
     const abortController = new AbortController()
     activeAbortController = abortController
@@ -371,6 +372,8 @@ Respond with only the summary — no preamble or explanation.`
     updateTemperature: (t: number | undefined) => { currentTemperature = t },
     getHistoryLimit: () => historyLimit,
     updateHistoryLimit: (n: number) => { historyLimit = n },
+    getThinking: () => currentThinking,
+    updateThinking: (enabled: boolean) => { currentThinking = enabled },
     getTools: () => config.tools,
     getConfig: () => ({ ...config, model: currentModel, systemPrompt: currentSystemPrompt, temperature: currentTemperature, historyLimit }),
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },

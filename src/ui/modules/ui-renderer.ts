@@ -324,6 +324,16 @@ export const updateThinkingLabel = (container: HTMLElement, agentName: string, t
   if (el) el.textContent = text
 }
 
+export const updateThinkingPreviewStyle = (container: HTMLElement, agentName: string, isThinking: boolean): void => {
+  const el = container.querySelector(`[data-thinking-preview="${agentName}"]`) as HTMLElement | null
+  if (!el) return
+  if (isThinking) {
+    el.className = 'text-gray-400 italic whitespace-pre-wrap break-words'
+  } else {
+    el.className = 'text-gray-700 whitespace-pre-wrap break-words'
+  }
+}
+
 export const showContextIcon = (container: HTMLElement, agentName: string, onClick: () => void): void => {
   const indicator = container.querySelector(`[data-thinking-agent="${agentName}"]`)
   if (!indicator || indicator.querySelector('[data-context-btn]')) return

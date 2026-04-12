@@ -237,9 +237,21 @@ export const wsDispatch: Record<string, (msg: any) => void> = {
     if (!id) return
 
     const event = msg.event
-    if (event.kind === 'chunk' && event.delta) {
+    if (event.kind === 'thinking' && event.delta) {
+      // qwen3 CoT thinking tokens — accumulate in preview, label updates via app.ts
       const prev = $thinkingPreviews.get()[id] ?? ''
       $thinkingPreviews.setKey(id, prev + (event.delta as string))
+      $thinkingTools.setKey(id, '__thinking__')  // signal to UI for label
+    } else if (event.kind === 'chunk' && event.delta) {
+      // First real chunk: clear thinking preview, start fresh with response text
+      const tools = $thinkingTools.get()[id]
+      if (tools === '__thinking__') {
+        $thinkingPreviews.setKey(id, event.delta as string)  // replace thinking with response
+        $thinkingTools.setKey(id, '')  // clear thinking signal
+      } else {
+        const prev = $thinkingPreviews.get()[id] ?? ''
+        $thinkingPreviews.setKey(id, prev + (event.delta as string))
+      }
     } else if (event.kind === 'tool_start' && event.tool) {
       $thinkingTools.setKey(id, `${event.tool}...`)
     } else if (event.kind === 'tool_result' && event.tool) {

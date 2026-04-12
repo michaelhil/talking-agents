@@ -38,6 +38,7 @@ export const agentRoutes: RouteEntry[] = [
         detail.model = aiAgent.getModel()
         detail.temperature = aiAgent.getTemperature()
         detail.historyLimit = aiAgent.getHistoryLimit()
+        detail.thinking = aiAgent.getThinking()
         detail.tools = aiAgent.getTools()
       }
       if (agent.getDescription) {
@@ -85,6 +86,7 @@ export const agentRoutes: RouteEntry[] = [
         if (body.model) aiAgent.updateModel(body.model as string)
         if (body.temperature !== undefined) aiAgent.updateTemperature?.(body.temperature as number | undefined)
         if (body.historyLimit !== undefined) aiAgent.updateHistoryLimit?.(body.historyLimit as number)
+        if (body.thinking !== undefined) aiAgent.updateThinking?.(body.thinking as boolean)
       }
       if (typeof body.description === 'string' && agent.updateDescription) {
         agent.updateDescription(body.description)

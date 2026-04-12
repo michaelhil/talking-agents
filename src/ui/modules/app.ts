@@ -16,6 +16,7 @@ import {
   updateThinkingPreview,
   updateThinkingTool,
   updateThinkingLabel,
+  updateThinkingPreviewStyle,
   showContextIcon,
   addThinkingWarning,
   type UIMessage,
@@ -611,12 +612,22 @@ $thinkingTools.listen((tools, _old, changedId) => {
   const agentName = agentIdToName(changedId)
   if (!agentName) return
   const toolText = tools[changedId] ?? ''
-  updateThinkingTool(messagesDiv, agentName, toolText)
-  // Update label to reflect tool activity
-  if (toolText.endsWith('...')) {
-    updateThinkingLabel(messagesDiv, agentName, `${agentName}: ${toolText}`)
-  } else if (toolText) {
+  if (toolText === '__thinking__') {
+    // Model is in CoT thinking phase — update label, style preview as dimmed
+    updateThinkingLabel(messagesDiv, agentName, `${agentName}: Thinking...`)
+    updateThinkingPreviewStyle(messagesDiv, agentName, true)
+  } else if (toolText === '') {
+    // Thinking phase ended, response starting — update label, restore normal style
     updateThinkingLabel(messagesDiv, agentName, `${agentName}: Generating...`)
+    updateThinkingPreviewStyle(messagesDiv, agentName, false)
+    firstChunkSeen.add(changedId) // treat as first chunk seen
+  } else {
+    updateThinkingTool(messagesDiv, agentName, toolText)
+    if (toolText.endsWith('...')) {
+      updateThinkingLabel(messagesDiv, agentName, `${agentName}: ${toolText}`)
+    } else {
+      updateThinkingLabel(messagesDiv, agentName, `${agentName}: Generating...`)
+    }
   }
 })
 

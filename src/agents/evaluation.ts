@@ -88,6 +88,9 @@ const streamWithRetry = async (
         let content = ''
         let toolCalls: ReadonlyArray<NativeToolCall> | undefined
         for await (const chunk of provider.stream(request, signal)) {
+          if (chunk.thinking) {
+            onEvent?.({ kind: 'thinking', delta: chunk.thinking })
+          }
           if (chunk.delta) {
             content += chunk.delta
             onEvent?.({ kind: 'chunk', delta: chunk.delta })
@@ -154,6 +157,7 @@ export const evaluate = async (
         messages: context as ReadonlyArray<{ role: 'system' | 'user' | 'assistant'; content: string }>,
         temperature: config.temperature,
         tools: toolDefinitions,
+        think: config.thinking,
       }
 
       const streamResult = await streamWithRetry(llmProvider, config, request, onEvent, signal)

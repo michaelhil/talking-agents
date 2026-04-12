@@ -136,6 +136,7 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
     if (request.tools && request.tools.length > 0) {
       body.tools = request.tools
     }
+    if (request.think !== undefined) body.think = request.think
 
     const response = await fetchWithTimeout(
       `${baseUrl}/api/chat`,
@@ -198,6 +199,7 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
     if (request.temperature !== undefined) streamOpts.temperature = request.temperature
     if (request.maxTokens !== undefined) streamOpts.num_predict = request.maxTokens
     body.options = streamOpts
+    if (request.think !== undefined) body.think = request.think
 
     const controller = new AbortController()
     let idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
@@ -242,14 +244,16 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
 
         for (const line of lines) {
           if (!line.trim()) continue
-          let parsed: { message?: { content?: string; tool_calls?: ReadonlyArray<OllamaToolCall> }; done?: boolean }
+          let parsed: { message?: { content?: string; tool_calls?: ReadonlyArray<OllamaToolCall> }; done?: boolean; thinking?: string }
           try { parsed = JSON.parse(line) } catch { continue }
+          // qwen3 thinking mode: tokens arrive in 'thinking' field before 'content'
+          const thinking = (parsed as Record<string, unknown>).thinking as string | undefined
           const delta = parsed.message?.content ?? ''
           const isDone = parsed.done === true
           const toolCalls = isDone && parsed.message?.tool_calls?.length
             ? parsed.message.tool_calls.map(tc => ({ function: { name: tc.function.name, arguments: tc.function.arguments } }))
             : undefined
-          yield { delta, done: isDone, ...(toolCalls ? { toolCalls } : {}) }
+          yield { delta, done: isDone, thinking, ...(toolCalls ? { toolCalls } : {}) }
           if (isDone) return
         }
       }

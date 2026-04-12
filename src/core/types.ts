@@ -452,6 +452,8 @@ export interface AIAgent extends Agent {
   readonly updateTemperature?: (t: number | undefined) => void
   readonly getHistoryLimit: () => number | undefined
   readonly updateHistoryLimit?: (n: number) => void
+  readonly getThinking: () => boolean
+  readonly updateThinking?: (enabled: boolean) => void
   readonly getTools: () => ReadonlyArray<string> | undefined
   readonly refreshTools?: (support: { toolExecutor?: ToolExecutor; toolDefinitions?: ReadonlyArray<ToolDefinition> }) => void
   // Memory introspection + management
@@ -551,6 +553,7 @@ export interface AIAgentConfig {
   readonly maxToolIterations?: number           // default 5
   readonly maxToolResultChars?: number          // default: 4000
   readonly tags?: ReadonlyArray<string>         // capability/role tags for [[tag:X]] addressing
+  readonly thinking?: boolean                    // enable model CoT (qwen3 thinking mode)
   readonly compressionThreshold?: number        // history length triggering LLM compression (default: 3 × historyLimit)
 }
 
@@ -596,6 +599,7 @@ export interface ChatRequest {
   readonly maxTokens?: number
   readonly jsonMode?: boolean
   readonly tools?: ReadonlyArray<ToolDefinition>
+  readonly think?: boolean
   readonly numCtx?: number
 }
 
@@ -616,6 +620,7 @@ export interface ChatResponse {
 export interface StreamChunk {
   readonly delta: string   // raw text fragment — may be empty for final done chunk
   readonly done: boolean
+  readonly thinking?: string  // qwen3 CoT thinking tokens (before visible response)
   readonly toolCalls?: ReadonlyArray<NativeToolCall>  // native tool calls from final chunk
 }
 
@@ -630,6 +635,7 @@ export interface LLMProvider {
 
 export type EvalEvent =
   | { readonly kind: 'chunk'; readonly delta: string }
+  | { readonly kind: 'thinking'; readonly delta: string }
   | { readonly kind: 'tool_start'; readonly tool: string }
   | { readonly kind: 'tool_result'; readonly tool: string; readonly success: boolean; readonly preview?: string }
   | { readonly kind: 'context_ready'; readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>; readonly model: string; readonly temperature?: number; readonly toolCount: number }

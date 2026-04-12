@@ -237,6 +237,29 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
       toolsSpan.title = toolCount > 0 && toolsList ? `Available tools: ${toolsList.join(', ')}` : 'No tools assigned'
       toolsSpan.className = 'cursor-help'
       configSpan.appendChild(toolsSpan)
+
+      // Thinking toggle
+      const thinkingEnabled = agentRes.thinking as boolean ?? false
+      configSpan.appendChild(document.createTextNode(' · '))
+      const thinkLabel = document.createElement('label')
+      thinkLabel.className = 'inline-flex items-center gap-0.5 cursor-pointer'
+      const thinkCb = document.createElement('input')
+      thinkCb.type = 'checkbox'
+      thinkCb.checked = thinkingEnabled
+      thinkCb.className = 'rounded'
+      thinkCb.onchange = async () => {
+        await safeFetchJson(`/api/agents/${enc}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thinking: thinkCb.checked }),
+        })
+        showToast(document.body, `Thinking ${thinkCb.checked ? 'on' : 'off'}`, { position: 'fixed' })
+      }
+      const thinkText = document.createElement('span')
+      thinkText.textContent = 'think'
+      thinkLabel.appendChild(thinkCb)
+      thinkLabel.appendChild(thinkText)
+      configSpan.appendChild(thinkLabel)
+
       header.appendChild(configSpan)
     } else {
       const kindLabel = document.createElement('span')
