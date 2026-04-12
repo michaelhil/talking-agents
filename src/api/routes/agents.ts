@@ -36,6 +36,12 @@ export const agentRoutes: RouteEntry[] = [
       if (aiAgent) {
         detail.systemPrompt = aiAgent.getSystemPrompt()
         detail.model = aiAgent.getModel()
+        detail.temperature = aiAgent.getTemperature()
+        detail.historyLimit = aiAgent.getHistoryLimit()
+        detail.tools = aiAgent.getTools()
+      }
+      if (agent.getDescription) {
+        detail.description = agent.getDescription()
       }
       return json(detail)
     },
@@ -72,11 +78,17 @@ export const agentRoutes: RouteEntry[] = [
       const name = decodeURIComponent(match[1]!)
       const agent = system.team.getAgent(name)
       if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
-      const aiAgent = asAIAgent(agent)
-      if (!aiAgent) return errorResponse('Only AI agents can be updated')
       const body = await parseBody(req)
-      if (body.systemPrompt) aiAgent.updateSystemPrompt(body.systemPrompt as string)
-      if (body.model) aiAgent.updateModel(body.model as string)
+      const aiAgent = asAIAgent(agent)
+      if (aiAgent) {
+        if (body.systemPrompt) aiAgent.updateSystemPrompt(body.systemPrompt as string)
+        if (body.model) aiAgent.updateModel(body.model as string)
+        if (body.temperature !== undefined) aiAgent.updateTemperature?.(body.temperature as number | undefined)
+        if (body.historyLimit !== undefined) aiAgent.updateHistoryLimit?.(body.historyLimit as number)
+      }
+      if (typeof body.description === 'string' && agent.updateDescription) {
+        agent.updateDescription(body.description)
+      }
       return json({ updated: true, name: agent.name })
     },
   },

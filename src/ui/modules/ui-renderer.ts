@@ -62,6 +62,7 @@ export type ArtifactAction =
   | { kind: 'complete_task'; artifactId: string; taskId: string; completed: boolean }
   | { kind: 'cast_vote'; artifactId: string; optionId: string }
   | { kind: 'remove'; artifactId: string }
+  | { kind: 'edit_document'; artifactId: string; title: string; blocks: ReadonlyArray<{ id: string; type: string; content: string }> }
 
 // === Rendering ===
 
@@ -72,21 +73,27 @@ export const renderRooms = (
   pausedRooms: Set<string>,
   onSelect: (roomId: string) => void,
   onDelete?: (roomId: string, roomName: string) => void,
+  unreadCounts?: Map<string, number>,
+  generatingRoomIds?: Set<string>,
 ): void => {
   container.innerHTML = ''
   for (const room of rooms.values()) {
     const isPaused = pausedRooms.has(room.id)
     const isSelected = room.id === selectedRoomId
+    const unread = unreadCounts?.get(room.id) ?? 0
+    const isThinking = generatingRoomIds?.has(room.id) ?? false
     const div = document.createElement('div')
     div.className = `px-3 py-1 cursor-pointer text-xs flex items-center gap-1.5 group relative ${isSelected ? 'bg-blue-50 font-semibold text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`
 
     const dot = document.createElement('span')
-    dot.className = `inline-block w-1.5 h-1.5 rounded-full shrink-0 ${isPaused ? 'bg-gray-300' : 'bg-green-400'}`
+    const dotColor = isPaused ? 'bg-gray-300' : isThinking ? 'bg-yellow-400 typing-indicator' : 'bg-green-400'
+    dot.className = `inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`
     div.appendChild(dot)
 
     const name = document.createElement('span')
     name.className = 'truncate flex-1'
-    name.textContent = room.name
+    name.textContent = unread > 0 ? `${room.name} (${unread})` : room.name
+    if (unread > 0) name.className += ' font-bold'
     div.appendChild(name)
 
     if (onDelete) {
@@ -287,8 +294,13 @@ const renderDocumentArtifact = (artifact: ArtifactInfo, onAction: (action: Artif
   removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
   removeBtn.textContent = '✕'
   removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
+  const editBtn = document.createElement('button')
+  editBtn.className = 'text-xs text-blue-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 flex-shrink-0'
+  editBtn.textContent = 'edit'
+  editBtn.onclick = () => onAction({ kind: 'edit_document', artifactId: artifact.id, title: artifact.title, blocks: allBlocks })
   header.appendChild(titleEl)
   header.appendChild(countEl)
+  header.appendChild(editBtn)
   header.appendChild(removeBtn)
   wrap.appendChild(header)
 
@@ -423,12 +435,13 @@ const renderAgentRow = (
   isMuted: boolean,
   isGenerating: boolean,
   isSelf: boolean,
+  isSelected: boolean,
   onToggleMute: (agentName: string, muted: boolean) => void,
   onInspect?: (agentName: string) => void,
   roomAction?: { onAdd?: (id: string, name: string) => void; onRemove?: (id: string, name: string) => void },
 ): HTMLElement => {
   const div = document.createElement('div')
-  div.className = `px-3 py-1 flex items-center gap-1.5 group relative ${isMuted ? 'opacity-40' : ''} ${!isInRoom ? 'opacity-40' : ''}`
+  div.className = `px-3 py-1 flex items-center gap-1.5 group relative ${isSelected ? 'bg-blue-50' : ''} ${isMuted ? 'opacity-40' : ''} ${!isInRoom && !isSelected ? 'opacity-40' : ''}`
 
   // Dot: green=idle, yellow=generating, gray=muted
   const dot = document.createElement('span')
@@ -443,9 +456,9 @@ const renderAgentRow = (
 
   // Name: clickable for AI agents → inspector
   const name = document.createElement('span')
-  name.className = `text-xs truncate ${isSelf ? 'font-bold' : 'font-medium'} ${isMuted ? 'line-through' : ''} text-gray-700`
+  name.className = `text-xs truncate ${isSelf ? 'font-bold' : 'font-medium'} ${isMuted ? 'line-through' : ''} ${isSelected ? 'text-blue-700' : 'text-gray-700'}`
   name.textContent = agent.name
-  if (onInspect && agent.kind === 'ai') {
+  if (onInspect) {
     name.style.cursor = 'pointer'
     name.onclick = (e) => { e.stopPropagation(); onInspect(agent.name) }
   }
@@ -479,6 +492,7 @@ export const renderAgents = (
   agentStates: Map<string, { state: string; context?: string }>,
   mutedAgents: Set<string>,
   myAgentId: string,
+  selectedAgentId: string,
   onToggleMute: (agentName: string, muted: boolean) => void,
   onInspect?: (agentName: string) => void,
   roomMemberIds?: Set<string>,
@@ -497,8 +511,9 @@ export const renderAgents = (
     const isMuted = mutedAgents.has(agent.name)
     const isGenerating = agentStates.get(agent.name)?.state === 'generating'
     const isSelf = agent.id === myAgentId
+    const isSelected = agent.id === selectedAgentId
     container.appendChild(renderAgentRow(
-      agent, isIn, isMuted, isGenerating, isSelf, onToggleMute, onInspect,
+      agent, isIn, isMuted, isGenerating, isSelf, isSelected, onToggleMute, onInspect,
       roomMemberIds ? { onAdd: !isIn ? onAddToRoom : undefined, onRemove: isIn ? onRemoveFromRoom : undefined } : undefined,
     ))
   }

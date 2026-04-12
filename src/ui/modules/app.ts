@@ -30,9 +30,11 @@ const lazyFlowEditor = async (
   const { openFlowEditorModal } = await import('./flow-editor.ts')
   openFlowEditorModal(agents, myAgentId, onSave)
 }
-const lazyAgentInspector = async (name: string) => {
-  const { openAgentInspector } = await import('./agent-inspector.ts')
-  openAgentInspector(name)
+const selectAgentByName = async (agentName: string) => {
+  // Find agent ID from name
+  for (const [id, a] of agents) {
+    if (a.name === agentName) { selectAgent(id); return }
+  }
 }
 
 // === WS Protocol Types ===
@@ -52,6 +54,8 @@ type WSOutbound =
   | { type: 'artifact_changed'; action: 'added' | 'updated' | 'removed'; artifact: ArtifactInfo }
   | { type: 'membership_changed'; roomId: string; roomName: string; agentId: string; agentName: string; action: 'added' | 'removed' }
   | { type: 'room_deleted'; roomName: string }
+  | { type: 'message_deleted'; roomName: string; messageId: string }
+  | { type: 'messages_cleared'; roomName: string }
 
 // === State ===
 
@@ -60,12 +64,14 @@ let myAgentId = ''
 let myName = ''
 let sessionToken = localStorage.getItem('ta_session') ?? ''
 let selectedRoomId = ''
+let selectedAgentId = ''
 let currentDeliveryMode = 'broadcast'
 const rooms = new Map<string, RoomProfile>()
 const agents = new Map<string, AgentInfo>()
 const roomMessages = new Map<string, UIMessage[]>()
 const agentStates = new Map<string, { state: string; context?: string }>()
 const mutedAgents = new Set<string>()  // agent names that are muted in current room
+const unreadCounts = new Map<string, number>()  // roomId → unread message count
 let roomPaused = false
 const pausedRooms = new Set<string>()  // room IDs that are paused
 
@@ -89,6 +95,7 @@ const roomsToggle = $('#rooms-toggle') as HTMLElement
 const roomsHeader = $('#rooms-header') as HTMLElement
 const agentList = $('#agent-list') as HTMLElement
 const noRoomState = $('#no-room-state') as HTMLElement
+const agentArea = $('#agent-area') as HTMLElement
 const chatArea = $('#chat-area') as HTMLElement
 const pinnedMessagesDiv = $('#pinned-messages') as HTMLElement
 const workspaceBar = $('#workspace-bar') as HTMLElement
@@ -145,8 +152,16 @@ const handleDeleteRoom = (roomId: string, roomName: string): void => {
   if (!confirm(`Delete room "${roomName}"? This cannot be undone.`)) return
   send({ type: 'delete_room', roomName })
 }
+const getGeneratingRoomIds = (): Set<string> => {
+  const ids = new Set<string>()
+  for (const [, info] of agentStates) {
+    if (info.state === 'generating' && info.context) ids.add(info.context)
+  }
+  return ids
+}
+
 const refreshRooms = () => {
-  renderRooms(roomList, rooms, selectedRoomId, pausedRooms, selectRoom, handleDeleteRoom)
+  renderRooms(roomList, rooms, selectedRoomId, pausedRooms, selectRoom, handleDeleteRoom, unreadCounts, getGeneratingRoomIds())
   roomsToggle.textContent = `▾ Rooms (${rooms.size})`
 }
 
@@ -154,11 +169,11 @@ const refreshAgents = () => {
   const room = rooms.get(selectedRoomId)
   const memberIds = room ? roomMembers.get(room.id) : undefined
   renderAgents(
-    agentList, agents, agentStates, mutedAgents, myAgentId,
+    agentList, agents, agentStates, mutedAgents, myAgentId, selectedAgentId,
     (name, muted) => {
       if (room) send({ type: 'set_muted', roomName: room.name, agentName: name, muted })
     },
-    (name) => lazyAgentInspector(name),
+    (name) => selectAgentByName(name),
     memberIds,
     room ? (_agentId, agentName) => send({ type: 'add_to_room', roomName: room.name, agentName }) : undefined,
     room ? (_agentId, agentName) => send({ type: 'remove_from_room', roomName: room.name, agentName }) : undefined,
@@ -238,6 +253,11 @@ const handleArtifactAction = (action: ArtifactAction): void => {
     send({ type: 'cast_vote', artifactId: action.artifactId, optionId: action.optionId })
   } else if (action.kind === 'remove') {
     send({ type: 'remove_artifact', artifactId: action.artifactId })
+  } else if (action.kind === 'edit_document') {
+    void (async () => {
+      const { openDocumentEditor } = await import('./document-editor.ts')
+      openDocumentEditor(action.artifactId, action.title, action.blocks, send)
+    })()
   }
 }
 
@@ -256,12 +276,23 @@ const refreshWorkspace = (room: RoomProfile): void => {
   }
 }
 
+const artifactTypeSelect = $('#artifact-type-select') as HTMLSelectElement
+
+const defaultBodies: Record<string, Record<string, unknown>> = {
+  task_list: { tasks: [] },
+  document: { blocks: [] },
+  poll: { question: '', options: [{ id: '1', text: 'Option 1' }, { id: '2', text: 'Option 2' }], allowMultiple: false, votes: {} },
+  mermaid: { source: 'graph TD\n  A-->B' },
+}
+
 const submitArtifact = (): void => {
   const room = rooms.get(selectedRoomId)
   if (!room) return
   const title = artifactInput.value.trim()
   if (!title) return
-  send({ type: 'add_artifact', artifactType: 'task_list', title, body: { tasks: [] }, scope: [room.name] })
+  const artifactType = artifactTypeSelect.value
+  const body = defaultBodies[artifactType] ?? {}
+  send({ type: 'add_artifact', artifactType, title, body, scope: [room.name] })
   artifactInput.value = ''
 }
 
@@ -390,30 +421,44 @@ toolsHeader.onclick = async () => {
   }
 }
 
-skillsHeader.onclick = async () => {
+const lazySkillEditor = async (name?: string) => {
+  const { openSkillEditor } = await import('./skill-editor.ts')
+  openSkillEditor(name, () => { skillsLoaded = false; loadSkillsList() })
+}
+
+const loadSkillsList = async (): Promise<void> => {
+  skillsLoaded = true
+  const skills = await fetch('/api/skills').then(r => r.ok ? r.json() : []).catch(() => []) as Array<{ name: string; description: string; tools: string[] }>
+  skillCount = skills.length
+  updateSkillsLabel(!skillsList.classList.contains('hidden'))
+  skillsList.innerHTML = ''
+  for (const s of skills) {
+    const row = document.createElement('div')
+    row.className = 'px-3 py-1 cursor-pointer hover:bg-gray-50'
+    row.onclick = () => lazySkillEditor(s.name)
+    const name = document.createElement('div')
+    name.className = 'text-xs font-medium text-gray-700'
+    name.textContent = s.name
+    const desc = document.createElement('div')
+    desc.className = 'text-xs text-gray-400 truncate'
+    desc.textContent = s.description
+    row.appendChild(name)
+    row.appendChild(desc)
+    skillsList.appendChild(row)
+  }
+  if (skills.length === 0) skillsList.innerHTML = '<div class="text-xs text-gray-400 px-3 py-1">No skills</div>'
+}
+
+skillsHeader.onclick = async (e) => {
+  if ((e.target as HTMLElement).closest('button')) return
   const nowHidden = skillsList.classList.toggle('hidden')
   updateSkillsLabel(!nowHidden)
-  if (!nowHidden && !skillsLoaded) {
-    skillsLoaded = true
-    const skills = await fetch('/api/skills').then(r => r.ok ? r.json() : []).catch(() => []) as Array<{ name: string; description: string; tools: string[] }>
-    skillCount = skills.length
-    updateSkillsLabel(true)
-    skillsList.innerHTML = ''
-    for (const s of skills) {
-      const row = document.createElement('div')
-      row.className = 'px-3 py-1'
-      const name = document.createElement('div')
-      name.className = 'text-xs font-medium text-gray-700'
-      name.textContent = s.name
-      const desc = document.createElement('div')
-      desc.className = 'text-xs text-gray-400 truncate'
-      desc.textContent = s.description
-      row.appendChild(name)
-      row.appendChild(desc)
-      skillsList.appendChild(row)
-    }
-    if (skills.length === 0) skillsList.innerHTML = '<div class="text-xs text-gray-400 px-3 py-1">No skills</div>'
-  }
+  if (!nowHidden && !skillsLoaded) await loadSkillsList()
+}
+
+document.getElementById('btn-create-skill')!.onclick = (e) => {
+  e.stopPropagation()
+  lazySkillEditor()
 }
 
 // --- Sidebar collapse ---
@@ -504,19 +549,49 @@ const hideThinking = (agentName: string): void => {
   if (timer) { clearInterval(timer); thinkingTimers.delete(agentName) }
 }
 
+// === Agent selection (inline inspector) ===
+
+const selectAgent = async (agentId: string): Promise<void> => {
+  selectedAgentId = agentId
+  selectedRoomId = ''
+
+  // Hide room UI
+  roomHeader.classList.add('hidden')
+  roomInfoBar.classList.add('hidden')
+  chatArea.classList.add('hidden')
+  workspace.hide()
+  noRoomState.classList.add('hidden')
+
+  // Show agent inspector
+  agentArea.classList.remove('hidden')
+  const agent = agents.get(agentId)
+  if (!agent) return
+
+  const { renderAgentInspector } = await import('./agent-inspector.ts')
+  renderAgentInspector(agentArea, agent.name)
+
+  refreshRooms()
+  refreshAgents()
+}
+
 // === Room selection ===
 
 const selectRoom = (roomId: string) => {
   selectedRoomId = roomId
+  selectedAgentId = ''
   const room = rooms.get(roomId)
   if (!room) return
 
-  // Show chat UI, hide empty state
+  // Hide agent inspector, show chat UI
+  agentArea.classList.add('hidden')
   noRoomState.classList.add('hidden')
   roomHeader.classList.remove('hidden')
   roomInfoBar.classList.remove('hidden')
   chatArea.classList.remove('hidden')
   roomNameEl.textContent = room.name
+
+  // Clear unread count for this room
+  unreadCounts.delete(roomId)
 
   refreshRooms()
   updateModeUI()
@@ -524,6 +599,7 @@ const selectRoom = (roomId: string) => {
   fetchArtifactsForRoom(room)
 
   messagesDiv.innerHTML = ''
+  messagesDiv.style.scrollBehavior = 'auto'
   const cached = roomMessages.get(roomId)
   if (cached) {
     for (const m of cached) renderMessage(messagesDiv, m, myAgentId, agents, handlePin, handleDeleteMessage)
@@ -531,6 +607,7 @@ const selectRoom = (roomId: string) => {
     fetchRoomMessages(room.name)
   }
   messagesDiv.scrollTop = messagesDiv.scrollHeight
+  requestAnimationFrame(() => { messagesDiv.style.scrollBehavior = '' })
 }
 
 const fetchRoomMessages = async (name: string) => {
@@ -541,8 +618,10 @@ const fetchRoomMessages = async (name: string) => {
     roomMessages.set(data.profile.id, data.messages)
     if (selectedRoomId === data.profile.id) {
       messagesDiv.innerHTML = ''
+      messagesDiv.style.scrollBehavior = 'auto'
       for (const m of data.messages) renderMessage(messagesDiv, m, myAgentId, agents, handlePin, handleDeleteMessage)
       messagesDiv.scrollTop = messagesDiv.scrollHeight
+      requestAnimationFrame(() => { messagesDiv.style.scrollBehavior = '' })
     }
   } catch { /* ignore */ }
 }
@@ -604,6 +683,10 @@ const handleMessage = (raw: unknown) => {
         if (roomId === selectedRoomId) {
           renderMessage(messagesDiv, m, myAgentId, agents, handlePin, handleDeleteMessage)
           messagesDiv.scrollTop = messagesDiv.scrollHeight
+        } else {
+          // Increment unread counter for rooms not currently viewed
+          unreadCounts.set(roomId, (unreadCounts.get(roomId) ?? 0) + 1)
+          refreshRooms()
         }
       }
       break
@@ -616,6 +699,7 @@ const handleMessage = (raw: unknown) => {
         hideThinking(msg.agentName)
       }
       refreshAgents()
+      refreshRooms()
       break
     }
     case 'room_created': {
@@ -727,6 +811,23 @@ const handleMessage = (raw: unknown) => {
         }
       }
       refreshRooms()
+      break
+    }
+    case 'message_deleted': {
+      const msgs = roomMessages.get(selectedRoomId)
+      if (msgs) {
+        const idx = msgs.findIndex(m => m.id === msg.messageId)
+        if (idx !== -1) msgs.splice(idx, 1)
+      }
+      messagesDiv.querySelector(`[data-msg-id="${msg.messageId}"]`)?.remove()
+      break
+    }
+    case 'messages_cleared': {
+      const clearedRoom = [...rooms.values()].find(r => r.name === msg.roomName)
+      if (clearedRoom) {
+        roomMessages.delete(clearedRoom.id)
+        if (clearedRoom.id === selectedRoomId) messagesDiv.innerHTML = ''
+      }
       break
     }
     case 'error': {
@@ -1035,6 +1136,26 @@ const updateOllamaHealthUI = (health: Record<string, unknown>): void => {
           }
         })
       })
+    }
+
+    // Load model controls
+    const loadedNames = new Set(loaded.map(m => m.name))
+    const available = health.availableModels as string[] ?? []
+    const unloaded = available.filter(m => !loadedNames.has(m))
+    let loadRow = modelsEl.querySelector('.od-load-row') as HTMLElement | null
+    if (!loadRow) {
+      loadRow = document.createElement('div')
+      loadRow.className = 'od-load-row flex items-center gap-1 mt-2 pt-2 border-t border-gray-100'
+      modelsEl.appendChild(loadRow)
+    }
+    if (unloaded.length > 0) {
+      loadRow.innerHTML = `<select class="od-load-select flex-1 text-xs border rounded px-1 py-0.5">${unloaded.map(m => `<option value="${m}">${m}</option>`).join('')}</select><button class="od-load-btn text-xs px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600">Load</button>`
+      loadRow.querySelector('.od-load-btn')?.addEventListener('click', async () => {
+        const sel = loadRow!.querySelector('.od-load-select') as HTMLSelectElement
+        if (sel?.value) await fetch(`/api/ollama/models/${encodeURIComponent(sel.value)}/load`, { method: 'POST' })
+      })
+    } else {
+      loadRow.innerHTML = '<span class="text-xs text-gray-400">All models loaded</span>'
     }
   }
 }

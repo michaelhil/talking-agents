@@ -35,6 +35,69 @@ export const houseRoutes: RouteEntry[] = [
   },
   {
     method: 'GET',
+    pattern: /^\/api\/skills\/([^/]+)$/,
+    handler: (_req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const skill = system.skillStore.get(name)
+      if (!skill) return errorResponse(`Skill "${name}" not found`, 404)
+      return json({ name: skill.name, description: skill.description, body: skill.body, scope: skill.scope, tools: skill.tools })
+    },
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/skills$/,
+    handler: async (req, _match, { system }) => {
+      const body = await parseBody(req)
+      const name = body.name as string
+      const description = body.description as string
+      const skillBody = body.body as string
+      if (!name || !description || !skillBody) return errorResponse('name, description, and body are required')
+      if (system.skillStore.get(name)) return errorResponse(`Skill "${name}" already exists`)
+      const { mkdir, writeFile } = await import('node:fs/promises')
+      const { join } = await import('node:path')
+      const dirPath = join(system.skillsDir, name)
+      await mkdir(dirPath, { recursive: true })
+      const scope = Array.isArray(body.scope) ? body.scope as string[] : []
+      const scopeLine = scope.length > 0 ? `\nscope: [${scope.join(', ')}]` : ''
+      await writeFile(join(dirPath, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}${scopeLine}\n---\n\n${skillBody}\n`, 'utf-8')
+      system.skillStore.register({ name, description, body: skillBody, scope, tools: [], dirPath })
+      return json({ created: true, name }, 201)
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: /^\/api\/skills\/([^/]+)$/,
+    handler: async (req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const skill = system.skillStore.get(name)
+      if (!skill) return errorResponse(`Skill "${name}" not found`, 404)
+      const body = await parseBody(req)
+      const newDesc = (body.description as string) ?? skill.description
+      const newBody = (body.body as string) ?? skill.body
+      const newScope = Array.isArray(body.scope) ? body.scope as string[] : [...skill.scope]
+      const { writeFile } = await import('node:fs/promises')
+      const { join } = await import('node:path')
+      const scopeLine = newScope.length > 0 ? `\nscope: [${newScope.join(', ')}]` : ''
+      await writeFile(join(skill.dirPath, 'SKILL.md'), `---\nname: ${name}\ndescription: ${newDesc}${scopeLine}\n---\n\n${newBody}\n`, 'utf-8')
+      system.skillStore.register({ ...skill, description: newDesc, body: newBody, scope: newScope })
+      return json({ updated: true, name })
+    },
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/api\/skills\/([^/]+)$/,
+    handler: async (_req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const skill = system.skillStore.get(name)
+      if (!skill) return errorResponse(`Skill "${name}" not found`, 404)
+      const { rm } = await import('node:fs/promises')
+      await rm(skill.dirPath, { recursive: true, force: true })
+      system.skillStore.remove(name)
+      return json({ deleted: true, name })
+    },
+  },
+  {
+    method: 'GET',
     pattern: /^\/api\/models$/,
     handler: async (_req, _match, { system }) => {
       try {

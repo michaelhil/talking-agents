@@ -15,6 +15,7 @@ import { DEFAULTS } from '../core/types.ts'
 
 export interface HumanAgentConfig {
   readonly name: string
+  readonly description?: string
   readonly metadata?: Record<string, unknown>
 }
 
@@ -31,6 +32,7 @@ export const createHumanAgent = (
   const agentId = crypto.randomUUID()
   let send = initialSend
   let isInactive = false
+  let description = config.description ?? ''
   const historyLimit = DEFAULTS.historyLimit
 
   // Human agents are always 'idle' — state changes come from UI interaction, not LLM
@@ -74,5 +76,7 @@ export const createHumanAgent = (
     setTransport: (newSend: TransportSend) => { send = newSend },
     get inactive() { return isInactive },
     setInactive: (value: boolean) => { isInactive = value },
+    getDescription: () => description,
+    updateDescription: (desc: string) => { description = desc },
   }
 }

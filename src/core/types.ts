@@ -434,6 +434,8 @@ export interface Agent {
   readonly leave: (roomId: string) => void
   readonly inactive?: boolean
   readonly setInactive?: (value: boolean) => void
+  readonly getDescription?: () => string
+  readonly updateDescription?: (desc: string) => void
 }
 
 // === AIAgent — extended Agent with observability ===
@@ -446,7 +448,9 @@ export interface AIAgent extends Agent {
   readonly getModel: () => string
   readonly cancelGeneration: () => void
   readonly getTemperature: () => number | undefined
+  readonly updateTemperature?: (t: number | undefined) => void
   readonly getHistoryLimit: () => number | undefined
+  readonly updateHistoryLimit?: (n: number) => void
   readonly getTools: () => ReadonlyArray<string> | undefined
   readonly refreshTools?: (support: { toolExecutor?: ToolExecutor; toolDescriptions?: string; toolDefinitions?: ReadonlyArray<ToolDefinition> }) => void
   // Memory introspection + management

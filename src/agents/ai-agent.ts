@@ -75,7 +75,8 @@ export const createAIAgent = (
 
   let currentSystemPrompt: string = config.systemPrompt
   let currentModel: string = config.model
-  const historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
+  let currentTemperature: number | undefined = config.temperature
+  let historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
   const maxToolIterations = config.maxToolIterations ?? 5
   let toolExecutor = options?.toolExecutor
   let toolDescriptions = options?.toolDescriptions
@@ -143,7 +144,7 @@ export const createAIAgent = (
     const contextResult = buildContext(contextDeps(), triggerRoomId)
     const epoch = cm.epochAtStart()
 
-    const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt }
+    const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt, temperature: currentTemperature, historyLimit }
     const inReplyTo = contextResult.flushInfo.ids.size > 0 ? [...contextResult.flushInfo.ids] : undefined
     // epoch guards: each cancelGeneration() increments generationEpoch so stale
     // in-flight results from a prior generation cycle are silently discarded.
@@ -335,10 +336,12 @@ Respond with only the summary — no preamble or explanation.`
     getSystemPrompt: () => currentSystemPrompt,
     updateModel: (model: string) => { currentModel = model },
     getModel: () => currentModel,
-    getTemperature: () => config.temperature,
-    getHistoryLimit: () => config.historyLimit,
+    getTemperature: () => currentTemperature,
+    updateTemperature: (t: number | undefined) => { currentTemperature = t },
+    getHistoryLimit: () => historyLimit,
+    updateHistoryLimit: (n: number) => { historyLimit = n },
     getTools: () => config.tools,
-    getConfig: () => ({ ...config, model: currentModel, systemPrompt: currentSystemPrompt }),
+    getConfig: () => ({ ...config, model: currentModel, systemPrompt: currentSystemPrompt, temperature: currentTemperature, historyLimit }),
     cancelGeneration: cm.cancelAll,
     refreshTools: (support) => {
       if (support.toolExecutor !== undefined) toolExecutor = support.toolExecutor
@@ -355,7 +358,7 @@ Respond with only the summary — no preamble or explanation.`
         lastActiveAt: ctx.lastActiveAt,
       })),
       incomingCount: agentHistory.incoming.length,
-      knownAgents: [...agentHistory.agentProfiles.values()].map(p => p.name),
+      knownAgents: [...new Set([...agentHistory.agentProfiles.values()].map(p => p.name))],
     }),
     clearHistory: (roomId?: string) => {
       if (roomId) {

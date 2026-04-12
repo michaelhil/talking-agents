@@ -36,6 +36,7 @@ export interface SkillStore {
   readonly list: () => ReadonlyArray<Skill>
   readonly forScope: (roomName: string) => ReadonlyArray<Skill>
   readonly register: (skill: Skill) => void
+  readonly remove: (name: string) => boolean
 }
 
 export const createSkillStore = (): SkillStore => {
@@ -53,6 +54,7 @@ export const createSkillStore = (): SkillStore => {
       }
       skills.set(skill.name, skill)
     },
+    remove: (name) => skills.delete(name),
   }
 }
 
