@@ -1,6 +1,17 @@
 // ============================================================================
 // UI Renderer — DOM rendering functions for rooms, agents, and messages.
+//
+// Artifact-type renderers are in artifact-renderers.ts.
 // ============================================================================
+
+import {
+  renderTaskListArtifact,
+  renderPollArtifact,
+  renderFlowArtifact,
+  renderDocumentArtifact,
+  renderMermaidArtifact,
+  renderGenericArtifact,
+} from './artifact-renderers.ts'
 
 
 // === Types (mirror of server-side, minimal) ===
@@ -25,8 +36,9 @@ export interface AgentInfo {
   id: string
   name: string
   kind: string
-  state?: string
+  state: string
   model?: string
+  context?: string
   tags?: ReadonlyArray<string>
 }
 
@@ -66,22 +78,26 @@ export type ArtifactAction =
 
 // === Rendering ===
 
+export interface RenderRoomsOptions {
+  rooms: Record<string, RoomProfile>
+  selectedRoomId: string | null
+  pausedRooms: Set<string>
+  unreadCounts: Record<string, number>
+  generatingRoomIds: Set<string>
+  onSelect: (roomId: string) => void
+  onDelete?: (roomId: string, roomName: string) => void
+}
+
 export const renderRooms = (
   container: HTMLElement,
-  rooms: Map<string, RoomProfile>,
-  selectedRoomId: string,
-  pausedRooms: Set<string>,
-  onSelect: (roomId: string) => void,
-  onDelete?: (roomId: string, roomName: string) => void,
-  unreadCounts?: Map<string, number>,
-  generatingRoomIds?: Set<string>,
+  opts: RenderRoomsOptions,
 ): void => {
   container.innerHTML = ''
-  for (const room of rooms.values()) {
-    const isPaused = pausedRooms.has(room.id)
-    const isSelected = room.id === selectedRoomId
-    const unread = unreadCounts?.get(room.id) ?? 0
-    const isThinking = generatingRoomIds?.has(room.id) ?? false
+  for (const room of Object.values(opts.rooms)) {
+    const isPaused = opts.pausedRooms.has(room.id)
+    const isSelected = room.id === opts.selectedRoomId
+    const unread = opts.unreadCounts[room.id] ?? 0
+    const isThinking = opts.generatingRoomIds.has(room.id)
     const div = document.createElement('div')
     div.className = `px-3 py-1 cursor-pointer text-xs flex items-center gap-1.5 group relative ${isSelected ? 'bg-blue-50 font-semibold text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`
 
@@ -96,313 +112,18 @@ export const renderRooms = (
     if (unread > 0) name.className += ' font-bold'
     div.appendChild(name)
 
-    if (onDelete) {
+    if (opts.onDelete) {
       const del = document.createElement('button')
       del.className = 'text-red-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 shrink-0'
       del.textContent = '×'
       del.title = 'Delete room'
-      del.onclick = (e) => { e.stopPropagation(); onDelete(room.id, room.name) }
+      del.onclick = (e) => { e.stopPropagation(); opts.onDelete!(room.id, room.name) }
       div.appendChild(del)
     }
 
-    div.onclick = () => onSelect(room.id)
+    div.onclick = () => opts.onSelect(room.id)
     container.appendChild(div)
   }
-}
-
-const renderTaskListArtifact = (
-  artifact: ArtifactInfo,
-  onAction: (action: ArtifactAction) => void,
-): HTMLElement => {
-  const tasks = ((artifact.body as { tasks?: TaskItem[] })?.tasks ?? [])
-  const completed = tasks.filter(t => t.status === 'completed').length
-  const wrap = document.createElement('div')
-  wrap.className = 'group space-y-0.5'
-
-  // Header row
-  const header = document.createElement('div')
-  header.className = 'flex items-center gap-1'
-  const titleEl = document.createElement('span')
-  titleEl.className = 'text-xs font-medium text-gray-700 flex-1'
-  titleEl.textContent = artifact.title
-  const progress = document.createElement('span')
-  progress.className = 'text-xs text-gray-400'
-  progress.textContent = tasks.length > 0 ? `${completed}/${tasks.length}` : '0 tasks'
-  const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 ml-1 flex-shrink-0'
-  removeBtn.textContent = '✕'
-  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
-  header.appendChild(titleEl)
-  header.appendChild(progress)
-  header.appendChild(removeBtn)
-  wrap.appendChild(header)
-
-  for (const task of tasks) {
-    const row = document.createElement('div')
-    row.className = 'flex items-center gap-1.5 pl-2 text-xs'
-    const cb = document.createElement('input')
-    cb.type = 'checkbox'
-    cb.checked = task.status === 'completed'
-    cb.className = 'rounded flex-shrink-0'
-    cb.onchange = () => onAction({ kind: 'complete_task', artifactId: artifact.id, taskId: task.id, completed: cb.checked })
-    const label = document.createElement('span')
-    label.className = `flex-1 ${task.status === 'completed' ? 'line-through text-gray-400' : task.status === 'blocked' ? 'text-red-400' : 'text-gray-700'}`
-    label.textContent = task.content
-    row.appendChild(cb)
-    row.appendChild(label)
-    if (task.assignee) {
-      const badge = document.createElement('span')
-      badge.className = 'text-xs bg-blue-50 text-blue-500 px-1 rounded flex-shrink-0'
-      badge.textContent = task.assignee
-      row.appendChild(badge)
-    }
-    wrap.appendChild(row)
-  }
-  if (!artifact.resolution) {
-    const addRow = document.createElement('div')
-    addRow.className = 'flex items-center gap-1 pl-2 pt-0.5'
-    const input = document.createElement('input')
-    input.type = 'text'
-    input.placeholder = 'Add task…'
-    input.className = 'flex-1 text-xs border-b border-transparent hover:border-gray-200 focus:border-blue-300 bg-transparent py-0.5 focus:outline-none'
-    const submit = (e: Event): void => {
-      e.stopPropagation()
-      const content = input.value.trim()
-      if (!content) return
-      onAction({ kind: 'add_task', artifactId: artifact.id, content })
-      input.value = ''
-    }
-    input.onkeydown = (e) => { if (e.key === 'Enter') submit(e) }
-    addRow.appendChild(input)
-    wrap.appendChild(addRow)
-  } else {
-    const res = document.createElement('div')
-    res.className = 'text-xs text-green-600 pl-2 italic'
-    res.textContent = `✓ ${artifact.resolution}`
-    wrap.appendChild(res)
-  }
-  return wrap
-}
-
-const renderPollArtifact = (
-  artifact: ArtifactInfo,
-  myAgentId: string,
-  onAction: (action: ArtifactAction) => void,
-): HTMLElement => {
-  const body = artifact.body as { question?: string; options?: PollOption[]; allowMultiple?: boolean }
-  const wrap = document.createElement('div')
-  wrap.className = 'group space-y-1'
-
-  const header = document.createElement('div')
-  header.className = 'flex items-center gap-1'
-  const titleEl = document.createElement('span')
-  titleEl.className = 'text-xs font-medium text-gray-700 flex-1'
-  titleEl.textContent = artifact.title
-  const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 ml-1 flex-shrink-0'
-  removeBtn.textContent = '✕'
-  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
-  header.appendChild(titleEl)
-  header.appendChild(removeBtn)
-  wrap.appendChild(header)
-
-  if (body.question) {
-    const q = document.createElement('div')
-    q.className = 'text-xs text-gray-500 pl-2 italic'
-    q.textContent = body.question
-    wrap.appendChild(q)
-  }
-
-  for (const opt of (body.options ?? [])) {
-    const row = document.createElement('div')
-    row.className = 'flex items-center gap-1.5 pl-2 text-xs'
-    const hasVoted = opt.votes.includes(myAgentId)
-    const voteBtn = document.createElement('button')
-    voteBtn.className = `px-1.5 py-0.5 rounded text-xs flex-shrink-0 ${hasVoted ? 'bg-blue-100 text-blue-600 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`
-    voteBtn.textContent = hasVoted ? '✓' : 'Vote'
-    voteBtn.disabled = artifact.resolvedAt !== undefined
-    voteBtn.onclick = () => onAction({ kind: 'cast_vote', artifactId: artifact.id, optionId: opt.id })
-    const optLabel = document.createElement('span')
-    optLabel.className = 'flex-1 text-gray-700'
-    optLabel.textContent = opt.text
-    const count = document.createElement('span')
-    count.className = 'text-gray-400 flex-shrink-0'
-    count.textContent = `${opt.votes.length}`
-    row.appendChild(voteBtn)
-    row.appendChild(optLabel)
-    row.appendChild(count)
-    wrap.appendChild(row)
-  }
-
-  if (artifact.resolution) {
-    const res = document.createElement('div')
-    res.className = 'text-xs text-green-600 pl-2 italic'
-    res.textContent = `✓ ${artifact.resolution}`
-    wrap.appendChild(res)
-  }
-  return wrap
-}
-
-const renderFlowArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactAction) => void): HTMLElement => {
-  const body = artifact.body as { steps?: Array<{ agentName: string }>; loop?: boolean }
-  const wrap = document.createElement('div')
-  wrap.className = 'group'
-  const row = document.createElement('div')
-  row.className = 'flex items-center gap-1 text-xs'
-  const titleEl = document.createElement('span')
-  titleEl.className = 'font-medium text-purple-700 flex-1'
-  titleEl.textContent = artifact.title
-  const steps = (body.steps ?? []).map(s => s.agentName).join(' → ')
-  const stepsEl = document.createElement('span')
-  stepsEl.className = 'text-gray-400 truncate max-w-[120px]'
-  stepsEl.title = steps
-  stepsEl.textContent = steps
-  const loopEl = body.loop ? document.createElement('span') : null
-  if (loopEl) { loopEl.className = 'text-purple-400 flex-shrink-0'; loopEl.textContent = '↻' }
-  const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
-  removeBtn.textContent = '✕'
-  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
-  row.appendChild(titleEl)
-  row.appendChild(stepsEl)
-  if (loopEl) row.appendChild(loopEl)
-  row.appendChild(removeBtn)
-  wrap.appendChild(row)
-  return wrap
-}
-
-const MAX_VISIBLE_BLOCKS = 20
-
-const renderDocumentArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactAction) => void): HTMLElement => {
-  const body = artifact.body as { blocks?: Array<{ id: string; type: string; content: string }> }
-  const allBlocks = body.blocks ?? []
-  const blocks = allBlocks.slice(-MAX_VISIBLE_BLOCKS)
-
-  const wrap = document.createElement('div')
-  wrap.className = 'group'
-
-  // Header row
-  const header = document.createElement('div')
-  header.className = 'flex items-center gap-1 text-xs mb-1'
-  const titleEl = document.createElement('span')
-  titleEl.className = 'font-medium text-indigo-700 flex-1'
-  titleEl.textContent = artifact.title
-  const countEl = document.createElement('span')
-  countEl.className = 'text-gray-400 flex-shrink-0'
-  countEl.textContent = `${allBlocks.length} block${allBlocks.length === 1 ? '' : 's'}`
-  const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
-  removeBtn.textContent = '✕'
-  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
-  const editBtn = document.createElement('button')
-  editBtn.className = 'text-xs text-blue-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 flex-shrink-0'
-  editBtn.textContent = 'edit'
-  editBtn.onclick = () => onAction({ kind: 'edit_document', artifactId: artifact.id, title: artifact.title, blocks: allBlocks })
-  header.appendChild(titleEl)
-  header.appendChild(countEl)
-  header.appendChild(editBtn)
-  header.appendChild(removeBtn)
-  wrap.appendChild(header)
-
-  if (allBlocks.length > MAX_VISIBLE_BLOCKS) {
-    const moreEl = document.createElement('div')
-    moreEl.className = 'text-xs text-gray-400 italic mb-1'
-    moreEl.textContent = `… ${allBlocks.length - MAX_VISIBLE_BLOCKS} earlier blocks`
-    wrap.appendChild(moreEl)
-  }
-
-  // Block content
-  for (const block of blocks) {
-    const blockEl = document.createElement('div')
-    blockEl.className = 'text-xs text-gray-700 leading-snug mb-0.5'
-    switch (block.type) {
-      case 'heading1':
-        blockEl.className = 'text-sm font-bold text-gray-900 mb-0.5'
-        blockEl.textContent = block.content
-        break
-      case 'heading2':
-        blockEl.className = 'text-xs font-semibold text-gray-800 mb-0.5'
-        blockEl.textContent = block.content
-        break
-      case 'heading3':
-        blockEl.className = 'text-xs font-medium text-gray-700 mb-0.5'
-        blockEl.textContent = block.content
-        break
-      case 'code': {
-        const pre = document.createElement('pre')
-        pre.className = 'text-xs bg-gray-50 rounded p-1 mb-0.5 overflow-x-auto whitespace-pre-wrap break-words'
-        pre.textContent = block.content
-        wrap.appendChild(pre)
-        continue
-      }
-      case 'quote':
-        blockEl.className = 'text-xs text-gray-600 border-l-2 border-gray-300 pl-2 italic mb-0.5'
-        blockEl.textContent = block.content
-        break
-      case 'list':
-        blockEl.className = 'text-xs text-gray-700 mb-0.5'
-        blockEl.textContent = `• ${block.content}`
-        break
-      default:
-        blockEl.textContent = block.content
-    }
-    wrap.appendChild(blockEl)
-  }
-
-  if (allBlocks.length === 0) {
-    const empty = document.createElement('div')
-    empty.className = 'text-xs text-gray-400 italic'
-    empty.textContent = '(empty document)'
-    wrap.appendChild(empty)
-  }
-
-  return wrap
-}
-
-const renderMermaidArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactAction) => void): HTMLElement => {
-  const div = document.createElement('div')
-  div.className = 'group relative'
-
-  const header = document.createElement('div')
-  header.className = 'flex items-center gap-2 mb-1'
-  const title = document.createElement('span')
-  title.className = 'text-xs font-medium text-teal-700'
-  title.textContent = artifact.title
-  header.appendChild(title)
-
-  const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 ml-auto'
-  removeBtn.textContent = '✕'
-  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
-  header.appendChild(removeBtn)
-
-  const container = document.createElement('div')
-  container.className = 'overflow-x-auto bg-white rounded border p-2'
-  const source = (artifact.body as { source?: string })?.source ?? ''
-  void renderMermaidSource(container, source)
-
-  div.appendChild(header)
-  div.appendChild(container)
-  return div
-}
-
-const renderGenericArtifact = (artifact: ArtifactInfo, onAction: (action: ArtifactAction) => void): HTMLElement => {
-  const wrap = document.createElement('div')
-  wrap.className = 'group flex items-center gap-1 text-xs'
-  const titleEl = document.createElement('span')
-  titleEl.className = 'flex-1 text-gray-700'
-  titleEl.textContent = artifact.title
-  const typeEl = document.createElement('span')
-  typeEl.className = 'text-gray-400 flex-shrink-0'
-  typeEl.textContent = `[${artifact.type}]`
-  const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
-  removeBtn.textContent = '✕'
-  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
-  wrap.appendChild(titleEl)
-  wrap.appendChild(typeEl)
-  wrap.appendChild(removeBtn)
-  return wrap
 }
 
 export const renderArtifacts = (
@@ -486,35 +207,43 @@ const renderAgentRow = (
   return div
 }
 
+export interface RenderAgentsOptions {
+  agents: Record<string, AgentInfo>
+  mutedAgentIds: Set<string>
+  myAgentId: string | null
+  selectedAgentId: string | null
+  roomMemberIds: string[]
+  onToggleMute: (agentId: string, muted: boolean) => void
+  onInspect: (agentId: string) => void
+  onAddToRoom?: (agentId: string) => void
+  onRemoveFromRoom?: (agentId: string) => void
+}
+
 export const renderAgents = (
   container: HTMLElement,
-  agents: Map<string, AgentInfo>,
-  agentStates: Map<string, { state: string; context?: string }>,
-  mutedAgents: Set<string>,
-  myAgentId: string,
-  selectedAgentId: string,
-  onToggleMute: (agentName: string, muted: boolean) => void,
-  onInspect?: (agentName: string) => void,
-  roomMemberIds?: Set<string>,
-  onAddToRoom?: (agentId: string, agentName: string) => void,
-  onRemoveFromRoom?: (agentId: string, agentName: string) => void,
+  opts: RenderAgentsOptions,
 ): void => {
   container.innerHTML = ''
 
-  // Flat list: in-room agents first, then not-in-room (greyed out)
-  const allAgents = [...agents.values()]
-  const inRoom = roomMemberIds ? allAgents.filter(a => roomMemberIds.has(a.id)) : allAgents
-  const notInRoom = roomMemberIds ? allAgents.filter(a => !roomMemberIds.has(a.id)) : []
+  const allAgents = Object.values(opts.agents)
+  const memberSet = new Set(opts.roomMemberIds)
+  const hasRoom = opts.roomMemberIds.length > 0
+
+  // In-room agents first, then not-in-room (greyed out)
+  const inRoom = hasRoom ? allAgents.filter(a => memberSet.has(a.id)) : allAgents
+  const notInRoom = hasRoom ? allAgents.filter(a => !memberSet.has(a.id)) : []
 
   for (const agent of [...inRoom, ...notInRoom]) {
-    const isIn = !roomMemberIds || roomMemberIds.has(agent.id)
-    const isMuted = mutedAgents.has(agent.name)
-    const isGenerating = agentStates.get(agent.name)?.state === 'generating'
-    const isSelf = agent.id === myAgentId
-    const isSelected = agent.id === selectedAgentId
+    const isIn = !hasRoom || memberSet.has(agent.id)
+    const isMuted = opts.mutedAgentIds.has(agent.id)
+    const isGenerating = agent.state === 'generating'
+    const isSelf = agent.id === opts.myAgentId
+    const isSelected = agent.id === opts.selectedAgentId
     container.appendChild(renderAgentRow(
-      agent, isIn, isMuted, isGenerating, isSelf, isSelected, onToggleMute, onInspect,
-      roomMemberIds ? { onAdd: !isIn ? onAddToRoom : undefined, onRemove: isIn ? onRemoveFromRoom : undefined } : undefined,
+      agent, isIn, isMuted, isGenerating, isSelf, isSelected,
+      (name, muted) => opts.onToggleMute(agent.id, muted),
+      () => opts.onInspect(agent.id),
+      hasRoom ? { onAdd: !isIn ? (id) => opts.onAddToRoom?.(id) : undefined, onRemove: isIn ? (id) => opts.onRemoveFromRoom?.(id) : undefined } : undefined,
     ))
   }
 }
@@ -526,29 +255,58 @@ export const renderThinkingIndicator = (
   agentName: string,
   onStop: (agentName: string) => void,
 ): { element: HTMLElement; timer: number } => {
+  // Matches the shape of a completed message card (rounded, padded, msg-agent bg)
   const div = document.createElement('div')
-  div.className = 'flex items-center gap-2 px-3 py-1.5 text-xs text-yellow-600'
+  div.className = 'rounded px-3 py-2 text-sm msg-agent'
   div.setAttribute('data-thinking-agent', agentName)
+
+  // Header row — same layout as renderMessage header
+  const header = document.createElement('div')
+  header.className = 'flex items-center gap-2 mb-1'
 
   const dot = document.createElement('span')
   dot.className = 'inline-block w-2 h-2 rounded-full bg-yellow-400 typing-indicator shrink-0'
-  div.appendChild(dot)
+  header.appendChild(dot)
 
   const label = document.createElement('span')
-  label.className = 'flex-1'
+  label.className = 'font-medium text-gray-800 text-xs'
+  label.setAttribute('data-thinking-label', agentName)
   let seconds = 0
-  label.textContent = `${agentName} is thinking...`
-  div.appendChild(label)
+  label.textContent = `${agentName}: Building context...`
+  header.appendChild(label)
+
+  const timerEl = document.createElement('span')
+  timerEl.className = 'text-xs text-gray-400'
+  header.appendChild(timerEl)
+
+  const spacer = document.createElement('span')
+  spacer.className = 'ml-auto'
+  header.appendChild(spacer)
 
   const stopBtn = document.createElement('button')
-  stopBtn.className = 'text-red-400 hover:text-red-600 font-medium'
+  stopBtn.className = 'text-red-400 hover:text-red-600 text-xs font-medium'
   stopBtn.textContent = '■ stop'
   stopBtn.onclick = (e) => { e.stopPropagation(); onStop(agentName) }
-  div.appendChild(stopBtn)
+  header.appendChild(stopBtn)
+
+  div.appendChild(header)
+
+  // Tool status line (shown during tool execution)
+  const toolStatus = document.createElement('div')
+  toolStatus.className = 'text-xs text-gray-400'
+  toolStatus.setAttribute('data-thinking-tools', agentName)
+  div.appendChild(toolStatus)
+
+  // Streaming preview — same styling as message content body.
+  // Wraps naturally, grows vertically as text arrives.
+  const preview = document.createElement('div')
+  preview.className = 'text-gray-700 whitespace-pre-wrap break-words'
+  preview.setAttribute('data-thinking-preview', agentName)
+  div.appendChild(preview)
 
   const timer = window.setInterval(() => {
     seconds++
-    label.textContent = `${agentName} is thinking... (${seconds}s)`
+    timerEl.textContent = `${seconds}s`
   }, 1000)
 
   container.appendChild(div)
@@ -559,6 +317,47 @@ export const renderThinkingIndicator = (
 export const removeThinkingIndicator = (container: HTMLElement, agentName: string): void => {
   const el = container.querySelector(`[data-thinking-agent="${agentName}"]`)
   el?.remove()
+}
+
+export const updateThinkingLabel = (container: HTMLElement, agentName: string, text: string): void => {
+  const el = container.querySelector(`[data-thinking-label="${agentName}"]`)
+  if (el) el.textContent = text
+}
+
+export const showContextIcon = (container: HTMLElement, agentName: string, onClick: () => void): void => {
+  const indicator = container.querySelector(`[data-thinking-agent="${agentName}"]`)
+  if (!indicator || indicator.querySelector('[data-context-btn]')) return
+  const btn = document.createElement('button')
+  btn.className = 'text-gray-400 hover:text-blue-500 text-xs'
+  btn.textContent = '\ud83d\udccb'
+  btn.title = 'View prompt context'
+  btn.setAttribute('data-context-btn', '')
+  btn.onclick = (e) => { e.stopPropagation(); onClick() }
+  // Insert into the header row, before the stop button
+  const header = indicator.querySelector('div')
+  const stopBtn = header?.querySelector('button')
+  if (stopBtn) header!.insertBefore(btn, stopBtn)
+  else header?.appendChild(btn)
+}
+
+/**
+ * Patch the thinking preview text. Called with the FULL accumulated text
+ * (accumulation is handled by the $thinkingPreviews store).
+ * Text wraps naturally and the container auto-scrolls to keep the latest visible.
+ */
+export const updateThinkingPreview = (container: HTMLElement, agentName: string, fullText: string): void => {
+  const el = container.querySelector(`[data-thinking-preview="${agentName}"]`)
+  if (!el) return
+  el.textContent = fullText
+  // Auto-scroll if user is near the bottom (within 150px)
+  if (container.scrollHeight - container.scrollTop - container.clientHeight < 150) {
+    container.scrollTop = container.scrollHeight
+  }
+}
+
+export const updateThinkingTool = (container: HTMLElement, agentName: string, text: string): void => {
+  const el = container.querySelector(`[data-thinking-tools="${agentName}"]`)
+  if (el) el.textContent = text
 }
 
 // === Mermaid rendering ===
@@ -638,10 +437,15 @@ export const renderMessage = (
   container: HTMLElement,
   msg: UIMessage,
   myAgentId: string,
-  agents: Map<string, AgentInfo>,
+  agents: Record<string, AgentInfo> | Map<string, AgentInfo>,
   onPin?: (msgId: string, senderName: string, content: string) => void,
   onDelete?: (msgId: string) => void,
+  onViewContext?: (msgId: string) => void,
 ): void => {
+  // Support both Record and Map for backwards compatibility during migration
+  const getAgent = (id: string): AgentInfo | undefined =>
+    agents instanceof Map ? agents.get(id) : agents[id]
+
   const div = document.createElement('div')
   div.setAttribute('data-msg-id', msg.id)
   const isSystem = msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.senderId === 'system'
@@ -651,7 +455,7 @@ export const renderMessage = (
   const isRoomSummary = msg.type === 'room_summary'
 
   if (isPass) {
-    const senderInfo = agents.get(msg.senderId)
+    const senderInfo = getAgent(msg.senderId)
     const senderName = senderInfo?.name ?? msg.senderId
     div.className = 'msg-pass text-xs py-1 px-2'
     div.textContent = `${senderName} ${msg.content}`
@@ -669,7 +473,7 @@ export const renderMessage = (
 
     const nameEl = document.createElement('span')
     nameEl.className = 'font-medium text-gray-800 text-xs'
-    const sender = agents.get(msg.senderId)
+    const sender = getAgent(msg.senderId)
     nameEl.textContent = sender?.name ?? msg.senderId
 
     const timeEl = document.createElement('span')
@@ -686,11 +490,20 @@ export const renderMessage = (
       header.appendChild(genEl)
     }
 
-    if (onPin || onDelete) {
+    if (onPin || onDelete || onViewContext) {
       const spacer = document.createElement('span')
       spacer.className = 'ml-auto'
       header.appendChild(spacer)
       div.className += ' group'
+
+      if (onViewContext && msg.generationMs) {
+        const ctxBtn = document.createElement('button')
+        ctxBtn.className = 'text-gray-300 hover:text-blue-500 text-xs opacity-0 group-hover:opacity-100'
+        ctxBtn.textContent = '\ud83d\udccb'
+        ctxBtn.title = 'View prompt context'
+        ctxBtn.onclick = (e) => { e.stopPropagation(); onViewContext(msg.id) }
+        header.appendChild(ctxBtn)
+      }
 
       if (onPin) {
         const pinBtn = document.createElement('button')

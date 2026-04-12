@@ -182,11 +182,15 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
     }
   }
 
-  const stream = async function* (request: ChatRequest): AsyncIterable<StreamChunk> {
+  const stream = async function* (request: ChatRequest, externalSignal?: AbortSignal): AsyncIterable<StreamChunk> {
     const body: Record<string, unknown> = {
       model: request.model,
       messages: request.messages.map(m => ({ role: m.role, content: m.content })),
       stream: true,
+    }
+    // Pass tool definitions for native tool calling in streaming mode
+    if (request.tools && request.tools.length > 0) {
+      body.tools = request.tools.map(t => t)
     }
     const streamOpts: Record<string, unknown> = {
       num_ctx: request.numCtx ?? DEFAULT_NUM_CTX,
@@ -197,6 +201,11 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
 
     const controller = new AbortController()
     let idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
+
+    // Abort on external signal (user cancellation)
+    if (externalSignal) {
+      externalSignal.addEventListener('abort', () => controller.abort(), { once: true })
+    }
 
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
@@ -233,11 +242,14 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
 
         for (const line of lines) {
           if (!line.trim()) continue
-          let parsed: { message?: { content?: string }; done?: boolean }
+          let parsed: { message?: { content?: string; tool_calls?: ReadonlyArray<OllamaToolCall> }; done?: boolean }
           try { parsed = JSON.parse(line) } catch { continue }
           const delta = parsed.message?.content ?? ''
           const isDone = parsed.done === true
-          yield { delta, done: isDone }
+          const toolCalls = isDone && parsed.message?.tool_calls?.length
+            ? parsed.message.tool_calls.map(tc => ({ function: { name: tc.function.name, arguments: tc.function.arguments } }))
+            : undefined
+          yield { delta, done: isDone, ...(toolCalls ? { toolCalls } : {}) }
           if (isDone) return
         }
       }

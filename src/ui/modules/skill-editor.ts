@@ -3,13 +3,7 @@
 // ============================================================================
 
 import { createModal, createTextarea } from './modal.ts'
-
-const safeFetch = async (url: string, init?: RequestInit): Promise<boolean> => {
-  try {
-    const res = await fetch(url, init)
-    return res.ok
-  } catch { return false }
-}
+import { safeFetch, showToast } from './ui-utils.ts'
 
 export const openSkillEditor = (skillName?: string, onDone?: () => void): void => {
   const isNew = !skillName
@@ -114,13 +108,8 @@ export const openSkillEditor = (skillName?: string, onDone?: () => void): void =
     savedBody = bodyArea.value
     savedScope = scopeInput.value
     updateStyle()
-    const toast = document.createElement('div')
-    toast.className = 'absolute left-1/2 -translate-x-1/2 bg-green-600 text-white text-xs px-3 py-1 rounded shadow transition-opacity duration-700'
-    toast.style.bottom = '4px'
-    toast.textContent = isNew ? 'Skill created' : 'Skill updated'
-    btnRow.appendChild(toast)
-    setTimeout(() => { toast.style.opacity = '0' }, 2000)
-    setTimeout(() => { toast.remove(); if (isNew) { modal.close(); onDone?.() } else { onDone?.() } }, 3000)
+    showToast(btnRow, isNew ? 'Skill created' : 'Skill updated')
+    setTimeout(() => { if (isNew) { modal.close(); onDone?.() } else { onDone?.() } }, 3000)
   }
 
   btnRow.appendChild(saveBtn)

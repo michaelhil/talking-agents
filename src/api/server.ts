@@ -34,7 +34,7 @@ const serveStatic = async (pathname: string, uiPath: string, transpiler: Bun.Tra
     })
   }
 
-  if (pathname.startsWith('/modules/') && pathname.endsWith('.ts')) {
+  if ((pathname.startsWith('/modules/') || pathname.startsWith('/lib/')) && pathname.endsWith('.ts')) {
     const filePath = normalize(`${uiPath}${pathname}`)
     if (!filePath.startsWith(uiPath)) {
       return new Response('Forbidden', { status: 403 })

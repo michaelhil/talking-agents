@@ -24,6 +24,7 @@ import type {
   AIAgentConfig,
   Artifact,
   ArtifactTypeDefinition,
+  EvalEvent,
   LLMProvider,
   Message,
   Room,
@@ -51,6 +52,7 @@ export interface AIAgentOptions {
   readonly getArtifactTypeDef?: (type: string) => ArtifactTypeDefinition | undefined
   readonly getCompressedIds?: (roomId: string) => ReadonlySet<string>
   readonly getSkills?: (roomName: string) => string
+  readonly onEvalEvent?: (agentName: string, event: EvalEvent) => void
 }
 
 // === Factory ===
@@ -87,12 +89,15 @@ export const createAIAgent = (
   const getArtifactTypeDef = options?.getArtifactTypeDef
   const getCompressedIds = options?.getCompressedIds
   const getSkills = options?.getSkills
+  const onEvalEvent = options?.onEvalEvent
 
   // Agent-level compressed IDs — tracks messages replaced by LLM summaries.
   // Separate from room-level compressedIds (which tracks messages pruned by messageLimit).
   const localCompressedIds = new Set<string>()
   // Guard: rooms currently undergoing async compression — prevents double-compression.
   const compressingRooms = new Set<string>()
+  // Active abort controller for stream cancellation
+  let activeAbortController: AbortController | null = null
 
   // --- Name resolution ---
 
@@ -146,6 +151,22 @@ export const createAIAgent = (
 
     const evalConfig = { ...config, model: currentModel, systemPrompt: currentSystemPrompt, temperature: currentTemperature, historyLimit }
     const inReplyTo = contextResult.flushInfo.ids.size > 0 ? [...contextResult.flushInfo.ids] : undefined
+    const abortController = new AbortController()
+    activeAbortController = abortController
+    const evalEventCb = onEvalEvent
+      ? (event: EvalEvent) => onEvalEvent(config.name, event)
+      : undefined
+
+    // Emit context_ready with the full prompt before LLM call
+    if (onEvalEvent) {
+      onEvalEvent(config.name, {
+        kind: 'context_ready',
+        messages: contextResult.messages,
+        model: evalConfig.model,
+        temperature: evalConfig.temperature,
+        toolCount: toolDefinitions?.length ?? 0,
+      })
+    }
     // epoch guards: each cancelGeneration() increments generationEpoch so stale
     // in-flight results from a prior generation cycle are silently discarded.
     const run = async (): Promise<void> => {
@@ -153,7 +174,12 @@ export const createAIAgent = (
       try {
         const { decision, flushInfo } = await evaluate(
           contextResult, evalConfig, llmProvider, toolExecutor, maxToolIterations,
-          triggerRoomId, toolDefinitions, inReplyTo,
+          triggerRoomId, {
+            toolDefinitions,
+            inReplyTo,
+            onEvent: evalEventCb,
+            signal: abortController.signal,
+          },
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
 
@@ -342,7 +368,7 @@ Respond with only the summary — no preamble or explanation.`
     updateHistoryLimit: (n: number) => { historyLimit = n },
     getTools: () => config.tools,
     getConfig: () => ({ ...config, model: currentModel, systemPrompt: currentSystemPrompt, temperature: currentTemperature, historyLimit }),
-    cancelGeneration: cm.cancelAll,
+    cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },
     refreshTools: (support) => {
       if (support.toolExecutor !== undefined) toolExecutor = support.toolExecutor
       if (support.toolDescriptions !== undefined) toolDescriptions = support.toolDescriptions

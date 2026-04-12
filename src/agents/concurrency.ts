@@ -35,6 +35,9 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
   const stateSubscribers = new Set<StateSubscriber>()
   let generationEpoch = 0
 
+  // Track which room the agent is currently generating in
+  let generatingContext: string | undefined
+
   const notifyState = (value: StateValue, context?: string): void => {
     for (const fn of stateSubscribers) fn(value, agentId, context)
   }
@@ -49,6 +52,7 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
 
   const state: AgentState = {
     get: () => generatingContexts.size > 0 ? 'generating' : 'idle',
+    getContext: () => generatingContext,
     subscribe: (fn: StateSubscriber) => {
       stateSubscribers.add(fn)
       return () => { stateSubscribers.delete(fn) }
@@ -71,9 +75,10 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
   return {
     state,
     isGenerating: (key: string) => generatingContexts.has(key),
-    startGeneration: (key: string) => { generatingContexts.add(key) },
+    startGeneration: (key: string) => { generatingContexts.add(key); generatingContext = key },
     endGeneration: (key: string) => {
       generatingContexts.delete(key)
+      if (generatingContexts.size === 0) generatingContext = undefined
       notifyState('idle', key)
       checkIdle()
     },
@@ -90,6 +95,7 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
       generationEpoch++
       generatingContexts.clear()
       pendingContexts.clear()
+      generatingContext = undefined
       const resolvers = idleResolvers
       idleResolvers = []
       for (const resolve of resolvers) resolve()

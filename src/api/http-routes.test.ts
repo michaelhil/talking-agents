@@ -52,6 +52,7 @@ const makeSystem = (): System => {
     setOnRoomCreated: () => {},
     setOnRoomDeleted: () => {},
     setOnMembershipChanged: () => {},
+    setOnEvalEvent: () => {},
   } as unknown as System
 }
 

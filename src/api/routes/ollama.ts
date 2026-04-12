@@ -52,6 +52,14 @@ export const ollamaRoutes: RouteEntry[] = [
     },
   },
   {
+    method: 'POST',
+    pattern: /^\/api\/ollama\/reset-circuit$/,
+    handler: (_req, _match, { system }) => {
+      system.ollama.resetCircuitBreaker()
+      return json({ reset: true, health: system.ollama.getHealth() })
+    },
+  },
+  {
     method: 'GET',
     pattern: /^\/api\/ollama\/config$/,
     handler: (_req, _match, { system }) => json(system.ollama.getConfig()),

@@ -14,6 +14,8 @@
 import type {
   AgentResponse,
   AIAgentConfig,
+  ChatRequest,
+  EvalEvent,
   LLMCallOptions,
   LLMProvider,
   NativeToolCall,
@@ -130,6 +132,66 @@ export interface EvalResult {
   readonly flushInfo: FlushInfo
 }
 
+// === Streaming LLM call with retry ===
+
+const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/g
+const LLM_RETRIES = 2
+const LLM_RETRY_DELAY_MS = 1000
+
+const streamWithRetry = async (
+  provider: LLMProvider,
+  config: AIAgentConfig,
+  request: ChatRequest,
+  onEvent?: (e: EvalEvent) => void,
+  signal?: AbortSignal,
+): Promise<{ content: string; toolCalls?: ReadonlyArray<NativeToolCall>; durationMs: number }> => {
+  for (let attempt = 0; attempt <= LLM_RETRIES; attempt++) {
+    try {
+      const startMs = performance.now()
+
+      if (provider.stream) {
+        let content = ''
+        let toolCalls: ReadonlyArray<NativeToolCall> | undefined
+        for await (const chunk of provider.stream(request, signal)) {
+          if (chunk.delta) {
+            content += chunk.delta
+            onEvent?.({ kind: 'chunk', delta: chunk.delta })
+          }
+          if (chunk.done && chunk.toolCalls?.length) {
+            toolCalls = chunk.toolCalls
+          }
+        }
+        // Strip think blocks and trim
+        content = content.replace(THINK_BLOCK_RE, '').trim()
+        return { content, toolCalls, durationMs: Math.round(performance.now() - startMs) }
+      }
+
+      // Fallback: provider doesn't support streaming — use chat()
+      const response = await provider.chat(request)
+      onEvent?.({ kind: 'chunk', delta: response.content })
+      return { content: response.content, toolCalls: response.toolCalls, durationMs: response.generationMs }
+    } catch (err) {
+      if (signal?.aborted) throw err  // Don't retry if cancelled
+      if (attempt < LLM_RETRIES) {
+        console.warn(`[${config.name}] LLM call failed (attempt ${attempt + 1}/${LLM_RETRIES + 1}), retrying in ${LLM_RETRY_DELAY_MS}ms:`, err instanceof Error ? err.message : err)
+        await new Promise(r => setTimeout(r, LLM_RETRY_DELAY_MS))
+      } else {
+        throw err
+      }
+    }
+  }
+  throw new Error('Unreachable')
+}
+
+// === Main evaluation loop ===
+
+export interface EvalOptions {
+  readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
+  readonly inReplyTo?: ReadonlyArray<string>
+  readonly onEvent?: (event: EvalEvent) => void
+  readonly signal?: AbortSignal
+}
+
 export const evaluate = async (
   contextResult: ContextResult,
   config: AIAgentConfig,
@@ -137,67 +199,57 @@ export const evaluate = async (
   toolExecutor: ToolExecutor | undefined,
   maxToolIterations: number,
   triggerRoomId: string,
-  toolDefinitions?: ReadonlyArray<ToolDefinition>,
-  inReplyTo?: ReadonlyArray<string>,
+  options?: EvalOptions,
 ): Promise<EvalResult> => {
   const context = [...contextResult.messages]
   let totalGenerationMs = 0
   const maxToolResultChars = config.maxToolResultChars ?? MAX_TOOL_RESULT_CHARS
+  const { toolDefinitions, inReplyTo, onEvent, signal } = options ?? {}
 
   const makeResult = (decision: Decision): EvalResult => ({
     decision: inReplyTo && inReplyTo.length > 0 ? { ...decision, inReplyTo } : decision,
     flushInfo: contextResult.flushInfo,
   })
 
-  const LLM_RETRIES = 2
-  const LLM_RETRY_DELAY_MS = 1000
-
-  const chatWithRetry = async (messages: ReadonlyArray<{ role: string; content: string }>) => {
-    for (let attempt = 0; attempt <= LLM_RETRIES; attempt++) {
-      try {
-        return await llmProvider.chat({
-          model: config.model,
-          messages: messages as ReadonlyArray<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-          temperature: config.temperature,
-          tools: toolDefinitions,
-        })
-      } catch (err) {
-        if (attempt < LLM_RETRIES) {
-          console.warn(`[${config.name}] LLM call failed (attempt ${attempt + 1}/${LLM_RETRIES + 1}), retrying in ${LLM_RETRY_DELAY_MS}ms:`, err instanceof Error ? err.message : err)
-          await new Promise(r => setTimeout(r, LLM_RETRY_DELAY_MS))
-        } else {
-          throw err
-        }
-      }
-    }
-    throw new Error('Unreachable')
-  }
-
   try {
     for (let toolRound = 0; toolRound <= maxToolIterations; toolRound++) {
-      const chatResponse = await chatWithRetry(context)
+      const request: ChatRequest = {
+        model: config.model,
+        messages: context as ReadonlyArray<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+        temperature: config.temperature,
+        tools: toolDefinitions,
+      }
 
-      totalGenerationMs += chatResponse.generationMs
+      const streamResult = await streamWithRetry(llmProvider, config, request, onEvent, signal)
+      totalGenerationMs += streamResult.durationMs
 
-      // Native tool call path — model returned structured tool calls directly
-      if (chatResponse.toolCalls && chatResponse.toolCalls.length > 0) {
+      // Native tool call path — model returned structured tool calls
+      if (streamResult.toolCalls && streamResult.toolCalls.length > 0) {
         if (!toolExecutor) {
           return makeResult({ response: { action: 'pass', reason: 'Tool calls not available' }, generationMs: totalGenerationMs, triggerRoomId })
         }
-        const calls = nativeCallsToToolCalls(chatResponse.toolCalls)
+        const calls = nativeCallsToToolCalls(streamResult.toolCalls)
+        for (const call of calls) onEvent?.({ kind: 'tool_start', tool: call.tool })
         const results = await toolExecutor(calls, triggerRoomId)
-        context.push({ role: 'assistant' as const, content: chatResponse.content })
+        for (let i = 0; i < results.length; i++) {
+          onEvent?.({ kind: 'tool_result', tool: calls[i]?.tool ?? 'unknown', success: results[i]?.success ?? false, preview: results[i]?.success ? undefined : results[i]?.error })
+        }
+        context.push({ role: 'assistant' as const, content: streamResult.content })
         context.push({ role: 'user' as const, content: formatToolResults(calls, results, maxToolResultChars) })
         continue
       }
 
       // Text protocol path — parse ::TOOL:: / ::PASS:: / natural language
-      const parsed = parseResponse(chatResponse.content)
+      const parsed = parseResponse(streamResult.content)
 
       // Tool call — execute and continue loop
       if (parsed.action === 'tool_call' && toolExecutor) {
+        for (const call of parsed.toolCalls) onEvent?.({ kind: 'tool_start', tool: call.tool })
         const results = await toolExecutor(parsed.toolCalls, triggerRoomId)
-        context.push({ role: 'assistant' as const, content: chatResponse.content })
+        for (let i = 0; i < results.length; i++) {
+          onEvent?.({ kind: 'tool_result', tool: parsed.toolCalls[i]?.tool ?? 'unknown', success: results[i]?.success ?? false, preview: results[i]?.success ? undefined : results[i]?.error })
+        }
+        context.push({ role: 'assistant' as const, content: streamResult.content })
         context.push({ role: 'user' as const, content: formatToolResults(parsed.toolCalls, results, maxToolResultChars) })
         continue
       }

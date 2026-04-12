@@ -25,8 +25,8 @@ export const GATEWAY_DEFAULTS: GatewayConfig = {
   maxConcurrent: 2,
   maxQueueDepth: 6,
   queueTimeoutMs: 30_000,
-  circuitBreakerThreshold: 3,
-  circuitBreakerCooldownMs: 30_000,
+  circuitBreakerThreshold: 5,
+  circuitBreakerCooldownMs: 15_000,
   keepAlive: '30m',
   healthPollIntervalMs: 15_000,
 }
@@ -103,6 +103,7 @@ export interface LLMGateway extends LLMProvider {
   readonly loadModel: (name: string) => Promise<void>
   readonly unloadModel: (name: string) => Promise<void>
   readonly onHealthChange: (cb: HealthChangeCallback) => void
+  readonly resetCircuitBreaker: () => void
   readonly dispose: () => void
 }
 
@@ -424,7 +425,7 @@ export const createLLMGateway = (
   }
 
   // Wrapped stream — same semaphore + circuit breaker, but metrics recorded at end
-  const stream = async function* (request: ChatRequest): AsyncIterable<StreamChunk> {
+  const stream = async function* (request: ChatRequest, signal?: AbortSignal): AsyncIterable<StreamChunk> {
     if (!provider.stream) throw new Error('Provider does not support streaming')
 
     if (!shouldAllowRequest()) {
@@ -437,7 +438,7 @@ export const createLLMGateway = (
 
     try {
       const enrichedRequest = { ...request, keepAlive: config.keepAlive } as ChatRequest
-      yield* provider.stream(enrichedRequest)
+      yield* provider.stream(enrichedRequest, signal)
       recordSuccess()
 
       metrics.push({
@@ -554,6 +555,7 @@ export const createLLMGateway = (
     loadModel,
     unloadModel,
     onHealthChange,
+    resetCircuitBreaker: resetCircuit,
     dispose,
   }
 }

@@ -8,7 +8,7 @@
 import type {
   Agent, AIAgent, AIAgentConfig, DeliverFn, House, HouseCallbacks,
   OnArtifactChanged, OnDeliveryModeChanged, OnFlowEvent,
-  OnMembershipChanged, OnMessagePosted, OnRoomCreated, OnRoomDeleted,
+  OnEvalEvent, OnMembershipChanged, OnMessagePosted, OnRoomCreated, OnRoomDeleted,
   OnTurnChanged, ResolveAgentName, ResolveTagFn, RouteMessage, Team, ToolRegistry,
 } from './core/types.ts'
 import { DEFAULTS } from './core/types.ts'
@@ -69,6 +69,7 @@ export interface System {
   readonly setOnRoomCreated: (callback: OnRoomCreated) => void
   readonly setOnRoomDeleted: (callback: OnRoomDeleted) => void
   readonly setOnMembershipChanged: (callback: OnMembershipChanged) => void
+  readonly setOnEvalEvent: (callback: OnEvalEvent) => void
 }
 
 export const createSystem = (ollamaUrl?: string): System => {
@@ -92,6 +93,7 @@ export const createSystem = (ollamaUrl?: string): System => {
   const roomCreated = lateBinding<OnRoomCreated>()
   const roomDeleted = lateBinding<OnRoomDeleted>()
   const membershipChanged = lateBinding<OnMembershipChanged>()
+  const evalEvent = lateBinding<OnEvalEvent>()
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
@@ -260,6 +262,7 @@ export const createSystem = (ollamaUrl?: string): System => {
       ...options,
       toolCapabilityCache,
       getSkills: getSkillsForRoom,
+      onEvalEvent: evalEvent.proxy,
     })
 
   const boundSpawnHumanAgent = async (config: HumanAgentConfig, send: TransportSend): Promise<HumanAgent> => {
@@ -286,6 +289,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     setOnRoomCreated: roomCreated.set,
     setOnRoomDeleted: roomDeleted.set,
     setOnMembershipChanged: membershipChanged.set,
+    setOnEvalEvent: evalEvent.set,
   }
 }
 

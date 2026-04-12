@@ -159,6 +159,7 @@ export interface SpawnOptions {
   readonly overrideId?: string
   readonly toolCapabilityCache?: ToolCapabilityCache
   readonly getSkills?: (roomName: string) => string
+  readonly onEvalEvent?: (agentName: string, event: import('../core/types.ts').EvalEvent) => void
 }
 
 export const spawnAIAgent = async (
@@ -213,6 +214,7 @@ export const spawnAIAgent = async (
     getArtifactTypeDef: (type: string) => house.artifactTypes.get(type),
     getCompressedIds: (roomId: string) => house.getRoom(roomId)?.getCompressedIds() ?? new Set(),
     getSkills: spawnOptions?.getSkills,
+    onEvalEvent: spawnOptions?.onEvalEvent,
   }, spawnOptions?.overrideId)
 
   // Fill agentRef so the lazy ToolContext in resolveAgentTools resolves correctly

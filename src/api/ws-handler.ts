@@ -73,6 +73,10 @@ export const createWSManager = (system: System): WSManager => {
     broadcast({ type: 'membership_changed', roomId, roomName, agentId, agentName, action })
   })
 
+  system.setOnEvalEvent((agentName, event) => {
+    broadcast({ type: 'agent_activity', agentName, event })
+  })
+
   // Wire gateway health changes → broadcast to all clients
   system.ollama.onHealthChange((health) => {
     broadcast({ type: 'ollama_health', health: health as unknown as Record<string, unknown> })
@@ -145,7 +149,8 @@ export const createWSManager = (system: System): WSManager => {
       .filter(a => !a.inactive)
       .map(a => {
         const ai = asAIAgent(a)
-        return { id: a.id, name: a.name, kind: a.kind, state: a.state.get(), ...(ai ? { model: ai.getModel() } : {}) }
+        const ctx = a.state.getContext()
+        return { id: a.id, name: a.name, kind: a.kind, state: a.state.get(), ...(ctx ? { context: ctx } : {}), ...(ai ? { model: ai.getModel() } : {}) }
       })
     return {
       type: 'snapshot',

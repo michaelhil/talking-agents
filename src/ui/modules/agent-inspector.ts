@@ -6,6 +6,8 @@
 // (description only).
 // ============================================================================
 
+import { safeFetchJson, showToast } from './ui-utils.ts'
+
 interface MemoryStats {
   rooms: Array<{ roomId: string; roomName: string; messageCount: number; lastActiveAt?: number }>
   incomingCount: number
@@ -21,16 +23,6 @@ const formatTimeAgo = (timestamp: number): string => {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
   return `${Math.floor(seconds / 86400)}d ago`
-}
-
-const safeFetchJson = async <T>(url: string, init?: RequestInit): Promise<T | null> => {
-  try {
-    const res = await fetch(url, init)
-    if (!res.ok) return null
-    return await res.json() as T
-  } catch {
-    return null
-  }
 }
 
 const renderMemoryMessage = (
@@ -98,14 +90,8 @@ const createEditableField = (
     await onSave(textarea.value)
     savedValue = textarea.value
     updateStyle()
-    const toast = document.createElement('div')
-    toast.className = 'absolute left-1/2 -translate-x-1/2 bg-green-600 text-white text-xs px-3 py-1 rounded shadow transition-opacity duration-700'
-    toast.style.bottom = '4px'
-    toast.textContent = `${label} updated`
     row.style.position = 'relative'
-    row.appendChild(toast)
-    setTimeout(() => { toast.style.opacity = '0' }, 2000)
-    setTimeout(() => { toast.remove() }, 3000)
+    showToast(row, `${label} updated`)
   }
 
   row.appendChild(saveBtn)
@@ -150,27 +136,36 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
       // Model selector
       const modelSelect = document.createElement('select')
       modelSelect.className = 'text-sm text-gray-500 font-normal ml-2 border-none bg-transparent cursor-pointer hover:text-blue-500 focus:outline-none'
-      modelSelect.innerHTML = `<option value="">${agentRes.model ?? 'n/a'}</option>`
 
-      let modelsLoaded = false
-      modelSelect.onfocus = async () => {
-        if (modelsLoaded) return
-        modelsLoaded = true
-        const data = await safeFetchJson<{ running: string[]; available: string[] }>('/api/models')
+      // Load models immediately (not lazily)
+      const currentModel = (agentRes.model as string) ?? 'n/a'
+      modelSelect.innerHTML = `<option value="${currentModel}">${currentModel}</option>`
+      safeFetchJson<{ running: string[]; available: string[] }>('/api/models').then(data => {
         if (!data) return
         modelSelect.innerHTML = ''
-        for (const m of [...(data.running ?? []), ...(data.available ?? [])]) {
+        const allModels = [...(data.running ?? []), ...(data.available ?? [])]
+        for (const m of allModels) {
           const opt = document.createElement('option')
           opt.value = m; opt.textContent = m
-          if (m === agentRes.model) opt.selected = true
+          if (m === currentModel) opt.selected = true
           modelSelect.appendChild(opt)
         }
-      }
+        // If current model isn't in the list (wrong Ollama), add it at top
+        if (!allModels.includes(currentModel)) {
+          const opt = document.createElement('option')
+          opt.value = currentModel; opt.textContent = `${currentModel} (not available)`
+          opt.selected = true
+          modelSelect.insertBefore(opt, modelSelect.firstChild)
+        }
+      })
       modelSelect.onchange = async () => {
-        if (modelSelect.value) await safeFetchJson(`/api/agents/${enc}`, {
+        if (!modelSelect.value) return
+        const newModel = modelSelect.value
+        await safeFetchJson(`/api/agents/${enc}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: modelSelect.value }),
+          body: JSON.stringify({ model: newModel }),
         })
+        showToast(document.body, `${agentName} now using ${newModel}`, { position: 'fixed' })
       }
       header.appendChild(modelSelect)
 

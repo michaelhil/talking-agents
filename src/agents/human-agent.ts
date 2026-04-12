@@ -38,6 +38,7 @@ export const createHumanAgent = (
   // Human agents are always 'idle' — state changes come from UI interaction, not LLM
   const state: AgentState = {
     get: () => 'idle',
+    getContext: () => undefined,
     subscribe: () => () => {},
   }
 

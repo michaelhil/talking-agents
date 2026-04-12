@@ -416,6 +416,7 @@ export type StateValue = 'idle' | 'generating'
 
 export interface AgentState {
   readonly get: () => StateValue
+  readonly getContext: () => string | undefined
   readonly subscribe: (fn: StateSubscriber) => () => void
 }
 
@@ -615,14 +616,25 @@ export interface ChatResponse {
 export interface StreamChunk {
   readonly delta: string   // raw text fragment — may be empty for final done chunk
   readonly done: boolean
+  readonly toolCalls?: ReadonlyArray<NativeToolCall>  // native tool calls from final chunk
 }
 
 export interface LLMProvider {
   readonly chat: (request: ChatRequest) => Promise<ChatResponse>
-  readonly stream?: (request: ChatRequest) => AsyncIterable<StreamChunk>
+  readonly stream?: (request: ChatRequest, signal?: AbortSignal) => AsyncIterable<StreamChunk>
   readonly models: () => Promise<string[]>
   readonly runningModels?: () => Promise<string[]>
 }
+
+// === Evaluation events — real-time visibility into agent reasoning ===
+
+export type EvalEvent =
+  | { readonly kind: 'chunk'; readonly delta: string }
+  | { readonly kind: 'tool_start'; readonly tool: string }
+  | { readonly kind: 'tool_result'; readonly tool: string; readonly success: boolean; readonly preview?: string }
+  | { readonly kind: 'context_ready'; readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>; readonly model: string; readonly temperature?: number; readonly toolCount: number }
+
+export type OnEvalEvent = (agentName: string, event: EvalEvent) => void
 
 // === Standalone LLM call options ===
 // Used by callLLM(), ToolContext.llm, and HouseCallbacks.callSystemLLM.
@@ -699,6 +711,7 @@ export type WSOutbound =
   | { readonly type: 'messages_cleared'; readonly roomName: string }
   | { readonly type: 'ollama_health'; readonly health: Record<string, unknown> }
   | { readonly type: 'ollama_metrics'; readonly metrics: Record<string, unknown> }
+  | { readonly type: 'agent_activity'; readonly agentName: string; readonly event: EvalEvent }
 
 // === System Constants ===
 
