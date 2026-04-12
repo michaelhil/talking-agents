@@ -213,6 +213,10 @@ export const createServer = (system: System, config?: ServerConfig) => {
         const session = wsManager.sessions.get(ws.data.sessionToken)
         if (session?.agent.kind === 'human') {
           session.agent.setInactive?.(true)
+          // Remove from all rooms to prevent phantom member accumulation
+          for (const room of system.house.getRoomsForAgent(session.agent.id)) {
+            room.removeMember(session.agent.id)
+          }
           wsManager.broadcast({ type: 'agent_removed', agentName: session.agent.name })
         }
         wsManager.wsConnections.delete(ws.data.sessionToken)

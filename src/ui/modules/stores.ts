@@ -30,7 +30,9 @@ export type { UIMessage, AgentInfo, RoomProfile, ArtifactInfo }
 
 export const $myAgentId = atom<string | null>(null)
 export const $myName = atom('')
-export const $sessionToken = atom('')
+export const $sessionToken = atom(
+  typeof localStorage !== 'undefined' ? localStorage.getItem('ta_session') ?? '' : '',
+)
 
 // === Connection ===
 
