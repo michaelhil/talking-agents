@@ -7,10 +7,8 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// BREAKING CHANGE (v2): Todos and flow blueprints are no longer stored per-room.
-// All artifacts (task lists, polls, flows) are stored at system level in
-// SystemSnapshot.artifacts. Snapshots from v1 (or unversioned) are incompatible
-// and must be deleted before upgrading.
+// v3: House prompts are no longer persisted — defaults live in code.
+//     All tool calling is native (no text protocol).
 // ============================================================================
 
 import type {
@@ -22,7 +20,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 2
+export const SNAPSHOT_VERSION = 3
 
 // --- Snapshot schema ---
 
@@ -43,12 +41,8 @@ export interface AgentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '2'
+  readonly version: '3'
   readonly timestamp: number
-  readonly house: {
-    readonly housePrompt: string
-    readonly responseFormat: string
-  }
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>
   readonly artifacts: ReadonlyArray<Artifact>
@@ -118,12 +112,8 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const artifacts = system.house.artifacts.list({ includeResolved: true })
 
   return {
-    version: '2',
+    version: '3',
     timestamp: Date.now(),
-    house: {
-      housePrompt: system.house.getHousePrompt(),
-      responseFormat: system.house.getResponseFormat(),
-    },
     rooms,
     agents,
     artifacts: [...artifacts],
@@ -136,11 +126,8 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
 
 // --- Validation ---
 
-const isValidSnapshot = (raw: Record<string, unknown>): boolean => {
-  const rawVersion = raw.version
-  const version = typeof rawVersion === 'string' ? parseInt(rawVersion, 10) : typeof rawVersion === 'number' ? rawVersion : 0
-  return version === SNAPSHOT_VERSION
-}
+const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
+  raw.version === String(SNAPSHOT_VERSION)
 
 // --- Save / Load ---
 
@@ -197,11 +184,7 @@ export const restoreFromSnapshot = async (
   system: RestorableSystem,
   snapshot: SystemSnapshot,
 ): Promise<void> => {
-  // 1. Restore house prompts
-  system.house.setHousePrompt(snapshot.house.housePrompt)
-  system.house.setResponseFormat(snapshot.house.responseFormat)
-
-  // 2. Restore rooms (messages + membership + state)
+  // 1. Restore rooms (messages + membership + state)
   const roomMap = new Map<string, Room>()
   for (const roomSnap of snapshot.rooms) {
     const room = system.house.restoreRoom(roomSnap.profile)
@@ -216,11 +199,11 @@ export const restoreFromSnapshot = async (
     roomMap.set(room.profile.id, room)
   }
 
-  // 3. Restore AI agents (with preserved IDs, no auto-join)
+  // 2. Restore AI agents (with preserved IDs, no auto-join)
   for (const agentSnap of snapshot.agents) {
     await system.spawnAIAgent(agentSnap.config, { overrideId: agentSnap.id })
 
-    // 4. Silently add agent to their rooms; call join() for history summary
+    // 3. Silently add agent to their rooms; call join() for history summary
     const agent = system.team?.getAgent(agentSnap.id)
     for (const roomId of agentSnap.roomIds) {
       const room = roomMap.get(roomId)
@@ -231,10 +214,10 @@ export const restoreFromSnapshot = async (
     }
   }
 
-  // 5. Restore artifacts (all types, system-level)
+  // 4. Restore artifacts
   system.house.artifacts.restore(snapshot.artifacts ?? [])
 
-  // 6. Restore saved Ollama URLs
+  // 5. Restore Ollama URLs
   if (system.ollamaUrls && snapshot.ollamaUrls) {
     for (const url of snapshot.ollamaUrls) system.ollamaUrls.add(url)
     if (snapshot.ollamaUrl) system.ollamaUrls.setCurrent(snapshot.ollamaUrl)
