@@ -17,6 +17,7 @@ import {
   updateThinkingTool,
   updateThinkingLabel,
   showContextIcon,
+  addThinkingWarning,
   type UIMessage,
   type RoomProfile,
   type AgentInfo,
@@ -66,7 +67,9 @@ import {
   $toolCount,
   $skillCount,
   $agentContexts,
+  $agentWarnings,
   $messageContexts,
+  $messageWarnings,
   $roomListView,
   $agentListView,
   type AgentEntry,
@@ -195,12 +198,23 @@ const handleArtifactAction = (action: ArtifactAction): void => {
   }
 }
 
-const showContextModal = (context: AgentContext): void => {
+const showContextModal = (context: AgentContext, warnings?: string[]): void => {
   const modal = createModal({ title: 'Prompt Context', width: 'max-w-3xl' })
   const headerEl = document.createElement('div')
   headerEl.className = 'text-xs text-gray-500 mb-3'
   headerEl.textContent = `Model: ${context.model} | Temperature: ${context.temperature ?? 'default'} | Tools: ${context.toolCount}`
   modal.body.appendChild(headerEl)
+  // Warnings
+  if (warnings && warnings.length > 0) {
+    const warnBox = document.createElement('div')
+    warnBox.className = 'text-xs text-amber-700 bg-amber-50 rounded p-2 mb-3 space-y-0.5'
+    for (const w of warnings) {
+      const line = document.createElement('div')
+      line.textContent = `\u26a0 ${w}`
+      warnBox.appendChild(line)
+    }
+    modal.body.appendChild(warnBox)
+  }
   for (const msg of context.messages) {
     const section = document.createElement('div')
     section.className = 'mb-3'
@@ -219,7 +233,7 @@ const showContextModal = (context: AgentContext): void => {
 
 const handleViewContext = (msgId: string): void => {
   const ctx = $messageContexts.get()[msgId]
-  if (ctx) showContextModal(ctx)
+  if (ctx) showContextModal(ctx, $messageWarnings.get()[msgId])
 }
 
 const submitArtifact = (): void => {
@@ -615,7 +629,19 @@ $agentContexts.listen((contexts, _old, changedId) => {
   if (ctx) {
     // Context ready → waiting for LLM to start generating (prefill phase)
     updateThinkingLabel(messagesDiv, agentName, `${agentName}: Waiting for ${ctx.model}...`)
-    showContextIcon(messagesDiv, agentName, () => showContextModal(ctx))
+    showContextIcon(messagesDiv, agentName, () => showContextModal(ctx, $agentWarnings.get()[changedId]))
+  }
+})
+
+// --- Eval warnings (context trimming, LLM errors, retries) ---
+$agentWarnings.listen((warnings, _old, changedId) => {
+  if (!changedId) return
+  const agentName = agentIdToName(changedId)
+  if (!agentName) return
+  const msgs = warnings[changedId] ?? []
+  // Show the latest warning (new ones are appended)
+  if (msgs.length > 0) {
+    addThinkingWarning(messagesDiv, agentName, msgs[msgs.length - 1]!)
   }
 })
 

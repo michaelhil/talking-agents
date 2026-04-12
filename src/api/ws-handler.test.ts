@@ -18,7 +18,7 @@ import type { ClientSession, WSManager } from './ws-handler.ts'
 const noopDeliver: DeliverFn = () => {}
 
 const makeLLMProvider = () => ({
-  chat: async () => ({ content: '::PASS::', generationMs: 0, tokensUsed: { prompt: 0, completion: 0 } }),
+  chat: async () => ({ content: '', generationMs: 0, tokensUsed: { prompt: 0, completion: 0 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'test' } } }] }),
   models: async () => [],
   runningModels: async () => [],
   getHealth: () => ({ status: 'healthy' as const, latencyMs: 0, loadedModels: [], availableModels: [], lastCheckedAt: 0 }),

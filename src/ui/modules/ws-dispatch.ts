@@ -25,7 +25,9 @@ import {
   $thinkingPreviews,
   $thinkingTools,
   $agentContexts,
+  $agentWarnings,
   $messageContexts,
+  $messageWarnings,
   $ollamaHealth,
   $ollamaMetrics,
   $connected,
@@ -110,7 +112,9 @@ export const wsDispatch: Record<string, (msg: any) => void> = {
     $thinkingPreviews.set({})
     $thinkingTools.set({})
     $agentContexts.set({})
+    $agentWarnings.set({})
     $messageContexts.set({})
+    $messageWarnings.set({})
     $mutedAgents.set(new Set())
     $turnInfo.set(null)
     $flowStatus.set(null)
@@ -161,13 +165,20 @@ export const wsDispatch: Record<string, (msg: any) => void> = {
       if (sender && sender.state === 'generating') {
         $agents.setKey(m.senderId, { ...sender, state: 'idle' as StateValue, context: undefined })
       }
-      // Transfer prompt context from agent → message for post-generation inspection
+      // Transfer prompt context + warnings from agent → message for post-generation inspection
       const agentCtx = $agentContexts.get()[m.senderId]
       if (agentCtx) {
         $messageContexts.setKey(m.id, agentCtx)
         const remaining = { ...$agentContexts.get() }
         delete remaining[m.senderId]
         $agentContexts.set(remaining)
+      }
+      const agentWarn = $agentWarnings.get()[m.senderId]
+      if (agentWarn && agentWarn.length > 0) {
+        $messageWarnings.setKey(m.id, agentWarn)
+        const remainingW = { ...$agentWarnings.get() }
+        delete remainingW[m.senderId]
+        $agentWarnings.set(remainingW)
       }
     }
   },
@@ -215,6 +226,9 @@ export const wsDispatch: Record<string, (msg: any) => void> = {
       const ctxs = { ...$agentContexts.get() }
       delete ctxs[id]
       $agentContexts.set(ctxs)
+      const warns = { ...$agentWarnings.get() }
+      delete warns[id]
+      $agentWarnings.set(warns)
     }
   },
 
@@ -237,6 +251,9 @@ export const wsDispatch: Record<string, (msg: any) => void> = {
         temperature: event.temperature as number | undefined,
         toolCount: event.toolCount as number,
       })
+    } else if (event.kind === 'warning') {
+      const existing = $agentWarnings.get()[id] ?? []
+      $agentWarnings.setKey(id, [...existing, event.message as string])
     }
   },
 

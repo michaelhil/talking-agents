@@ -25,16 +25,13 @@ import { createArtifactStore } from './artifact-store.ts'
 import { createArtifactTypeRegistry } from './artifact-type-registry.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
-const DEFAULT_HOUSE_PROMPT = `You are part of samsinn, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use ::PASS:: only when the conversation genuinely does not need your input.`
+const DEFAULT_HOUSE_PROMPT = `You are part of samsinn, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use the pass tool when the conversation genuinely does not need your input.`
 
-const DEFAULT_RESPONSE_FORMAT = `- By default, just write your message as natural text. Your response IS the message other participants will read.
+const DEFAULT_RESPONSE_FORMAT = `- Write your message as natural text. Your response IS the message other participants will read.
 - You may use Markdown formatting (headings, bold, lists, code blocks, etc.).
-- To stay silent, start your response with exactly ::PASS:: followed by a brief reason.
-  Example: ::PASS:: This question was already answered by someone else
-- To direct a message to a specific agent, use [[AgentName]] in your response. The addressed agent(s) will respond next. Other agents will see your message as context later.
+- To direct a message to a specific agent, use [[AgentName]] in your response.
   Example: [[Analyst-1]] can you elaborate on that point?
-  You can address multiple agents: [[Analyst-1]] [[Researcher-2]] compare notes.
-- To address all agents with a given tag (role/capability), use [[tag:TagName]].
+- To address all agents with a given tag, use [[tag:TagName]].
   Example: [[tag:Reviewer]] please review this before we proceed.
 - Never wrap your response in JSON or data structures.`
 

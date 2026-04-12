@@ -47,7 +47,7 @@ interface OllamaPsResponse {
 const CHAT_TIMEOUT_MS = 300_000 // 5 minutes — large models can be slow
 const TAGS_TIMEOUT_MS = 10_000
 const STREAM_IDLE_TIMEOUT_MS = 30_000  // abort if no chunk arrives within 30s
-const DEFAULT_NUM_CTX = 4096  // enough room for system prompt + 10 history messages + tools
+const DEFAULT_NUM_CTX = 16384  // modern models support 32K+; 16K gives room for rich context + history
 
 const fetchWithTimeout = async (
   url: string,

@@ -35,14 +35,22 @@ const createSystem = () => {
 
 // === Mock LLM provider ===
 
+interface MockResponse {
+  readonly content: string
+  readonly toolCalls?: ReadonlyArray<{ function: { name: string; arguments: Record<string, unknown> } }>
+}
+
 const makeMockProvider = (
-  handler: (messages: ReadonlyArray<{ role: string; content: string }>, callIndex: number) => string,
+  handler: (messages: ReadonlyArray<{ role: string; content: string }>, callIndex: number) => string | MockResponse,
 ): LLMProvider => {
   let callCount = 0
   return {
     chat: async (req) => {
-      const content = handler(req.messages, callCount++)
-      return { content, generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+      const result = handler(req.messages, callCount++)
+      if (typeof result === 'string') {
+        return { content: result, generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+      }
+      return { content: result.content, generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: result.toolCalls }
     },
     models: async () => ['mock-model'],
   }
@@ -52,7 +60,7 @@ const makeRespondProvider = (content: string) =>
   makeMockProvider(() => content)
 
 const makePassProvider = (reason = 'not relevant') =>
-  makeMockProvider(() => `::PASS:: ${reason}`)
+  makeMockProvider(() => ({ content: '', toolCalls: [{ function: { name: 'pass', arguments: { reason } } }] }))
 
 // === Deterministic integration tests (mock LLM) ===
 
@@ -151,7 +159,7 @@ describe('Integration — Full message lifecycle', () => {
         if (callCount === 1) {
           await new Promise(r => setTimeout(r, 50))
         }
-        return { content: '::PASS:: done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+        return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }] }
       },
       models: async () => ['mock'],
     }
@@ -212,7 +220,7 @@ describe('Integration — Full message lifecycle', () => {
           await new Promise(r => setTimeout(r, 50))
           return { content: 'I see msg-1.', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
         }
-        return { content: '::PASS:: done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+        return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }] }
       },
       models: async () => ['mock'],
     }
@@ -341,7 +349,7 @@ describe('Integration — Full message lifecycle', () => {
         }
         // Subsequent calls — capture context
         if (!firstContextCapture) firstContextCapture = req.messages
-        return { content: '::PASS:: done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+        return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }] }
       },
       models: async () => ['mock'],
     }
@@ -382,7 +390,7 @@ describe('Integration — Full message lifecycle', () => {
     const provider: LLMProvider = {
       chat: async (req) => {
         capturedContexts.push(req.messages)
-        return { content: '::PASS:: done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+        return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }] }
       },
       models: async () => ['mock'],
     }
@@ -435,7 +443,7 @@ describe('Integration — Full message lifecycle', () => {
         evalCount++
         const systemMsg = req.messages.find(m => m.role === 'system')!
         capturedContexts.push({ systemContent: systemMsg.content, messages: req.messages })
-        return { content: '::PASS:: done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+        return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }] }
       },
       models: async () => ['mock'],
     }
@@ -486,7 +494,7 @@ describe('Integration — Full message lifecycle', () => {
     const provider: LLMProvider = {
       chat: async (req) => {
         capturedMessages = req.messages
-        return { content: '::PASS:: done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+        return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }] }
       },
       models: async () => ['mock'],
     }
@@ -522,7 +530,8 @@ describe('Integration — Full message lifecycle', () => {
     const provider: LLMProvider = {
       chat: () => new Promise(resolve => {
         resolveChat = () => resolve({
-          content: '::PASS:: done',
+          content: '',
+          toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }],
           generationMs: 10,
           tokensUsed: { prompt: 10, completion: 5 },
         })
@@ -629,8 +638,9 @@ describe('Integration — spawnAIAgent full wiring', () => {
         }
         if (callCount === 1) {
           return {
-            content: '::TOOL:: get_time',
+            content: '',
             generationMs: 10, tokensUsed: { prompt: 10, completion: 5 },
+            toolCalls: [{ function: { name: 'get_time', arguments: {} } }],
           }
         }
         return {

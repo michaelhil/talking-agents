@@ -453,7 +453,7 @@ export interface AIAgent extends Agent {
   readonly getHistoryLimit: () => number | undefined
   readonly updateHistoryLimit?: (n: number) => void
   readonly getTools: () => ReadonlyArray<string> | undefined
-  readonly refreshTools?: (support: { toolExecutor?: ToolExecutor; toolDescriptions?: string; toolDefinitions?: ReadonlyArray<ToolDefinition> }) => void
+  readonly refreshTools?: (support: { toolExecutor?: ToolExecutor; toolDefinitions?: ReadonlyArray<ToolDefinition> }) => void
   // Memory introspection + management
   readonly getHistory?: (roomId: string) => ReadonlyArray<Message>
   readonly getIncoming?: () => ReadonlyArray<Message>
@@ -633,6 +633,7 @@ export type EvalEvent =
   | { readonly kind: 'tool_start'; readonly tool: string }
   | { readonly kind: 'tool_result'; readonly tool: string; readonly success: boolean; readonly preview?: string }
   | { readonly kind: 'context_ready'; readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>; readonly model: string; readonly temperature?: number; readonly toolCount: number }
+  | { readonly kind: 'warning'; readonly message: string }
 
 export type OnEvalEvent = (agentName: string, event: EvalEvent) => void
 

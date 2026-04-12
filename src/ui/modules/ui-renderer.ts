@@ -360,6 +360,18 @@ export const updateThinkingTool = (container: HTMLElement, agentName: string, te
   if (el) el.textContent = text
 }
 
+export const addThinkingWarning = (container: HTMLElement, agentName: string, message: string): void => {
+  const indicator = container.querySelector(`[data-thinking-agent="${agentName}"]`)
+  if (!indicator) return
+  const warn = document.createElement('div')
+  warn.className = 'text-xs text-amber-600 bg-amber-50 rounded px-2 py-0.5 mt-1'
+  warn.textContent = `⚠ ${message}`
+  // Insert before the preview div
+  const preview = indicator.querySelector(`[data-thinking-preview="${agentName}"]`)
+  if (preview) indicator.insertBefore(warn, preview)
+  else indicator.appendChild(warn)
+}
+
 // === Mermaid rendering ===
 // Lazy-loads mermaid.js on first encounter. Replaces ```mermaid code blocks with rendered SVG.
 

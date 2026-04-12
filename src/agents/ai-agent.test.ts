@@ -15,11 +15,17 @@ const makeConfig = (overrides?: Partial<AIAgentConfig>): AIAgentConfig => ({
   ...overrides,
 })
 
-const makeLLMProvider = (responseContent: string = '::PASS:: test'): LLMProvider => ({
+const makePassToolCalls = (reason: string = 'test') => [{ function: { name: 'pass', arguments: { reason } } }]
+
+const makeLLMProvider = (
+  responseContent: string = '',
+  toolCalls?: ReadonlyArray<{ function: { name: string; arguments: Record<string, unknown> } }>,
+): LLMProvider => ({
   chat: async () => ({
     content: responseContent,
     generationMs: 42,
     tokensUsed: { prompt: 10, completion: 5 },
+    toolCalls: toolCalls ?? (responseContent === '' ? makePassToolCalls() : undefined),
   }),
   models: async () => ['test-model'],
 })
@@ -97,7 +103,7 @@ describe('AI Agent — unit tests', () => {
         callCount++
         await new Promise(resolve => setTimeout(resolve, 50))
         return {
-          content: '::PASS:: slow',
+          content: '', toolCalls: makePassToolCalls('slow'),
           generationMs: 50,
           tokensUsed: { prompt: 10, completion: 5 },
         }
@@ -144,11 +150,11 @@ describe('AI Agent — unit tests', () => {
     }
   })
 
-  test('::PASS:: prefix is parsed as pass', async () => {
+  test('pass tool call is parsed as pass', async () => {
     const decisions: Decision[] = []
     const agent = createAIAgent(
       makeConfig(),
-      makeLLMProvider('::PASS:: not relevant to me'),
+      makeLLMProvider('', makePassToolCalls('not relevant to me')),
       (d) => { decisions.push(d) },
     )
 
@@ -171,7 +177,7 @@ describe('AI Agent — unit tests', () => {
       chat: async (req) => {
         callCount++
         lastCaptured = req.messages
-        return { content: '::PASS:: not relevant', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+        return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: makePassToolCalls('not relevant') }
       },
       models: async () => [],
     }
@@ -397,7 +403,7 @@ describe('[NEW] message tagging', () => {
           return { content: 'Summary: bob and charlie discussed topics.', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
         }
         // Second call: agent evaluation triggered by new message
-        return { content: '::PASS:: done', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
+        return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: makePassToolCalls('done') }
       },
       models: async () => [],
     }
@@ -556,20 +562,19 @@ describe('Agent state', () => {
 })
 
 describe('Tool use (ReAct loop)', () => {
-  test('::TOOL:: triggers executor and feeds result back to LLM', async () => {
+  test('native tool call triggers executor and feeds result back to LLM', async () => {
     let callCount = 0
     const provider: LLMProvider = {
       chat: async () => {
         callCount++
         if (callCount === 1) {
-          // First call: agent wants to use a tool
           return {
-            content: '::TOOL:: get_time',
+            content: '',
             generationMs: 50,
             tokensUsed: { prompt: 10, completion: 5 },
+            toolCalls: [{ function: { name: 'get_time', arguments: {} } }],
           }
         }
-        // Second call: agent responds after seeing tool result
         return {
           content: 'The time is now.',
           generationMs: 50,
@@ -588,7 +593,7 @@ describe('Tool use (ReAct loop)', () => {
       makeConfig(),
       provider,
       (d) => decisions.push(d),
-      { toolExecutor, toolDescriptions: 'Available tools:\n- get_time: Returns the current time.' },
+      { toolExecutor, toolDefinitions: [{ type: 'function', function: { name: 'get_time', description: 'Returns the current time', parameters: {} } }] },
     )
 
     agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1', content: 'What time is it?' }))
@@ -597,15 +602,16 @@ describe('Tool use (ReAct loop)', () => {
     expect(callCount).toBe(2)
     expect(decisions).toHaveLength(1)
     expect(decisions[0]!.response.action).toBe('respond')
-    expect(decisions[0]!.generationMs).toBe(100) // 50 + 50 from both calls
+    expect(decisions[0]!.generationMs).toBe(100)
   })
 
-  test('::TOOL:: without executor falls back to pass', async () => {
+  test('native tool call without executor falls back to pass', async () => {
     const provider: LLMProvider = {
       chat: async () => ({
-        content: '::TOOL:: get_time',
+        content: '',
         generationMs: 50,
         tokensUsed: { prompt: 10, completion: 5 },
+        toolCalls: [{ function: { name: 'get_time', arguments: {} } }],
       }),
       models: async () => [],
     }
@@ -629,9 +635,10 @@ describe('Tool use (ReAct loop)', () => {
       chat: async () => {
         callCount++
         return {
-          content: '::TOOL:: loop',
+          content: '',
           generationMs: 10,
           tokensUsed: { prompt: 10, completion: 5 },
+          toolCalls: [{ function: { name: 'loop', arguments: {} } }],
         }
       },
       models: async () => [],
@@ -644,7 +651,7 @@ describe('Tool use (ReAct loop)', () => {
       makeConfig({ maxToolIterations: 3 }),
       provider,
       (d) => decisions.push(d),
-      { toolExecutor, toolDescriptions: 'Available tools:\n- loop: Test tool.' },
+      { toolExecutor, toolDefinitions: [{ type: 'function', function: { name: 'loop', description: 'Test tool', parameters: {} } }] },
     )
 
     agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1' }))
@@ -656,7 +663,7 @@ describe('Tool use (ReAct loop)', () => {
     expect(decisions[0]!.response.action).toBe('pass')
   })
 
-  test('::TOOL:: with JSON arguments parses correctly', async () => {
+  test('native tool call with JSON arguments parses correctly', async () => {
     let callCount = 0
     let executedCalls: ReadonlyArray<{ tool: string; arguments: Record<string, unknown> }> = []
     const provider: LLMProvider = {
@@ -664,9 +671,10 @@ describe('Tool use (ReAct loop)', () => {
         callCount++
         if (callCount === 1) {
           return {
-            content: '::TOOL:: get_time {"timezone": "UTC"}',
+            content: '',
             generationMs: 50,
             tokensUsed: { prompt: 10, completion: 5 },
+            toolCalls: [{ function: { name: 'get_time', arguments: { timezone: 'UTC' } } }],
           }
         }
         return {
@@ -688,7 +696,7 @@ describe('Tool use (ReAct loop)', () => {
       makeConfig(),
       provider,
       (d) => decisions.push(d),
-      { toolExecutor, toolDescriptions: 'Available tools:\n- get_time: Returns the current time.' },
+      { toolExecutor, toolDefinitions: [{ type: 'function', function: { name: 'get_time', description: 'Returns the current time', parameters: {} } }] },
     )
 
     agent.receive(makeMessage({ senderId: 'bob', roomId: 'room-1' }))
@@ -699,37 +707,31 @@ describe('Tool use (ReAct loop)', () => {
     expect(executedCalls[0]!.arguments).toEqual({ timezone: 'UTC' })
   })
 
-  test('tool descriptions appear in context when configured', async () => {
-    let capturedMessages: ReadonlyArray<{ role: string; content: string }> = []
+  test('tool definitions are passed in ChatRequest when configured', async () => {
+    let capturedRequest: { tools?: unknown } = {}
     const provider: LLMProvider = {
       chat: async (req) => {
-        capturedMessages = req.messages
+        capturedRequest = req
         return {
-          content: '::PASS:: done',
-          generationMs: 10,
-          tokensUsed: { prompt: 10, completion: 5 },
+          content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 },
+          toolCalls: makePassToolCalls('done'),
         }
       },
       models: async () => [],
     }
 
+    const toolDefs = [{ type: 'function' as const, function: { name: 'get_time', description: 'Returns the current time', parameters: {} } }]
     const agent = createAIAgent(
       makeConfig(),
       provider,
       () => {},
-      {
-        toolDescriptions: 'Available tools:\n- get_time: Returns the current time.',
-        getResponseFormat: () => '- Just write natural text.',
-      },
+      { toolDefinitions: toolDefs },
     )
 
     agent.receive(makeMessage({ senderId: 'alice', roomId: 'room-1' }))
     await agent.whenIdle()
 
-    const systemMsg = capturedMessages.find(m => m.role === 'system')
-    expect(systemMsg?.content).toContain('Available tools:')
-    expect(systemMsg?.content).toContain('get_time')
-    expect(systemMsg?.content).toContain('::TOOL::')
+    expect(capturedRequest.tools).toEqual(toolDefs)
   })
 })
 

@@ -30,8 +30,6 @@ import type { Decision } from './ai-agent.ts'
 import { callLLM, streamLLM } from './evaluation.ts'
 import { addAgentToRoom } from './actions.ts'
 import { toolsToDefinitions } from '../llm/tool-capability.ts'
-import type { ToolCapabilityCache } from '../llm/tool-capability.ts'
-import { formatToolDescriptions } from '../tools/format.ts'
 
 // --- Tool executor ---
 
@@ -80,7 +78,6 @@ const createToolExecutor = (
 
 export interface AgentToolSupport {
   readonly toolExecutor?: ToolExecutor
-  readonly toolDescriptions?: string
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
 }
 
@@ -90,35 +87,19 @@ const warnMissingTools = (agentName: string, requested: ReadonlyArray<string>, r
     console.warn(`[spawn] Agent "${agentName}": tools not found in registry: ${missing.join(', ')}`)
 }
 
-// Chooses between native tool calling (definitions) and text-injected descriptions.
-// Native: model supports tool_use API — structured JSON calls.
-// Text: model does not — tools described in system prompt, parsed from response.
-const selectProtocol = async (
-  availableTools: ReadonlyArray<Tool>,
-  executor: ToolExecutor,
-  model: string,
-  capabilityCache: ToolCapabilityCache | undefined,
-): Promise<AgentToolSupport> => {
-  const useNativeTools = capabilityCache ? await capabilityCache.probe(model) : false
-  if (useNativeTools) {
-    return { toolExecutor: executor, toolDefinitions: toolsToDefinitions(availableTools) }
-  }
-  return { toolExecutor: executor, toolDescriptions: formatToolDescriptions(availableTools) }
-}
-
-// Reusable tool support builder — used at spawn time and for runtime refresh.
+// Build tool support — always uses native tool calling.
+// The pass tool is auto-injected so all agents can decline to respond.
 export const buildToolSupport = async (
   toolNames: ReadonlyArray<string>,
   registry: ToolRegistry,
-  model: string,
   agentRef: { readonly id: string; readonly name: string; readonly currentModel?: () => string },
   llmProvider: LLMProvider,
-  capabilityCache?: ToolCapabilityCache,
   maxResultChars?: number,
 ): Promise<AgentToolSupport> => {
-  if (toolNames.length === 0) return {}
+  // Always include the pass tool (auto-injected for all agents)
+  const allToolNames = toolNames.includes('pass') ? toolNames : [...toolNames, 'pass']
 
-  const availableTools = toolNames
+  const availableTools = allToolNames
     .map(name => registry.get(name))
     .filter((t): t is Tool => t !== undefined)
 
@@ -127,37 +108,34 @@ export const buildToolSupport = async (
   const lazyContext: ToolContext = {
     get callerId() { return agentRef.id },
     get callerName() { return agentRef.name },
-    llm: (request) => callLLM(llmProvider, { ...request, model: agentRef.currentModel?.() ?? model }),
-    llmStream: (request) => streamLLM(llmProvider, { ...request, model: agentRef.currentModel?.() ?? model }),
+    llm: (request) => callLLM(llmProvider, { ...request, model: agentRef.currentModel?.() ?? '' }),
+    llmStream: (request) => streamLLM(llmProvider, { ...request, model: agentRef.currentModel?.() ?? '' }),
     maxResultChars,
   }
-  const executor = createToolExecutor(registry, toolNames, lazyContext)
-
-  return selectProtocol(availableTools, executor, model, capabilityCache)
+  const executor = createToolExecutor(registry, allToolNames, lazyContext)
+  return { toolExecutor: executor, toolDefinitions: toolsToDefinitions(availableTools) }
 }
 
 const resolveAgentTools = async (
   config: AIAgentConfig,
   llmProvider: LLMProvider,
   toolRegistry: ToolRegistry | undefined,
-  capabilityCache: ToolCapabilityCache | undefined,
   agentRef: { id: string; name: string },
 ): Promise<AgentToolSupport> => {
   const requestedTools = config.tools ?? toolRegistry?.list().map(t => t.name) ?? []
-  if (!toolRegistry || requestedTools.length === 0) return {}
+  if (!toolRegistry) return {}
 
   if (requestedTools.length > 0) {
     warnMissingTools(config.name, requestedTools, toolRegistry)
   }
 
-  return buildToolSupport(requestedTools, toolRegistry, config.model, agentRef, llmProvider, capabilityCache, config.maxToolResultChars)
+  return buildToolSupport(requestedTools, toolRegistry, agentRef, llmProvider, config.maxToolResultChars)
 }
 
 // --- Spawn AI Agent ---
 
 export interface SpawnOptions {
   readonly overrideId?: string
-  readonly toolCapabilityCache?: ToolCapabilityCache
   readonly getSkills?: (roomName: string) => string
   readonly onEvalEvent?: (agentName: string, event: import('../core/types.ts').EvalEvent) => void
 }
@@ -204,7 +182,7 @@ export const spawnAIAgent = async (
 
   // Resolve tool support — agentRef filled after agent creation (lazy context)
   const agentRef = { id: '', name: '' }
-  const toolSupport = await resolveAgentTools(config, llmProvider, toolRegistry, spawnOptions?.toolCapabilityCache, agentRef)
+  const toolSupport = await resolveAgentTools(config, llmProvider, toolRegistry, agentRef)
 
   const agent = createAIAgent(config, llmProvider, onDecision, {
     ...toolSupport,

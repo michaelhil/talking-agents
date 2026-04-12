@@ -1,5 +1,16 @@
 import type { AgentProfile, House, Team, Tool, ToolContext } from '../../core/types.ts'
 
+export const createPassTool = (): Tool => ({
+  name: 'pass',
+  description: 'Decline to respond when the conversation does not need your input. Use when the question was already answered, is not directed at you, or you have nothing to add.',
+  parameters: {
+    type: 'object',
+    properties: { reason: { type: 'string', description: 'Brief reason for passing' } },
+    required: ['reason'],
+  },
+  execute: async (params) => ({ success: true, result: params.reason as string }),
+})
+
 export const createListAgentsTool = (team: Team): Tool => ({
   name: 'list_agents',
   description: 'Lists all agents in the system with their name, kind (ai/human), and model.',

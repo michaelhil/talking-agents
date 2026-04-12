@@ -20,7 +20,7 @@ import type {
   Message,
 } from '../core/types.ts'
 import { SYSTEM_SENDER_ID } from '../core/types.ts'
-import { TOOL_RESPONSE_FORMAT_SUFFIX } from '../tools/format.ts'
+// Text tool protocol removed — all tools use native tool calling
 
 // === Flush info — describes which incoming messages were consumed ===
 
@@ -34,6 +34,7 @@ export interface FlushInfo {
 export interface ContextResult {
   readonly messages: ChatRequest['messages']
   readonly flushInfo: FlushInfo
+  readonly warnings: ReadonlyArray<string>
 }
 
 // === Format a single message for LLM context ===
@@ -119,7 +120,6 @@ export interface BuildContextDeps {
   readonly housePrompt?: string
   readonly responseFormat?: string
   readonly history: AgentHistory
-  readonly toolDescriptions?: string
   readonly getSkills?: (roomName: string) => string
   readonly historyLimit: number
   readonly resolveName: (senderId: string) => string
@@ -250,20 +250,12 @@ const buildSystemMessage = (
     contextLines.push(`Known agents: ${agentNames.join(', ')}`)
   }
 
-  if (deps.toolDescriptions) {
-    contextLines.push(deps.toolDescriptions)
-  }
-
   contextLines.push('Messages marked [NEW] have arrived since you last responded.')
 
   sections.push(`=== CONTEXT ===\n${contextLines.join('\n\n')}`)
 
   if (deps.responseFormat) {
-    let format = deps.responseFormat
-    if (deps.toolDescriptions) {
-      format += TOOL_RESPONSE_FORMAT_SUFFIX
-    }
-    sections.push(`=== RESPONSE FORMAT ===\n${format}`)
+    sections.push(`=== RESPONSE FORMAT ===\n${deps.responseFormat}`)
   }
 
   return sections.join('\n\n')
@@ -277,9 +269,9 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 
 // === Build full LLM context ===
 
-// Default context budget: 2500 tokens for messages, leaving ~1000 for native tool definitions
-// and ~500 for generation, within 4096 num_ctx
-const DEFAULT_MAX_CONTEXT_TOKENS = 2500
+// Context budget: 8000 tokens for system message + history, within 16384 num_ctx.
+// Remaining budget covers native tool definitions (~2000) + generation output (~2000).
+const DEFAULT_MAX_CONTEXT_TOKENS = 8000
 
 export const buildContext = (
   deps: BuildContextDeps,
@@ -318,6 +310,7 @@ export const buildContext = (
   const freshTokens = formattedFresh.reduce((sum, f) => sum + estimateTokens(f.formatted.content), 0)
   const budgetForOld = maxContextTokens - systemTokens - freshTokens
 
+  const warnings: string[] = []
   let trimmedOld = formattedOld
   if (budgetForOld > 0) {
     // Trim from oldest (front) until within budget
@@ -328,13 +321,13 @@ export const buildContext = (
     }
     if (trimmedOld.length < formattedOld.length) {
       const dropped = formattedOld.length - trimmedOld.length
-      console.log(`[${deps.agentId.slice(0, 8)}] Context trimmed: dropped ${dropped} old messages (~${systemTokens + freshTokens + budgetForOld} → ~${maxContextTokens} tokens)`)
+      warnings.push(`Context trimmed: dropped ${dropped} old messages to fit ${maxContextTokens} token budget`)
     }
   } else {
     // System + fresh alone exceed budget — skip all old messages
     trimmedOld = []
     if (formattedOld.length > 0) {
-      console.log(`[${deps.agentId.slice(0, 8)}] Context budget exceeded by system+fresh alone — all old messages dropped`)
+      warnings.push(`Context budget exceeded by system+fresh alone — all old messages dropped`)
     }
   }
 
@@ -347,5 +340,6 @@ export const buildContext = (
   return {
     messages: chatMessages,
     flushInfo: { ids: flushIds, triggerRoomId },
+    warnings,
   }
 }

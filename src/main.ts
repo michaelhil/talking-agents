@@ -27,7 +27,7 @@ import { addAgentToRoom, removeAgentFromRoom } from './agents/actions.ts'
 import {
   createListRoomsTool, createGetTimeTool,
   createCreateRoomTool, createDeleteRoomTool, createAddToRoomTool, createRemoveFromRoomTool,
-  createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool,
+  createPassTool, createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool,
   createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool,
   createPostToRoomTool, createGetRoomHistoryTool,
   createListArtifactTypesTool, createListArtifactsTool, createAddArtifactTool,
@@ -40,7 +40,7 @@ import { pollArtifactType } from './core/artifact-types/poll.ts'
 import { createFlowArtifactType } from './core/artifact-types/flow.ts'
 import { documentArtifactType } from './core/artifact-types/document.ts'
 import { mermaidArtifactType } from './core/artifact-types/mermaid.ts'
-import { createToolCapabilityCache } from './llm/tool-capability.ts'
+// Native-only tool calling — no capability probing needed
 import { createSkillStore, type SkillStore } from './skills/loader.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -101,8 +101,6 @@ export const createSystem = (ollamaUrl?: string): System => {
   const resolvedOllamaUrl = ollamaUrl ?? DEFAULTS.ollamaBaseUrl
   const ollamaRaw = createOllamaProvider(resolvedOllamaUrl)
   const ollama = createLLMGateway(ollamaRaw)
-  const toolCapabilityCache = createToolCapabilityCache(resolvedOllamaUrl)
-
   // Saved Ollama URLs (persisted in snapshot)
   const savedOllamaUrls = new Set<string>([resolvedOllamaUrl])
   const ollamaUrls = {
@@ -201,6 +199,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     createAddToRoomTool(team, house, systemAddAgentToRoom),
     createRemoveFromRoomTool(team, house, systemRemoveAgentFromRoom),
     // Agent tools
+    createPassTool(),
     createListAgentsTool(team),
     createMuteAgentTool(team, house),
     createGetMyContextTool(team, house),
@@ -244,9 +243,9 @@ export const createSystem = (ollamaUrl?: string): System => {
       if (!ai.refreshTools) continue
       const toolNames = ai.getTools() ?? toolRegistry.list().map(t => t.name)
       const support = await buildToolSupport(
-        toolNames, toolRegistry, ai.getModel(),
+        toolNames, toolRegistry,
         { id: ai.id, name: ai.name, currentModel: () => ai.getModel() },
-        ollama, toolCapabilityCache,
+        ollama,
       )
       ai.refreshTools(support)
     }
@@ -260,7 +259,6 @@ export const createSystem = (ollamaUrl?: string): System => {
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
     spawnAIAgent(config, ollama, house, team, routeMessage, toolRegistry, {
       ...options,
-      toolCapabilityCache,
       getSkills: getSkillsForRoom,
       onEvalEvent: evalEvent.proxy,
     })

@@ -54,7 +54,7 @@ export type { HumanAgent, HumanAgentConfig, TransportSend } from './agents/human
 // Agent internals (for advanced use) — @internal, subject to change
 export { buildContext, flushIncoming, formatMessage } from './agents/context-builder.ts'
 export type { FlushInfo, ContextResult, BuildContextDeps } from './agents/context-builder.ts'
-export { evaluate, parseResponse } from './agents/evaluation.ts'
+export { evaluate } from './agents/evaluation.ts'
 export type { EvalResult } from './agents/evaluation.ts'
 
 // Agent wiring — @internal helpers exposed for testing and custom runtimes

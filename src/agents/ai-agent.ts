@@ -44,7 +44,6 @@ export type { Decision, OnDecision } from './evaluation.ts'
 
 export interface AIAgentOptions {
   readonly toolExecutor?: ToolExecutor
-  readonly toolDescriptions?: string
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
   readonly getHousePrompt?: () => string
   readonly getResponseFormat?: () => string
@@ -81,7 +80,6 @@ export const createAIAgent = (
   let historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
   const maxToolIterations = config.maxToolIterations ?? 5
   let toolExecutor = options?.toolExecutor
-  let toolDescriptions = options?.toolDescriptions
   let toolDefinitions = options?.toolDefinitions
   const getHousePrompt = options?.getHousePrompt
   const getResponseFormat = options?.getResponseFormat
@@ -115,7 +113,6 @@ export const createAIAgent = (
     housePrompt: getHousePrompt?.(),
     responseFormat: getResponseFormat?.(),
     history: agentHistory,
-    toolDescriptions,
     historyLimit,
     resolveName,
     getArtifactsForScope,
@@ -157,7 +154,7 @@ export const createAIAgent = (
       ? (event: EvalEvent) => onEvalEvent(config.name, event)
       : undefined
 
-    // Emit context_ready with the full prompt before LLM call
+    // Emit context_ready + any context builder warnings before LLM call
     if (onEvalEvent) {
       onEvalEvent(config.name, {
         kind: 'context_ready',
@@ -166,6 +163,9 @@ export const createAIAgent = (
         temperature: evalConfig.temperature,
         toolCount: toolDefinitions?.length ?? 0,
       })
+      for (const w of contextResult.warnings) {
+        onEvalEvent(config.name, { kind: 'warning', message: w })
+      }
     }
     // epoch guards: each cancelGeneration() increments generationEpoch so stale
     // in-flight results from a prior generation cycle are silently discarded.
@@ -371,7 +371,6 @@ Respond with only the summary — no preamble or explanation.`
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },
     refreshTools: (support) => {
       if (support.toolExecutor !== undefined) toolExecutor = support.toolExecutor
-      if (support.toolDescriptions !== undefined) toolDescriptions = support.toolDescriptions
       if (support.toolDefinitions !== undefined) toolDefinitions = support.toolDefinitions
     },
     getHistory: (roomId: string) => [...(agentHistory.rooms.get(roomId)?.history ?? [])],

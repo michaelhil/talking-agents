@@ -1,14 +1,9 @@
 // ============================================================================
 // Evaluation — LLM interaction engine with tool loop (ReAct pattern).
 //
-// evaluate() builds context, calls the LLM, handles tool calls in a loop,
-// and returns a Decision. tryEvaluate() wraps it with per-context concurrency
-// control (one active eval per room/peer, pending queue for coalescing).
-//
-// Protocol: LLM responds in plain text. Special prefixes:
-//   ::PASS:: reason     → agent stays silent
-//   ::TOOL:: name {args} → tool call (one per line, can have multiple)
-//   Everything else      → natural language message
+// evaluate() builds context, calls the LLM, handles native tool calls in a
+// loop, and returns a Decision. The `pass` tool allows agents to decline
+// responding. All tool calling uses the model's native structured format.
 // ============================================================================
 
 import type {
@@ -32,70 +27,10 @@ export interface Decision {
   readonly response: AgentResponse
   readonly generationMs: number
   readonly triggerRoomId: string
-  readonly inReplyTo?: ReadonlyArray<string>  // IDs of messages that triggered this decision
+  readonly inReplyTo?: ReadonlyArray<string>
 }
 
 export type OnDecision = (decision: Decision) => void
-
-// === Internal response type — includes tool_call (never leaves evaluate) ===
-
-type InternalResponse =
-  | AgentResponse
-  | { readonly action: 'tool_call'; readonly toolCalls: ReadonlyArray<ToolCall> }
-
-// === Plain text response parsing ===
-
-const PASS_PREFIX = '::PASS::'
-const TOOL_LINE_RE = /^::TOOL::\s+(\S+)\s*(.*)/
-
-export const parseResponse = (raw: string): InternalResponse => {
-  const trimmed = raw.trim()
-
-  // ::PASS:: — agent declines to respond
-  if (trimmed.startsWith(PASS_PREFIX)) {
-    const reason = trimmed.slice(PASS_PREFIX.length).trim() || undefined
-    return { action: 'pass', reason }
-  }
-
-  // Scan for ::TOOL:: lines — collect tool calls, keep remaining text as content
-  const lines = trimmed.split('\n')
-  const toolCalls: ToolCall[] = []
-  const contentLines: string[] = []
-
-  for (const line of lines) {
-    const match = TOOL_LINE_RE.exec(line)
-    if (match) {
-      const toolName = match[1]!
-      let args: Record<string, unknown> = {}
-      if (match[2]?.trim()) {
-        try {
-          args = JSON.parse(match[2]) as Record<string, unknown>
-        } catch {
-          console.warn(`[parseResponse] Malformed JSON args for tool "${toolName}": ${match[2]}`)
-        }
-      }
-      toolCalls.push({ tool: toolName, arguments: args })
-    } else {
-      contentLines.push(line)
-    }
-  }
-
-  if (toolCalls.length > 0) {
-    const discarded = contentLines.join('\n').trim()
-    if (discarded.length > 0) {
-      console.debug(`[parseResponse] Discarding mixed content alongside tool call: "${discarded.slice(0, 80)}"`)
-    }
-    return { action: 'tool_call', toolCalls }
-  }
-
-  // Default: everything is a natural language response
-  const content = contentLines.join('\n').trim()
-  if (content.length === 0) {
-    return { action: 'pass', reason: 'Empty response' }
-  }
-
-  return { action: 'respond', content }
-}
 
 // === Native tool call conversion ===
 
@@ -172,8 +107,9 @@ const streamWithRetry = async (
       return { content: response.content, toolCalls: response.toolCalls, durationMs: response.generationMs }
     } catch (err) {
       if (signal?.aborted) throw err  // Don't retry if cancelled
+      const errMsg = err instanceof Error ? err.message : String(err)
       if (attempt < LLM_RETRIES) {
-        console.warn(`[${config.name}] LLM call failed (attempt ${attempt + 1}/${LLM_RETRIES + 1}), retrying in ${LLM_RETRY_DELAY_MS}ms:`, err instanceof Error ? err.message : err)
+        onEvent?.({ kind: 'warning', message: `LLM call failed (attempt ${attempt + 1}/${LLM_RETRIES + 1}), retrying: ${errMsg}` })
         await new Promise(r => setTimeout(r, LLM_RETRY_DELAY_MS))
       } else {
         throw err
@@ -223,12 +159,19 @@ export const evaluate = async (
       const streamResult = await streamWithRetry(llmProvider, config, request, onEvent, signal)
       totalGenerationMs += streamResult.durationMs
 
-      // Native tool call path — model returned structured tool calls
+      // Native tool calls
       if (streamResult.toolCalls && streamResult.toolCalls.length > 0) {
+        const calls = nativeCallsToToolCalls(streamResult.toolCalls)
+
+        // pass tool → return pass decision without executing
+        if (calls.length === 1 && calls[0]!.tool === 'pass') {
+          return makeResult({ response: { action: 'pass', reason: (calls[0]!.arguments.reason as string) ?? 'nothing to add' }, generationMs: totalGenerationMs, triggerRoomId })
+        }
+
         if (!toolExecutor) {
           return makeResult({ response: { action: 'pass', reason: 'Tool calls not available' }, generationMs: totalGenerationMs, triggerRoomId })
         }
-        const calls = nativeCallsToToolCalls(streamResult.toolCalls)
+
         for (const call of calls) onEvent?.({ kind: 'tool_start', tool: call.tool })
         const results = await toolExecutor(calls, triggerRoomId)
         for (let i = 0; i < results.length; i++) {
@@ -239,35 +182,20 @@ export const evaluate = async (
         continue
       }
 
-      // Text protocol path — parse ::TOOL:: / ::PASS:: / natural language
-      const parsed = parseResponse(streamResult.content)
-
-      // Tool call — execute and continue loop
-      if (parsed.action === 'tool_call' && toolExecutor) {
-        for (const call of parsed.toolCalls) onEvent?.({ kind: 'tool_start', tool: call.tool })
-        const results = await toolExecutor(parsed.toolCalls, triggerRoomId)
-        for (let i = 0; i < results.length; i++) {
-          onEvent?.({ kind: 'tool_result', tool: parsed.toolCalls[i]?.tool ?? 'unknown', success: results[i]?.success ?? false, preview: results[i]?.success ? undefined : results[i]?.error })
-        }
-        context.push({ role: 'assistant' as const, content: streamResult.content })
-        context.push({ role: 'user' as const, content: formatToolResults(parsed.toolCalls, results, maxToolResultChars) })
-        continue
+      // No tool calls → response text is the message
+      const content = streamResult.content.trim()
+      if (content.length === 0) {
+        return makeResult({ response: { action: 'pass', reason: 'Empty response' }, generationMs: totalGenerationMs, triggerRoomId })
       }
-
-      // tool_call without executor — fall back to pass
-      if (parsed.action === 'tool_call') {
-        return makeResult({ response: { action: 'pass', reason: 'Tool calls not available' }, generationMs: totalGenerationMs, triggerRoomId })
-      }
-
-      // respond or pass — return decision
-      return makeResult({ response: parsed, generationMs: totalGenerationMs, triggerRoomId })
+      return makeResult({ response: { action: 'respond', content }, generationMs: totalGenerationMs, triggerRoomId })
     }
 
     // Max iterations reached
     return makeResult({ response: { action: 'pass', reason: `Tool call loop exceeded ${maxToolIterations} iterations` }, generationMs: totalGenerationMs, triggerRoomId })
   } catch (err) {
-    console.error(`[${config.name}] LLM call failed:`, err)
-    return makeResult({ response: { action: 'pass', reason: `LLM error: ${err instanceof Error ? err.message : 'unknown'}` }, generationMs: totalGenerationMs, triggerRoomId })
+    const errMsg = err instanceof Error ? err.message : 'unknown'
+    onEvent?.({ kind: 'warning', message: `LLM error: ${errMsg}` })
+    return makeResult({ response: { action: 'pass', reason: `LLM error: ${errMsg}` }, generationMs: totalGenerationMs, triggerRoomId })
   }
 }
 

@@ -136,8 +136,14 @@ export interface AgentContext {
 /** agentId → context snapshot from the current generation */
 export const $agentContexts = map<Record<string, AgentContext>>({})
 
+/** agentId → accumulated warnings from current generation */
+export const $agentWarnings = map<Record<string, string[]>>({})
+
 /** messageId → context snapshot (transferred from $agentContexts when message arrives) */
 export const $messageContexts = map<Record<string, AgentContext>>({})
+
+/** messageId → warnings (transferred from $agentWarnings when message arrives) */
+export const $messageWarnings = map<Record<string, string[]>>({})
 
 
 // === Delivery mode + room pause ===
