@@ -14,6 +14,8 @@ import type {
 import type { OnArtifactChanged } from './core/types/artifact.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
 import type { ToolRegistry } from './core/types/tool.ts'
+import type { OnProviderBound, OnProviderAllFailed, OnProviderStreamFailed } from './core/types/llm.ts'
+import type { ProviderRoutingEvent } from './llm/router.ts'
 import { DEFAULTS } from './core/types/constants.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
@@ -73,6 +75,12 @@ export interface System {
   readonly setOnRoomDeleted: (callback: OnRoomDeleted) => void
   readonly setOnMembershipChanged: (callback: OnMembershipChanged) => void
   readonly setOnEvalEvent: (callback: OnEvalEvent) => void
+  readonly setOnProviderBound: (callback: OnProviderBound) => void
+  readonly setOnProviderAllFailed: (callback: OnProviderAllFailed) => void
+  readonly setOnProviderStreamFailed: (callback: OnProviderStreamFailed) => void
+  // Dispatch entry point for the provider router (wired in Phase 4 via
+  // router.onRoutingEvent(system.dispatchProviderEvent)).
+  readonly dispatchProviderEvent: (event: ProviderRoutingEvent) => void
 }
 
 export const createSystem = (ollamaUrl?: string): System => {
@@ -97,6 +105,9 @@ export const createSystem = (ollamaUrl?: string): System => {
   const roomDeleted = lateBinding<OnRoomDeleted>()
   const membershipChanged = lateBinding<OnMembershipChanged>()
   const evalEvent = lateBinding<OnEvalEvent>()
+  const providerBound = lateBinding<OnProviderBound>()
+  const providerAllFailed = lateBinding<OnProviderAllFailed>()
+  const providerStreamFailed = lateBinding<OnProviderStreamFailed>()
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
@@ -296,6 +307,18 @@ export const createSystem = (ollamaUrl?: string): System => {
     setOnRoomDeleted: roomDeleted.set,
     setOnMembershipChanged: membershipChanged.set,
     setOnEvalEvent: evalEvent.set,
+    setOnProviderBound: providerBound.set,
+    setOnProviderAllFailed: providerAllFailed.set,
+    setOnProviderStreamFailed: providerStreamFailed.set,
+    dispatchProviderEvent: (event) => {
+      if (event.type === 'provider_bound') {
+        providerBound.proxy(event.agentId, event.model, event.oldProvider, event.newProvider)
+      } else if (event.type === 'provider_all_failed') {
+        providerAllFailed.proxy(event.agentId, event.model, event.attempts)
+      } else {
+        providerStreamFailed.proxy(event.agentId, event.model, event.provider, event.reason)
+      }
+    },
   }
 }
 

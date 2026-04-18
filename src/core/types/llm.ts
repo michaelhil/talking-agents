@@ -101,6 +101,36 @@ export interface LLMProvider {
   readonly runningModels?: () => Promise<string[]>
 }
 
+// === Provider routing event callbacks ===
+// Emitted by the provider router (src/llm/router.ts) when an agent's LLM
+// call is bound to a provider, or when all providers fail. Wired into the
+// system via late-binding in main.ts.
+
+export interface ProviderAttempt {
+  readonly provider: string
+  readonly reason: string
+}
+
+export type OnProviderBound = (
+  agentId: string | null,
+  model: string,
+  oldProvider: string | null,
+  newProvider: string,
+) => void
+
+export type OnProviderAllFailed = (
+  agentId: string | null,
+  model: string,
+  attempts: ReadonlyArray<ProviderAttempt>,
+) => void
+
+export type OnProviderStreamFailed = (
+  agentId: string | null,
+  model: string,
+  provider: string,
+  reason: string,
+) => void
+
 // === Standalone LLM call options ===
 // Used by callLLM(), ToolContext.llm, and HouseCallbacks.callSystemLLM.
 // No agent lifecycle, no history, no routing, no protocol parsing.

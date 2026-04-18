@@ -57,3 +57,7 @@ export type WSOutbound =
   | { readonly type: 'ollama_health'; readonly health: OllamaHealth }
   | { readonly type: 'ollama_metrics'; readonly metrics: GatewayMetrics }
   | { readonly type: 'agent_activity'; readonly agentName: string; readonly event: EvalEvent }
+  // Provider routing events (from src/llm/router.ts)
+  | { readonly type: 'provider_bound'; readonly agentId: string | null; readonly agentName: string | null; readonly model: string; readonly oldProvider: string | null; readonly newProvider: string }
+  | { readonly type: 'provider_all_failed'; readonly agentId: string | null; readonly agentName: string | null; readonly model: string; readonly attempts: ReadonlyArray<{ readonly provider: string; readonly reason: string }> }
+  | { readonly type: 'provider_stream_failed'; readonly agentId: string | null; readonly agentName: string | null; readonly model: string; readonly provider: string; readonly reason: string }

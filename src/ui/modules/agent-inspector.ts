@@ -6,7 +6,8 @@
 // (description only).
 // ============================================================================
 
-import { safeFetchJson, showToast } from './ui-utils.ts'
+import { safeFetchJson, showToast, agentNameToId } from './ui-utils.ts'
+import { $pendingModelChanges } from './stores.ts'
 
 interface MemoryStats {
   rooms: Array<{ roomId: string; roomName: string; messageCount: number; lastActiveAt?: number }>
@@ -165,7 +166,30 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ model: newModel }),
         })
-        showToast(document.body, `${agentName} now using ${newModel}`, { position: 'fixed' })
+
+        // Deferred-verification UX: show pending indicator, clear on matching
+        // provider_bound/all_failed event, or after 30s neutral timeout.
+        const agentId = agentNameToId(agentName)
+        if (!agentId) {
+          showToast(document.body, `${agentName} now using ${newModel}`, { position: 'fixed' })
+          return
+        }
+        const savedAt = Date.now()
+        $pendingModelChanges.setKey(agentId, { model: newModel, at: savedAt })
+        showToast(document.body, `${agentName} → ${newModel}: saved — verifying on next turn…`, { position: 'fixed' })
+
+        // Neutral timeout: 30s after save, if still pending, show neutral
+        // toast and close the pending state (so later events are handled as
+        // ordinary transitions — see Phase 3 A1 resolution).
+        setTimeout(() => {
+          const current = $pendingModelChanges.get()[agentId]
+          if (current && current.at === savedAt) {
+            const { [agentId]: _removed, ...rest } = $pendingModelChanges.get()
+            $pendingModelChanges.set(rest)
+            showToast(document.body, `${agentName} → ${newModel}: saved — will verify when agent runs next.`, { position: 'fixed' })
+          }
+        }, 30_000)
+
       }
       header.appendChild(modelSelect)
 

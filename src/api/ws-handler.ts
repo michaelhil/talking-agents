@@ -79,6 +79,33 @@ export const createWSManager = (system: System): WSManager => {
     broadcast({ type: 'ollama_health', health })
   })
 
+  // Provider routing events → UI toasts. agentName resolution tolerates
+  // missing agents (e.g. agent deleted between emission and receive).
+  const nameFor = (agentId: string | null): string | null =>
+    agentId ? (system.team.getAgent(agentId)?.name ?? null) : null
+
+  system.setOnProviderBound((agentId, model, oldProvider, newProvider) => {
+    broadcast({
+      type: 'provider_bound',
+      agentId, agentName: nameFor(agentId),
+      model, oldProvider, newProvider,
+    })
+  })
+  system.setOnProviderAllFailed((agentId, model, attempts) => {
+    broadcast({
+      type: 'provider_all_failed',
+      agentId, agentName: nameFor(agentId),
+      model, attempts,
+    })
+  })
+  system.setOnProviderStreamFailed((agentId, model, provider, reason) => {
+    broadcast({
+      type: 'provider_stream_failed',
+      agentId, agentName: nameFor(agentId),
+      model, provider, reason,
+    })
+  })
+
   // Subscribe-based ollama metrics push (keyed by agent ID)
   const metricsSubscribers = new Set<string>()
   let metricsPushTimer: ReturnType<typeof setInterval> | undefined

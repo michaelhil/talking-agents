@@ -183,6 +183,27 @@ export const $pinnedMessages = map<Record<string, PinnedMessage>>({})
 export const $ollamaHealth = atom<Record<string, unknown> | null>(null)
 export const $ollamaMetrics = atom<Record<string, unknown> | null>(null)
 
+// === Provider routing ===
+// The most recent provider routing event (bound / all_failed / stream_failed).
+// Consumers (e.g. agent-inspector) subscribe and filter by agentId to react to
+// verification outcomes for their pending model changes.
+
+export type ProviderUIEvent =
+  | { readonly type: 'provider_bound'; readonly agentId: string | null; readonly agentName: string | null; readonly model: string; readonly oldProvider: string | null; readonly newProvider: string; readonly at: number }
+  | { readonly type: 'provider_all_failed'; readonly agentId: string | null; readonly agentName: string | null; readonly model: string; readonly attempts: ReadonlyArray<{ readonly provider: string; readonly reason: string }>; readonly at: number }
+  | { readonly type: 'provider_stream_failed'; readonly agentId: string | null; readonly agentName: string | null; readonly model: string; readonly provider: string; readonly reason: string; readonly at: number }
+
+export const $lastProviderEvent = atom<ProviderUIEvent | null>(null)
+
+// Pending user-initiated model changes keyed by agentId. Agent-inspector sets
+// { model, at } on save; cleared when a matching provider event arrives or
+// after a 30s verification timeout.
+export interface PendingModelChange {
+  readonly model: string
+  readonly at: number
+}
+export const $pendingModelChanges = map<Record<string, PendingModelChange>>({})
+
 // === UI chrome ===
 
 export const $sidebarCollapsed = atom(

@@ -54,6 +54,10 @@ const makeSystem = (): System => {
     setOnRoomDeleted: () => {},
     setOnMembershipChanged: () => {},
     setOnEvalEvent: () => {},
+    setOnProviderBound: () => {},
+    setOnProviderAllFailed: () => {},
+    setOnProviderStreamFailed: () => {},
+    dispatchProviderEvent: () => {},
   } as unknown as System
 }
 

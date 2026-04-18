@@ -30,6 +30,8 @@ import {
   $messageWarnings,
   $ollamaHealth,
   $ollamaMetrics,
+  $lastProviderEvent,
+  $pendingModelChanges,
   $roomIdByName,
   $agentIdByName,
   type AgentEntry,
@@ -38,6 +40,7 @@ import type { UIMessage, RoomProfile, ArtifactInfo } from './render-types.ts'
 import type { WSOutbound } from '../../core/types/ws-protocol.ts'
 import type { Message, AgentProfile, RoomProfile as ServerRoomProfile } from '../../core/types/messaging.ts'
 import type { Artifact } from '../../core/types/artifact.ts'
+import { showToast } from './ui-utils.ts'
 
 // === Mappers from server wire types → UI types ===
 
@@ -77,6 +80,18 @@ const toUIArtifact = (a: Artifact): ArtifactInfo => ({
   resolution: a.resolution,
   resolvedAt: a.resolvedAt,
 })
+
+// === Dedup for provider_bound toasts ===
+// Keyed by `${agentId}::${newProvider}`. Same pair within 5s → suppress.
+const BOUND_DEDUP_MS = 5000
+const lastBoundAt = new Map<string, number>()
+const shouldEmitBound = (agentId: string | null, newProvider: string, now: number): boolean => {
+  const key = `${agentId ?? '__system__'}::${newProvider}`
+  const prev = lastBoundAt.get(key)
+  if (prev !== undefined && now - prev < BOUND_DEDUP_MS) return false
+  lastBoundAt.set(key, now)
+  return true
+}
 
 // === Typed dispatch map ===
 
@@ -398,6 +413,60 @@ const handlers: Handlers = {
 
   ollama_metrics(msg) {
     $ollamaMetrics.set(msg.metrics)
+  },
+
+  // --- Provider routing ---
+
+  provider_bound(msg) {
+    const now = Date.now()
+    $lastProviderEvent.set({ ...msg, at: now })
+
+    // Pending user-initiated model change: if this agent has one and the
+    // model matches, clear it (verified successfully).
+    if (msg.agentId) {
+      const pending = $pendingModelChanges.get()[msg.agentId]
+      if (pending && pending.model === msg.model) {
+        const { [msg.agentId]: _removed, ...rest } = $pendingModelChanges.get()
+        $pendingModelChanges.set(rest)
+      }
+    }
+
+    // Suppress first-ever bindings (oldProvider === null) unless the agent
+    // has a pending change — the initial bind is noise; the verified change
+    // is the meaningful signal.
+    const isPendingVerification = msg.agentId
+      ? $pendingModelChanges.get()[msg.agentId] !== undefined
+      : false
+    if (msg.oldProvider === null && !isPendingVerification) return
+
+    // Dedup: same (agentId, newProvider) within 5s only fires once.
+    if (!shouldEmitBound(msg.agentId, msg.newProvider, now)) return
+
+    const who = msg.agentName ? `${msg.agentName}: ` : ''
+    const label = `${msg.newProvider}:${msg.model}`
+    showToast(document.body, `${who}now using ${label}`, { type: 'success', position: 'fixed' })
+  },
+
+  provider_all_failed(msg) {
+    const now = Date.now()
+    $lastProviderEvent.set({ ...msg, at: now })
+    if (msg.agentId) {
+      const pending = $pendingModelChanges.get()[msg.agentId]
+      if (pending && pending.model === msg.model) {
+        const { [msg.agentId]: _removed, ...rest } = $pendingModelChanges.get()
+        $pendingModelChanges.set(rest)
+      }
+    }
+    const who = msg.agentName ? `${msg.agentName}: ` : ''
+    const providers = msg.attempts.map(a => a.provider).join(', ') || 'no eligible providers'
+    showToast(document.body, `${who}all providers failed for ${msg.model} (${providers})`, { type: 'error', position: 'fixed' })
+  },
+
+  provider_stream_failed(msg) {
+    const now = Date.now()
+    $lastProviderEvent.set({ ...msg, at: now })
+    const who = msg.agentName ? `${msg.agentName}: ` : ''
+    showToast(document.body, `${who}stream interrupted on ${msg.provider} (response may be partial)`, { type: 'error', position: 'fixed' })
   },
 
   // --- Errors ---
