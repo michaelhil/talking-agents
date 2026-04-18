@@ -16,6 +16,8 @@ import { resolve } from 'node:path'
 import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
 import { asAIAgent } from './agents/shared.ts'
+import { parseProviderConfig, summariseProviderConfig } from './llm/providers-config.ts'
+import { buildProvidersFromConfig, warmProviderModels } from './llm/providers-setup.ts'
 
 const DRAIN_TIMEOUT_MS = 5_000
 
@@ -29,12 +31,13 @@ export const bootstrap = async (): Promise<void> => {
     console.info = stderrLog
   }
 
-  const ollamaUrl = process.env.OLLAMA_URL ?? DEFAULTS.ollamaBaseUrl
-  const system = createSystem(ollamaUrl)
+  const providerConfig = parseProviderConfig()
+  const providerSetup = buildProvidersFromConfig(providerConfig)
+  const system = createSystem({ providerConfig, providerSetup })
 
   const pkg = await Bun.file(`${import.meta.dir}/../package.json`).json() as { version: string }
   console.log(`Samsinn v${pkg.version}${headless ? ' (headless)' : ''}`)
-  console.log(`Ollama: ${ollamaUrl}`)
+  console.log(summariseProviderConfig(providerConfig))
 
   // Load filesystem tools and skills before snapshot restore so restored agents get them
   await loadExternalTools(system.toolRegistry)
@@ -65,11 +68,16 @@ export const bootstrap = async (): Promise<void> => {
 
   console.log(`Tools: ${system.toolRegistry.list().map(t => t.name).join(', ')}`)
 
-  try {
-    const models = await system.ollama.models()
-    console.log(`Models available: ${models.join(', ')}`)
-  } catch {
-    console.warn('Warning: Could not connect to Ollama. AI agents will not function.')
+  // Warm availableModels cache across all providers before the first chat
+  // call, so the router's model-filter logic doesn't optimistically hit
+  // providers that don't serve the requested model.
+  const warmResults = await warmProviderModels(providerSetup.gateways)
+  for (const [name, result] of Object.entries(warmResults)) {
+    if (result.status === 'ok') {
+      console.log(`  ${name}: ${result.count} models available`)
+    } else {
+      console.warn(`  ${name}: warm-up failed — ${result.message}`)
+    }
   }
 
   // Auto-save: debounced save on state changes

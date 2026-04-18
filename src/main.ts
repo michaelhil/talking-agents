@@ -16,12 +16,13 @@ import type { OnEvalEvent } from './core/types/agent-eval.ts'
 import type { ToolRegistry } from './core/types/tool.ts'
 import type { OnProviderBound, OnProviderAllFailed, OnProviderStreamFailed } from './core/types/llm.ts'
 import type { ProviderRoutingEvent } from './llm/router.ts'
-import { DEFAULTS } from './core/types/constants.ts'
 import { createHouse } from './core/house.ts'
 import { createTeam } from './agents/team.ts'
 import { createMessageRouter } from './core/delivery.ts'
-import { createOllamaProvider } from './llm/ollama.ts'
-import { createLLMGateway, type LLMGateway } from './llm/gateway.ts'
+import type { LLMGateway } from './llm/gateway.ts'
+import type { ProviderRouter } from './llm/router.ts'
+import { buildProvidersFromConfig, type ProviderSetupResult } from './llm/providers-setup.ts'
+import { parseProviderConfig, type ProviderConfig } from './llm/providers-config.ts'
 import { createToolRegistry } from './core/tool-registry.ts'
 import { spawnAIAgent, spawnHumanAgent, buildToolSupport, type SpawnOptions } from './agents/spawn.ts'
 import { callLLM } from './agents/evaluation.ts'
@@ -50,16 +51,30 @@ import { createSkillStore, type SkillStore } from './skills/loader.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+export interface OllamaUrlRegistry {
+  readonly list: () => string[]
+  readonly add: (url: string) => void
+  readonly remove: (url: string) => void
+  readonly getCurrent: () => string
+  readonly setCurrent: (url: string) => void
+}
+
 export interface System {
   readonly house: House
   readonly team: Team
   readonly routeMessage: RouteMessage
-  readonly ollama: LLMGateway
+  // Provider-neutral LLM access. All agents and callSystemLLM go through here.
+  readonly llm: ProviderRouter
+  // Direct Ollama gateway (present iff Ollama is a configured provider).
+  // Used by the Ollama dashboard UI for ps/loadModel; not for routing.
+  readonly ollama: LLMGateway | undefined
+  readonly providerConfig: ProviderConfig
   readonly toolRegistry: ToolRegistry
   readonly skillStore: SkillStore
   readonly skillsDir: string
   readonly knowledgeDir: string
-  readonly ollamaUrls: { list: () => string[]; add: (url: string) => void; remove: (url: string) => void; getCurrent: () => string; setCurrent: (url: string) => void }
+  // OllamaUrls editor — no-op when Ollama isn't configured.
+  readonly ollamaUrls: OllamaUrlRegistry
   readonly removeAgent: (id: string) => boolean
   readonly removeRoom: (roomId: string) => boolean
   readonly addAgentToRoom: (agentId: string, roomId: string, invitedBy?: string) => Promise<void>
@@ -83,7 +98,15 @@ export interface System {
   readonly dispatchProviderEvent: (event: ProviderRoutingEvent) => void
 }
 
-export const createSystem = (ollamaUrl?: string): System => {
+export interface CreateSystemOptions {
+  readonly providerConfig?: ProviderConfig
+  readonly providerSetup?: ProviderSetupResult
+}
+
+export const createSystem = (options: CreateSystemOptions = {}): System => {
+  const providerConfig = options.providerConfig ?? parseProviderConfig()
+  const providerSetup = options.providerSetup ?? buildProvidersFromConfig(providerConfig)
+  const { router: llm, ollama, ollamaRaw } = providerSetup
   const team = createTeam()
 
   const deliver: DeliverFn = (agentId, message) => {
@@ -112,23 +135,29 @@ export const createSystem = (ollamaUrl?: string): System => {
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
 
-  const resolvedOllamaUrl = ollamaUrl ?? DEFAULTS.ollamaBaseUrl
-  const ollamaRaw = createOllamaProvider(resolvedOllamaUrl)
-  const ollama = createLLMGateway(ollamaRaw)
-  // Saved Ollama URLs (persisted in snapshot)
-  const savedOllamaUrls = new Set<string>([resolvedOllamaUrl])
-  const ollamaUrls = {
-    list: () => [...savedOllamaUrls],
-    add: (url: string) => { savedOllamaUrls.add(url) },
-    remove: (url: string) => { savedOllamaUrls.delete(url) },
-    getCurrent: () => ollamaRaw.baseUrl,
-    setCurrent: (url: string) => {
-      ollamaRaw.setBaseUrl(url)
-      savedOllamaUrls.add(url)
-      ollama.resetCircuitBreaker()
-      ollama.refreshHealth()
-    },
-  }
+  // Saved Ollama URLs — only meaningful when Ollama is in the router.
+  // When absent, setters are no-ops and getCurrent returns empty.
+  const savedOllamaUrls = new Set<string>(ollamaRaw ? [ollamaRaw.baseUrl] : [])
+  const ollamaUrls: OllamaUrlRegistry = ollamaRaw && ollama
+    ? {
+        list: () => [...savedOllamaUrls],
+        add: (url: string) => { savedOllamaUrls.add(url) },
+        remove: (url: string) => { savedOllamaUrls.delete(url) },
+        getCurrent: () => ollamaRaw.baseUrl,
+        setCurrent: (url: string) => {
+          ollamaRaw.setBaseUrl(url)
+          savedOllamaUrls.add(url)
+          ollama.resetCircuitBreaker()
+          ollama.refreshHealth()
+        },
+      }
+    : {
+        list: () => [],
+        add: () => {},
+        remove: () => {},
+        getCurrent: () => '',
+        setCurrent: () => {},
+      }
 
   const houseCallbacks: HouseCallbacks = {
     deliver,
@@ -141,7 +170,7 @@ export const createSystem = (ollamaUrl?: string): System => {
     onArtifactChanged: artifactChanged.proxy,
     onRoomCreated: roomCreated.proxy,
     onRoomDeleted: roomDeleted.proxy,
-    callSystemLLM: (options) => callLLM(ollama, options),
+    callSystemLLM: (options) => callLLM(llm, options),
   }
   const house = createHouse(houseCallbacks)
   const routeMessage = createMessageRouter({ house })
@@ -264,7 +293,7 @@ export const createSystem = (ollamaUrl?: string): System => {
       const support = await buildToolSupport(
         toolNames, toolRegistry,
         { id: ai.id, name: ai.name, currentModel: () => ai.getModel() },
-        ollama,
+        llm,
       )
       ai.refreshTools(support)
     }
@@ -276,11 +305,23 @@ export const createSystem = (ollamaUrl?: string): System => {
   toolRegistry.register(createListSkillsTool(skillStore))
 
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
-    spawnAIAgent(config, ollama, house, team, routeMessage, toolRegistry, {
+    spawnAIAgent(config, llm, house, team, routeMessage, toolRegistry, {
       ...options,
       getSkills: getSkillsForRoom,
       onEvalEvent: evalEvent.proxy,
     })
+
+  // Wire router routing events → late-bound dispatch (ws-handler broadcasts
+  // the corresponding provider_* WS messages to UI clients).
+  llm.onRoutingEvent((event) => {
+    if (event.type === 'provider_bound') {
+      providerBound.proxy(event.agentId, event.model, event.oldProvider, event.newProvider)
+    } else if (event.type === 'provider_all_failed') {
+      providerAllFailed.proxy(event.agentId, event.model, event.attempts)
+    } else {
+      providerStreamFailed.proxy(event.agentId, event.model, event.provider, event.reason)
+    }
+  })
 
   const boundSpawnHumanAgent = async (config: HumanAgentConfig, send: TransportSend): Promise<HumanAgent> => {
     const agent = createHumanAgent(config, send)
@@ -289,7 +330,9 @@ export const createSystem = (ollamaUrl?: string): System => {
   }
 
   return {
-    house, team, routeMessage, ollama, toolRegistry, skillStore, skillsDir,
+    house, team, routeMessage,
+    llm, ollama, providerConfig,
+    toolRegistry, skillStore, skillsDir,
     knowledgeDir: join(homedir(), '.samsinn', 'knowledge'),
     ollamaUrls,
     removeAgent,

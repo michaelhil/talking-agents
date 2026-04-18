@@ -6,12 +6,13 @@ export const houseRoutes: RouteEntry[] = [
     method: 'GET',
     pattern: /^\/health$/,
     handler: (_req, _match, { system }) => {
-      const health = system.ollama.getHealth()
+      const health = system.ollama?.getHealth()
       return json({
         status: 'ok',
-        ollama: health.status !== 'down',
-        ollamaStatus: health.status,
-        ollamaLatencyMs: health.latencyMs,
+        ollama: health ? health.status !== 'down' : false,
+        ollamaStatus: health?.status ?? 'unconfigured',
+        ollamaLatencyMs: health?.latencyMs ?? 0,
+        providers: system.providerConfig.order,
         rooms: system.house.listAllRooms().length,
         agents: system.team.listAgents().length,
       })
@@ -100,14 +101,28 @@ export const houseRoutes: RouteEntry[] = [
     method: 'GET',
     pattern: /^\/api\/models$/,
     handler: async (_req, _match, { system }) => {
+      // Ollama reports "running" (in VRAM) separately; cloud providers have
+      // no equivalent concept. Available models include Ollama (unprefixed,
+      // back-compat) plus cloud providers with provider-prefixed names.
       try {
-        const [running, all] = await Promise.all([
-          (system.ollama.runningModels?.() ?? Promise.resolve([] as string[])).catch(() => [] as string[]),
-          system.ollama.models().catch(() => [] as string[]),
-        ])
-        const runningSet = new Set(running)
-        const available = all.filter(m => !runningSet.has(m))
-        return json({ running, available })
+        const ollamaRunning = system.ollama
+          ? await (system.ollama.runningModels?.() ?? Promise.resolve([] as string[])).catch(() => [] as string[])
+          : []
+        const ollamaAll = system.ollama
+          ? await system.ollama.models().catch(() => [] as string[])
+          : []
+        const ollamaRunningSet = new Set(ollamaRunning)
+        const ollamaAvailable = ollamaAll.filter(m => !ollamaRunningSet.has(m))
+
+        // Router-aggregated list includes all providers with prefixes
+        // ("provider:model"). Keep only the non-ollama entries for this view.
+        const routerAll = await system.llm.models().catch(() => [] as string[])
+        const cloudModels = routerAll.filter(m => !m.startsWith('ollama:'))
+
+        return json({
+          running: ollamaRunning,
+          available: [...ollamaAvailable, ...cloudModels],
+        })
       } catch {
         return json({ running: [], available: [] })
       }

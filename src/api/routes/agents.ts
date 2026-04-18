@@ -55,11 +55,15 @@ export const agentRoutes: RouteEntry[] = [
       if (!body.name || !body.model || !body.systemPrompt) {
         return errorResponse('name, model, and systemPrompt are required')
       }
-      // Best-effort model validation — warn but don't block
-      const available = system.ollama.getHealth().availableModels
+      // Best-effort model validation — warn but don't block.
+      // Use router-level model list (covers Ollama + cloud, prefixed) plus
+      // Ollama's unprefixed list (back-compat for legacy agent configs).
+      const ollamaAvailable = system.ollama?.getHealth().availableModels ?? []
+      const routerAvailable = await system.llm.models().catch(() => [] as string[])
+      const allAvailable = [...ollamaAvailable, ...routerAvailable]
       const requestedModel = body.model as string
-      if (available.length > 0 && !available.includes(requestedModel)) {
-        console.warn(`[agents] Model "${requestedModel}" not in available models: ${available.join(', ')}`)
+      if (allAvailable.length > 0 && !allAvailable.includes(requestedModel)) {
+        console.warn(`[agents] Model "${requestedModel}" not in available models.`)
       }
       try {
         const agent = await system.spawnAIAgent({
