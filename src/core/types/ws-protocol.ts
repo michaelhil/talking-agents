@@ -6,6 +6,8 @@ import type { AIAgentConfig, StateValue } from './agent.ts'
 import type { RoomState } from './room.ts'
 import type { Artifact } from './artifact.ts'
 import type { EvalEvent } from './agent-eval.ts'
+import type { FlowEventDetails, FlowEventName } from './flow.ts'
+import type { OllamaHealth, GatewayMetrics } from './llm.ts'
 
 export type WSInbound =
   | { readonly type: 'post_message'; readonly target: MessageTarget; readonly content: string }
@@ -46,12 +48,12 @@ export type WSOutbound =
   | { readonly type: 'delivery_mode_changed'; readonly roomName: string; readonly mode: DeliveryMode; readonly paused: boolean }
   | { readonly type: 'mute_changed'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
   | { readonly type: 'turn_changed'; readonly roomName: string; readonly agentName?: string; readonly waitingForHuman?: boolean }
-  | { readonly type: 'flow_event'; readonly roomName: string; readonly event: 'started' | 'step' | 'completed' | 'cancelled'; readonly detail?: Record<string, unknown> }
+  | { readonly [E in FlowEventName]: { readonly type: 'flow_event'; readonly roomName: string; readonly event: E; readonly detail?: FlowEventDetails[E] } }[FlowEventName]
   | { readonly type: 'artifact_changed'; readonly action: 'added' | 'updated' | 'removed' | 'resolved'; readonly artifact: Artifact }
   | { readonly type: 'membership_changed'; readonly roomId: string; readonly roomName: string; readonly agentId: string; readonly agentName: string; readonly action: 'added' | 'removed' }
   | { readonly type: 'room_deleted'; readonly roomName: string }
   | { readonly type: 'message_deleted'; readonly roomName: string; readonly messageId: string }
   | { readonly type: 'messages_cleared'; readonly roomName: string }
-  | { readonly type: 'ollama_health'; readonly health: Record<string, unknown> }
-  | { readonly type: 'ollama_metrics'; readonly metrics: Record<string, unknown> }
+  | { readonly type: 'ollama_health'; readonly health: OllamaHealth }
+  | { readonly type: 'ollama_metrics'; readonly metrics: GatewayMetrics }
   | { readonly type: 'agent_activity'; readonly agentName: string; readonly event: EvalEvent }

@@ -97,12 +97,20 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
   system.setOnFlowEvent(withAutoSave((roomId, event, detail) => {
     const room = system.house.getRoom(roomId)
-    wsManager.broadcast({
-      type: 'flow_event',
-      roomName: room?.profile.name ?? roomId,
-      event,
-      detail,
-    })
+    const roomName = room?.profile.name ?? roomId
+    // TS can't narrow the generic event/detail pair at this call site — narrow manually.
+    switch (event) {
+      case 'started':
+        wsManager.broadcast({ type: 'flow_event', roomName, event, detail: detail as { readonly flowId: string; readonly agentName: string } | undefined })
+        break
+      case 'step':
+        wsManager.broadcast({ type: 'flow_event', roomName, event, detail: detail as { readonly flowId: string; readonly stepIndex: number; readonly agentName: string } | undefined })
+        break
+      case 'completed':
+      case 'cancelled':
+        wsManager.broadcast({ type: 'flow_event', roomName, event, detail: detail as { readonly flowId: string } | undefined })
+        break
+    }
   }))
 
   system.setOnArtifactChanged(withAutoSave((action, artifact) => {

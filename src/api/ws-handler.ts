@@ -76,7 +76,7 @@ export const createWSManager = (system: System): WSManager => {
 
   // Wire gateway health changes → broadcast to all clients
   system.ollama.onHealthChange((health) => {
-    broadcast({ type: 'ollama_health', health: health as unknown as Record<string, unknown> })
+    broadcast({ type: 'ollama_health', health })
   })
 
   // Subscribe-based ollama metrics push (keyed by agent ID)
@@ -87,7 +87,7 @@ export const createWSManager = (system: System): WSManager => {
     if (metricsPushTimer) return
     metricsPushTimer = setInterval(() => {
       if (metricsSubscribers.size === 0) return
-      const metrics = system.ollama.getMetrics() as unknown as Record<string, unknown>
+      const metrics = system.ollama.getMetrics()
       const data = JSON.stringify({ type: 'ollama_metrics', metrics })
       // Find WS connections for subscribed agents
       for (const agentId of metricsSubscribers) {

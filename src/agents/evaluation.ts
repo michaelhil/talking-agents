@@ -11,6 +11,7 @@ import type { ChatRequest, LLMCallOptions, LLMProvider } from '../core/types/llm
 import type { EvalEvent } from '../core/types/agent-eval.ts'
 import type { NativeToolCall, ToolCall, ToolDefinition, ToolExecutor, ToolResult } from '../core/types/tool.ts'
 import type { ContextResult, FlushInfo } from './context-builder.ts'
+import { isOllamaError, isPermanent } from '../llm/errors.ts'
 
 // === Decision — what the agent wants to do after evaluation ===
 
@@ -102,8 +103,7 @@ const streamWithRetry = async (
     } catch (err) {
       if (signal?.aborted) throw err  // Don't retry if cancelled
       // Don't retry permanent errors (model not found, bad config)
-      const { OllamaError } = await import('../llm/ollama.ts')
-      if (err instanceof OllamaError && err.isPermanent) throw err
+      if (isOllamaError(err) && isPermanent(err)) throw err
       const errMsg = err instanceof Error ? err.message : String(err)
       if (attempt < LLM_RETRIES) {
         onEvent?.({ kind: 'warning', message: `LLM call failed (attempt ${attempt + 1}/${LLM_RETRIES + 1}), retrying: ${errMsg}` })
@@ -191,8 +191,7 @@ export const evaluate = async (
     // Max iterations reached
     return makeResult({ response: { action: 'pass', reason: `Tool call loop exceeded ${maxToolIterations} iterations` }, generationMs: totalGenerationMs, triggerRoomId })
   } catch (err) {
-    const { OllamaError } = await import('../llm/ollama.ts')
-    const errMsg = err instanceof OllamaError && err.isPermanent
+    const errMsg = isOllamaError(err) && isPermanent(err)
       ? `Model error: ${err.message} — check agent config`
       : err instanceof Error ? err.message : 'unknown'
     onEvent?.({ kind: 'warning', message: errMsg })

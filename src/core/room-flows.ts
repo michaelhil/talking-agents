@@ -6,7 +6,7 @@
 // notifies listeners of execution events (started/step/completed/cancelled).
 // ============================================================================
 
-import type { FlowExecution } from './types/flow.ts'
+import type { FlowExecution, FlowEventDetails, FlowEventName } from './types/flow.ts'
 import type { OnFlowEvent } from './types/room.ts'
 
 export interface FlowExecutionState {
@@ -14,13 +14,13 @@ export interface FlowExecutionState {
   readonly setExecution: (exec: FlowExecution | undefined) => void
   readonly clearExecution: () => void
   readonly advanceStep: (nextStepIndex: number) => void
-  readonly notifyFlowEvent: (event: 'started' | 'step' | 'completed' | 'cancelled', detail?: Record<string, unknown>) => void
+  readonly notifyFlowEvent: <E extends FlowEventName>(event: E, detail?: FlowEventDetails[E]) => void
 }
 
 export const createFlowExecutionState = (roomId: string, onFlowEvent?: OnFlowEvent): FlowExecutionState => {
   let flowExecution: FlowExecution | undefined
 
-  const notifyFlowEvent = (event: 'started' | 'step' | 'completed' | 'cancelled', detail?: Record<string, unknown>): void => {
+  const notifyFlowEvent = <E extends FlowEventName>(event: E, detail?: FlowEventDetails[E]): void => {
     onFlowEvent?.(roomId, event, detail)
   }
 

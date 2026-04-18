@@ -177,7 +177,7 @@ export const createRoom = (
             flowState.notifyFlowEvent('step', {
               flowId: flowExecution.flow.id,
               stepIndex: result.nextStepIndex,
-              agentName: result.nextAgentName,
+              agentName: result.nextAgentName ?? '',
             })
           }
         }
@@ -224,7 +224,7 @@ export const createRoom = (
       flowState.notifyFlowEvent('step', {
         flowId: flowExecution.flow.id,
         stepIndex: result.nextStepIndex,
-        agentName: result.nextAgentName,
+        agentName: result.nextAgentName ?? '',
       })
     }
   }

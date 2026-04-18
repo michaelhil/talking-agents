@@ -23,6 +23,17 @@ export interface FlowExecution {
   stepIndex: number
 }
 
+// Wire-level flow-event detail, indexed by event name. Emitted by room → UI.
+export interface FlowEventDetails {
+  readonly started: { readonly flowId: string; readonly agentName: string }
+  readonly step: { readonly flowId: string; readonly stepIndex: number; readonly agentName: string }
+  readonly completed: { readonly flowId: string }
+  readonly cancelled: { readonly flowId: string }
+}
+
+export type FlowEventName = keyof FlowEventDetails
+export type FlowEventDetail<E extends FlowEventName = FlowEventName> = FlowEventDetails[E]
+
 // Carried in message.metadata when delivering in flow mode.
 // Gives the receiving agent structural awareness of the flow.
 export interface FlowDeliveryContext {

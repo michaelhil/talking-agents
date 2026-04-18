@@ -61,6 +61,15 @@ export interface DocumentBody {
   readonly blocks: ReadonlyArray<DocumentBlock>
 }
 
+export interface MermaidBody {
+  readonly source: string
+}
+
+// Union of all built-in artifact body shapes. Plugin-defined artifact types
+// fall outside this union; callers with a dynamic type name should narrow by
+// inspecting `artifact.type` and casting the body, or pattern-match here.
+export type ArtifactBody = TaskListBody | PollBody | FlowArtifactBody | DocumentBody | MermaidBody
+
 // === Artifact instance ===
 
 export interface Artifact {

@@ -10,7 +10,7 @@ import type {
   ResolveAgentName,
   ResolveTagFn,
 } from './messaging.ts'
-import type { Flow, FlowExecution } from './flow.ts'
+import type { Flow, FlowExecution, FlowEventDetails, FlowEventName } from './flow.ts'
 import type { ArtifactStore, ArtifactTypeRegistry, OnArtifactChanged } from './artifact.ts'
 import type { LLMCallOptions } from './llm.ts'
 
@@ -19,7 +19,7 @@ import type { LLMCallOptions } from './llm.ts'
 export type OnMessagePosted = (roomId: string, message: Message) => void
 export type OnDeliveryModeChanged = (roomId: string, mode: DeliveryMode) => void
 export type OnTurnChanged = (roomId: string, agentId?: string, waitingForHuman?: boolean) => void
-export type OnFlowEvent = (roomId: string, event: 'started' | 'step' | 'completed' | 'cancelled', detail?: Record<string, unknown>) => void
+export type OnFlowEvent = <E extends FlowEventName>(roomId: string, event: E, detail?: FlowEventDetails[E]) => void
 export type OnRoomCreated = (profile: RoomProfile) => void
 export type OnRoomDeleted = (roomId: string, roomName: string) => void
 export type OnMembershipChanged = (roomId: string, roomName: string, agentId: string, agentName: string, action: 'added' | 'removed') => void
