@@ -1,9 +1,11 @@
 // ============================================================================
 // Tool Capability — Converts Tool[] to native ToolDefinition[] format.
 //
-// All modern Ollama models support native tool calling. The capability
-// probing system was removed — tools are always sent as structured
-// definitions in the ChatRequest.tools field.
+// Provider-neutral. Ollama and all supported OpenAI-compatible providers
+// accept the same { type: 'function', function: { name, description,
+// parameters } } shape for tool definitions. Tools are always sent as
+// structured definitions in the ChatRequest.tools field; per-model
+// capability probing is not performed.
 // ============================================================================
 
 import type { Tool, ToolDefinition } from '../core/types/tool.ts'

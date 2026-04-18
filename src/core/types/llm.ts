@@ -43,13 +43,21 @@ export interface LoadedModel {
   readonly expiresAt?: string
 }
 
-export interface OllamaHealth {
+// Base health surface every provider supports.
+export interface ProviderHealth {
   readonly status: 'healthy' | 'degraded' | 'down'
   readonly latencyMs: number
-  readonly loadedModels: ReadonlyArray<LoadedModel>
   readonly availableModels: ReadonlyArray<string>
   readonly lastCheckedAt: number
 }
+
+// Ollama-specific health extras (models held in VRAM via `ollama ps`).
+export interface OllamaHealthExtra {
+  readonly loadedModels: ReadonlyArray<LoadedModel>
+}
+
+// Combined shape the Ollama gateway returns.
+export type OllamaHealth = ProviderHealth & OllamaHealthExtra
 
 export interface ChatRequest {
   readonly model: string
