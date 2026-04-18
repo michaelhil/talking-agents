@@ -277,6 +277,8 @@ Drop a `.ts` file in `./tools/` (project-local) or `~/.samsinn/tools/` (user-glo
 
 All configuration is via environment variables. No config file is required.
 
+### Core
+
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
@@ -286,6 +288,33 @@ All configuration is via environment variables. No config file is required.
 | `SAMSINN_TOOLS_DIR` | — | Custom directory for external tools |
 
 Snapshot is saved to `data/snapshot.json` and auto-restored on startup.
+
+### Cloud LLM providers (optional)
+
+Samsinn routes LLM calls through a provider router that can fall over between cloud providers on rate-limit / quota errors. With no cloud API keys set, only Ollama is used — identical to the original behaviour. Setting any API key below enables that provider; the router picks up the change at next start.
+
+All supported cloud providers only require email (or SSO) signup — no credit card, no phone verification.
+
+| Variable | Default | Description |
+|---|---|---|
+| `PROVIDER` | — | Set to `ollama` to pin to single-Ollama mode (ignores cloud keys even if set) |
+| `PROVIDER_ORDER` | `cerebras,groq,openrouter,mistral,sambanova,ollama` | Comma-separated priority order. Unconfigured names are silently dropped with a startup log line |
+| `DEFAULT_PROVIDER_CONCURRENT` per-provider | 2–3 | Per-provider concurrency caps (see below) |
+| `CEREBRAS_API_KEY` | — | Enables Cerebras (Qwen3 235B, GPT-OSS-120B, ~1000 tok/s) |
+| `GROQ_API_KEY` | — | Enables Groq (Llama 3.3, Kimi K2, Llama 4 Scout, ...) |
+| `OPENROUTER_API_KEY` | — | Enables OpenRouter free tier (DeepSeek R1, Llama 3.3 70B, ...) |
+| `MISTRAL_API_KEY` | — | Enables Mistral La Plateforme (EU-based) |
+| `SAMBANOVA_API_KEY` | — | Enables SambaNova Cloud |
+| `<NAME>_MAX_CONCURRENT` | 2 (Cerebras), 3 (Groq), 1 (OpenRouter), 2 (Mistral/SambaNova) | Max concurrent requests per provider |
+| `FORCE_PROVIDER_FAIL` | — | Test hook — forces the named provider to fail (exercises failover) |
+
+**Model names** can be bare (`llama-3.3-70b`) — the router tries each provider in order, skipping ones that don't serve it — or provider-prefixed (`groq:llama-3.3-70b`) to pin to a specific provider with no failover. OpenRouter slugs with colons work because the prefix parser splits on the **first** colon only (`openrouter:meta-llama/llama-3.3-70b-instruct:free`).
+
+**Failover behaviour**: on rate-limit (429) or 5xx, the router marks the provider cold (using `Retry-After` when present) and falls through to the next. Auth errors (401/403 without a quota body) propagate without fallback — that's a config problem, not a capacity problem. Once a call succeeds on a non-preferred provider, subsequent calls for the same model prefer it until it fails, to prevent ping-pong.
+
+**UI notifications**: when the active provider for an agent changes, the browser shows a green toast (`Agent: now using groq:llama-3.3-70b`). All-provider failures show a red toast. Mid-stream failures show a "stream interrupted" warning — partial output in the message is preserved, no automatic retry.
+
+**User-initiated model changes** are verified on next turn: saving a new model in the agent inspector shows a "saved — verifying…" toast, replaced by the verified/failed toast when the agent next generates. A 30-second timeout falls back to a neutral "will verify when agent runs next" message if the agent is idle.
 
 ---
 

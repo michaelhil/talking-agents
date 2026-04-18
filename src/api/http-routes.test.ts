@@ -40,7 +40,7 @@ const makeSystem = (): System => {
     house, team, toolRegistry,
     llm: { models: async () => [], chat: async () => ({ content: '', generationMs: 0, tokensUsed: { prompt: 0, completion: 0 } }) } as unknown as System['llm'],
     ollama,
-    providerConfig: { order: ['ollama'], ollamaUrl: 'http://localhost:11434', ollamaMaxConcurrent: 2, cloud: {}, ollamaOnly: false, forceFailProvider: null, droppedFromOrder: [] } as unknown as System['providerConfig'],
+    providerConfig: { order: ['ollama'], ollamaUrl: 'http://localhost:11434', ollamaMaxConcurrent: 2, cloud: {}, ollamaOnly: false, forceFailProvider: null, droppedFromOrder: [], orderFromUser: false } as unknown as System['providerConfig'],
     routeMessage: () => [],
     removeAgent: (id: string) => team.removeAgent(id),
     removeRoom: (id: string) => house.removeRoom(id),

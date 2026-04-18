@@ -53,7 +53,7 @@ const makeSystem = (): System => {
     routeMessage,
     llm: makeLLMProvider(),
     ollama: makeLLMProvider(),
-    providerConfig: { order: ['ollama'], ollamaUrl: 'http://localhost:11434', ollamaMaxConcurrent: 2, cloud: {}, ollamaOnly: false, forceFailProvider: null, droppedFromOrder: [] },
+    providerConfig: { order: ['ollama'], ollamaUrl: 'http://localhost:11434', ollamaMaxConcurrent: 2, cloud: {}, ollamaOnly: false, forceFailProvider: null, droppedFromOrder: [], orderFromUser: false },
     toolRegistry: { register: () => {}, get: () => undefined, list: () => [] },
     removeAgent: (id: string) => team.removeAgent(id),
     removeRoom: (id: string) => house.removeRoom(id),

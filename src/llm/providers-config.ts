@@ -43,7 +43,8 @@ export interface ProviderConfig {
   readonly order: ReadonlyArray<string>
   readonly ollamaOnly: boolean
   readonly forceFailProvider: string | null
-  readonly droppedFromOrder: ReadonlyArray<string>  // names in user's order with no config
+  readonly droppedFromOrder: ReadonlyArray<string>  // names in order with no config
+  readonly orderFromUser: boolean                   // true iff PROVIDER_ORDER was set
 }
 
 const intEnv = (name: string, fallback: number): number => {
@@ -83,11 +84,13 @@ export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => 
   // by default). User override via PROVIDER_ORDER; otherwise use default order.
   // If ollamaOnly, order is just ['ollama'].
   let order: ReadonlyArray<string>
+  let orderFromUser = false
   const droppedFromOrder: string[] = []
   if (ollamaOnly) {
     order = ['ollama']
   } else {
     const requested = getEnv('PROVIDER_ORDER')
+    orderFromUser = !!requested
     const raw = requested
       ? requested.split(',').map(s => s.trim()).filter(Boolean)
       : [...DEFAULT_PROVIDER_ORDER]
@@ -103,7 +106,6 @@ export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => 
       order = ['ollama']
     }
   }
-
   return {
     ollamaUrl,
     ollamaMaxConcurrent,
@@ -112,6 +114,7 @@ export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => 
     ollamaOnly,
     forceFailProvider,
     droppedFromOrder,
+    orderFromUser,
   }
 }
 
@@ -134,7 +137,8 @@ export const summariseProviderConfig = (config: ProviderConfig): string => {
     }
   }
   if (config.droppedFromOrder.length > 0) {
-    lines.push(`Dropped from PROVIDER_ORDER (missing API key): ${config.droppedFromOrder.join(', ')}`)
+    const source = config.orderFromUser ? 'PROVIDER_ORDER' : 'default provider order'
+    lines.push(`Skipped (missing API key, from ${source}): ${config.droppedFromOrder.join(', ')}`)
   }
   if (config.forceFailProvider) {
     lines.push(`FORCE_PROVIDER_FAIL=${config.forceFailProvider} (test hook active)`)
