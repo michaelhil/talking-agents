@@ -49,13 +49,16 @@ Multi-provider with failover. The shape is a layered stack:
 - **`openai-compatible.ts`** — one HTTP adapter covering Groq / Cerebras / OpenRouter / Mistral / SambaNova (all speak OpenAI Chat Completions). Incremental tool-call accumulation in SSE streams; `<think>...</think>` extraction for DeepSeek R1-style content streams.
 - **`errors.ts`** — typed discriminated errors: `OllamaError`, `GatewayError`, `CloudProviderError`. Use `isFallbackable(err)` to decide whether the router should fall through. `parseRetryAfterMs` handles both integer-seconds and HTTP-date formats.
 - **`router.ts`** — `createProviderRouter({providers}, {order})` implements `LLMProvider`. Per-request failover with per-provider cooldown (driven by `Retry-After` when present). Soft preference by `(model → last-success provider)` stops ping-pong. Prefix-pinned models (`groq:llama-3.3-70b`) skip failover. Prefix split on **first colon only** — OpenRouter slugs contain colons. Emits `ProviderBoundEvent` / `ProviderAllFailedEvent` / `ProviderStreamFailedEvent` via `onRoutingEvent`.
-- **`providers-config.ts`** — env parser → `ProviderConfig`. `PROVIDER=ollama` forces single-Ollama mode; `PROVIDER_ORDER` overrides priority; missing API keys dropped with a startup log line.
+- **`providers-config.ts`** — env parser → `ProviderConfig`. `PROVIDER=ollama` forces single-Ollama mode; `PROVIDER_ORDER` overrides priority; missing API keys dropped with a startup log line. Accepts an optional `fileStore: MergedProviders` to merge stored keys (env wins).
+- **`providers-store.ts`** — file-backed provider config at `~/.samsinn/providers.json` (mode 0600). `loadProviderStore` / `saveProviderStore` (atomic write via temp+rename). `mergeWithEnv` resolves env-vs-stored precedence and returns per-provider `source: 'env' | 'stored' | 'none'`. Keys are never logged; `maskKey` produces `•••last4`.
 - **`providers-setup.ts`** — builds gateways from config. Cloud gateways get `isPermanentError: isCloudProviderError` so fallbackable errors don't double-count against the router's cooldown map.
 - **`tool-capability.ts`** — converts `Tool[]` → OpenAI-format `ToolDefinition[]`. Provider-neutral.
 
 **`System.llm` is the ProviderRouter (always).** All agent spawn / eval / `callSystemLLM` goes through `system.llm.chat(...)`. **`System.ollama`** is `LLMGateway | undefined` — present only when Ollama is in the order; used by the Ollama dashboard UI for ps/loadModel.
 
 Router routing events are wired to late-bound callbacks on `System` (see `setOnProviderBound` / `setOnProviderAllFailed` / `setOnProviderStreamFailed`). `ws-handler.ts` subscribes to those and broadcasts `provider_*` WS messages, which the UI dispatcher turns into toasts with 5 s dedup per (agentId, provider).
+
+**Provider admin surface.** `GET/PUT /api/providers[/:name]` and `POST /api/providers/:name/test` live in `src/api/routes/providers.ts` — cross-provider config, never returns raw keys. `POST /api/system/shutdown` (in `src/api/routes/system.ts`) sends SIGTERM to the own process to trigger the existing graceful shutdown (snapshot flush + MCP disconnect); the supervisor is expected to respawn. UI panel is in `src/ui/modules/providers-panel.ts`, polls `/api/providers` every 10 s while the dialog is open.
 
 ### Tool + skill system
 

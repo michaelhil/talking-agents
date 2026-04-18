@@ -35,6 +35,7 @@ import {
   wireOllamaDashboard, openOllamaDashboard,
   type OllamaDashboardElements,
 } from './ollama-dashboard.ts'
+import { startProvidersPanel, stopProvidersPanel } from './providers-panel.ts'
 import {
   $myAgentId,
   $myName,
@@ -902,9 +903,16 @@ btnRoomPrompt.onclick = () => {
   )
 }
 
-// Ollama dashboard — wiring + open handler
+// Providers dashboard — Ollama wiring + cloud providers panel
 wireOllamaDashboard(ollamaEls, send)
-document.getElementById('btn-ollama-dashboard')!.onclick = () => openOllamaDashboard(ollamaEls, send)
+
+document.getElementById('btn-ollama-dashboard')!.onclick = async () => {
+  await openOllamaDashboard(ollamaEls, send)
+  void startProvidersPanel()
+}
+
+// Stop polling when dashboard closes (reuses existing close event on the dialog).
+ollamaEls.dashboard.addEventListener('close', () => stopProvidersPanel())
 
 // ============================================================================
 // CONNECT + STARTUP

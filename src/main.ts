@@ -73,6 +73,7 @@ export interface System {
   readonly skillStore: SkillStore
   readonly skillsDir: string
   readonly knowledgeDir: string
+  readonly providersStorePath: string
   // OllamaUrls editor — no-op when Ollama isn't configured.
   readonly ollamaUrls: OllamaUrlRegistry
   readonly removeAgent: (id: string) => boolean
@@ -334,6 +335,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     llm, ollama, providerConfig,
     toolRegistry, skillStore, skillsDir,
     knowledgeDir: join(homedir(), '.samsinn', 'knowledge'),
+    providersStorePath: join(homedir(), '.samsinn', 'providers.json'),
     ollamaUrls,
     removeAgent,
     removeRoom: systemRemoveRoom,

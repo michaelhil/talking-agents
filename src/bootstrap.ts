@@ -18,6 +18,9 @@ import { loadSkills } from './skills/loader.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { parseProviderConfig, summariseProviderConfig } from './llm/providers-config.ts'
 import { buildProvidersFromConfig, warmProviderModels } from './llm/providers-setup.ts'
+import { loadProviderStore, mergeWithEnv } from './llm/providers-store.ts'
+import { homedir } from 'node:os'
+import { join as joinPath } from 'node:path'
 
 const DRAIN_TIMEOUT_MS = 5_000
 
@@ -31,7 +34,13 @@ export const bootstrap = async (): Promise<void> => {
     console.info = stderrLog
   }
 
-  const providerConfig = parseProviderConfig()
+  // Load stored provider config (file-backed, user-editable via UI).
+  const providersStorePath = joinPath(homedir(), '.samsinn', 'providers.json')
+  const { data: storeData, warnings: storeWarnings } = await loadProviderStore(providersStorePath)
+  for (const w of storeWarnings) console.warn(`[providers.json] ${w}`)
+  const fileStore = mergeWithEnv(storeData)
+
+  const providerConfig = parseProviderConfig({ fileStore })
   const providerSetup = buildProvidersFromConfig(providerConfig)
   const system = createSystem({ providerConfig, providerSetup })
 

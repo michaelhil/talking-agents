@@ -14,6 +14,7 @@
 // ============================================================================
 
 import { DEFAULTS } from '../core/types/constants.ts'
+import type { MergedProviders } from './providers-store.ts'
 
 // Cloud providers known to this build. Adding a new one needs:
 //   - entry in PROVIDER_PROFILES
@@ -36,10 +37,15 @@ export interface CloudProviderConfig {
   readonly maxConcurrent: number
 }
 
+export interface CloudProviderConfigWithSource extends CloudProviderConfig {
+  readonly source: 'env' | 'stored'
+  readonly enabled: boolean
+}
+
 export interface ProviderConfig {
   readonly ollamaUrl: string
   readonly ollamaMaxConcurrent: number
-  readonly cloud: Partial<Record<CloudProviderName, CloudProviderConfig>>
+  readonly cloud: Partial<Record<CloudProviderName, CloudProviderConfigWithSource>>
   readonly order: ReadonlyArray<string>
   readonly ollamaOnly: boolean
   readonly forceFailProvider: string | null
@@ -56,6 +62,7 @@ const intEnv = (name: string, fallback: number): number => {
 
 export interface ParseOptions {
   readonly env?: Record<string, string | undefined>
+  readonly fileStore?: MergedProviders
 }
 
 export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => {
@@ -64,19 +71,30 @@ export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => 
 
   const ollamaOnly = (getEnv('PROVIDER') ?? '').toLowerCase() === 'ollama'
   const ollamaUrl = getEnv('OLLAMA_URL') ?? DEFAULTS.ollamaBaseUrl
-  const ollamaMaxConcurrent = intEnv('OLLAMA_MAX_CONCURRENT', 2)
+  const ollamaMaxConcurrent = opts.fileStore?.ollama.maxConcurrent
+    ?? intEnv('OLLAMA_MAX_CONCURRENT', 2)
   const forceFailProvider = getEnv('FORCE_PROVIDER_FAIL') ?? null
 
-  // Collect cloud provider configs where an API key is present.
-  const cloud: Partial<Record<CloudProviderName, CloudProviderConfig>> = {}
+  // Collect cloud provider configs. Precedence (handled by mergeWithEnv if a
+  // fileStore is supplied): env > stored. Without a fileStore we fall back
+  // to env-only — identical to previous behaviour.
+  const cloud: Partial<Record<CloudProviderName, CloudProviderConfigWithSource>> = {}
   if (!ollamaOnly) {
     for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
-      const keyEnv = `${name.toUpperCase()}_API_KEY`
-      const apiKey = getEnv(keyEnv)
+      const merged = opts.fileStore?.cloud[name]
+      const envKey = getEnv(`${name.toUpperCase()}_API_KEY`)?.trim()
+      const apiKey = envKey && envKey.length > 0 ? envKey : (merged?.apiKey ?? '')
       if (!apiKey) continue
-      const maxConcurrentEnv = `${name.toUpperCase()}_MAX_CONCURRENT`
-      const maxConcurrent = intEnv(maxConcurrentEnv, PROVIDER_PROFILES[name].defaultMaxConcurrent)
-      cloud[name] = { apiKey, maxConcurrent }
+      const source: 'env' | 'stored' = envKey && envKey.length > 0 ? 'env' : 'stored'
+
+      // Enabled: env-sourced keys default to enabled; stored keys honour the
+      // stored enabled flag (default true if missing).
+      const enabled = source === 'env' ? true : (merged?.enabled ?? true)
+      if (!enabled) continue
+
+      const maxConcurrent = merged?.maxConcurrent
+        ?? intEnv(`${name.toUpperCase()}_MAX_CONCURRENT`, PROVIDER_PROFILES[name].defaultMaxConcurrent)
+      cloud[name] = { apiKey, maxConcurrent, source, enabled }
     }
   }
 
@@ -132,7 +150,7 @@ export const summariseProviderConfig = (config: ProviderConfig): string => {
     } else {
       const cc = config.cloud[name as CloudProviderName]
       if (cc) {
-        lines.push(`  ${name.padEnd(11)} maxConcurrent=${cc.maxConcurrent}`)
+        lines.push(`  ${name.padEnd(11)} source=${cc.source} maxConcurrent=${cc.maxConcurrent}`)
       }
     }
   }

@@ -16,6 +16,8 @@ import { artifactRoutes } from './routes/artifacts.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { messageRoutes } from './routes/messages.ts'
 import { ollamaRoutes } from './routes/ollama.ts'
+import { providersRoutes } from './routes/providers.ts'
+import { systemRoutes } from './routes/system.ts'
 import type { RouteContext } from './routes/types.ts'
 
 // === Shared Helpers (exported for use by route modules) ===
@@ -49,6 +51,8 @@ export const extractParam = (pathname: string, pattern: string): string | null =
 const allRoutes = [
   ...houseRoutes,
   ...ollamaRoutes,
+  ...providersRoutes,
+  ...systemRoutes,
   // Artifacts before rooms (avoids /rooms/:name/artifacts being shadowed)
   ...artifactRoutes,
   ...roomRoutes,

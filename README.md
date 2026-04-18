@@ -316,6 +316,22 @@ All supported cloud providers only require email (or SSO) signup — no credit c
 
 **User-initiated model changes** are verified on next turn: saving a new model in the agent inspector shows a "saved — verifying…" toast, replaced by the verified/failed toast when the agent next generates. A 30-second timeout falls back to a neutral "will verify when agent runs next" message if the agent is idle.
 
+### Managing provider keys from the UI
+
+Click **Providers** in the sidebar to open the unified dashboard. Cloud providers are at the top; Ollama below. For each cloud provider:
+
+- **Paste a key** into the masked field and hit **Save** — the key is stored in `~/.samsinn/providers.json` (mode 0600). Changes **require restart** — the banner at the top of the dashboard has a "Restart now" button (invokes `POST /api/system/shutdown`; your orchestrator like `bun --watch`, docker, or systemd respawns the process).
+- **Test** validates the key against the provider's `/models` endpoint before you save — no tokens consumed.
+- **Clear** removes the stored key (leaves env vars untouched).
+- **Source badge** shows where the active key comes from: `ENV` (environment variable wins; UI is read-only), `STORED` (from `providers.json`), or `—` (none configured).
+
+**Precedence:** `<NAME>_API_KEY` env var > stored key in `providers.json` > none. This lets CI / headless deployments pin keys via env while interactive users manage them through the UI.
+
+**Security notes:**
+- `providers.json` is set to mode 0600 on every write; a warning is logged if it's found with wider permissions.
+- Keys are never returned by `GET /api/providers` (only a masked last-4 form), never serialized to `data/snapshot.json`, never sent over the WebSocket.
+- Writes are atomic (temp-file + rename), so a crash mid-save won't corrupt the file.
+
 ---
 
 ## Headless Mode (MCP Server)

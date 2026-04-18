@@ -105,7 +105,7 @@
         </div>
         <div id="settings-list" class="hidden">
           <button id="btn-system-prompt" class="w-full text-left px-3 py-1 text-xs text-gray-600 hover:bg-gray-50">System Prompt</button>
-          <button id="btn-ollama-dashboard" class="w-full text-left px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 flex items-center gap-1.5"><span id="ollama-status-dot" class="inline-block w-2 h-2 rounded-full bg-gray-400"></span>Ollama</button>
+          <button id="btn-ollama-dashboard" class="w-full text-left px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 flex items-center gap-1.5"><span id="ollama-status-dot" class="inline-block w-2 h-2 rounded-full bg-gray-400"></span>Providers</button>
         </div>
       </div>
 
@@ -212,14 +212,26 @@
   </dialog>
 
   <!-- Ollama Dashboard Modal -->
-  <dialog id="ollama-dashboard" class="rounded-lg shadow-xl p-0 w-[560px] max-h-[80vh]">
-    <div class="p-4 space-y-4 overflow-y-auto max-h-[80vh]">
+  <dialog id="ollama-dashboard" class="rounded-lg shadow-xl p-0 w-[640px] max-h-[85vh]">
+    <div class="p-4 space-y-4 overflow-y-auto max-h-[85vh]">
       <div class="flex items-center justify-between">
-        <h3 class="font-medium text-gray-800">Ollama Dashboard</h3>
+        <h3 class="font-medium text-gray-800">Providers</h3>
         <button id="ollama-dashboard-close" class="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
       </div>
 
-      <!-- Connection -->
+      <!-- Restart banner (shown only when pending changes) -->
+      <div id="providers-restart-banner" class="hidden border border-amber-300 bg-amber-50 text-amber-800 rounded px-3 py-2 text-xs flex items-center justify-between">
+        <span>Config changes require restart to apply.</span>
+        <button id="providers-restart-btn" class="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs">Restart now</button>
+      </div>
+
+      <!-- Cloud providers (rendered by providers-panel.ts) -->
+      <div class="border rounded p-3 space-y-2">
+        <div class="text-xs font-medium text-gray-500 uppercase">Cloud providers</div>
+        <div id="cloud-providers-list" class="space-y-2 text-xs">Loading…</div>
+      </div>
+
+      <!-- Ollama -->
       <div class="border rounded p-3 space-y-2">
         <div class="text-xs font-medium text-gray-500 uppercase">Connection</div>
         <div class="flex items-center gap-2">
