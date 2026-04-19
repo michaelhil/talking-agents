@@ -278,10 +278,16 @@ export const providersRoutes: RouteEntry[] = [
         return json({ ok: false, error: 'No API key provided or stored', elapsedMs: 0 }, 200)
       }
 
+      // Mirror providers-setup.ts for per-provider auth headers. Anthropic's
+      // OpenAI-compat endpoint rejects Bearer.
+      const authHeaders = name === 'anthropic'
+        ? () => ({ 'x-api-key': apiKey!, 'anthropic-version': '2023-06-01' })
+        : undefined
       const provider = createOpenAICompatibleProvider({
         name,
         baseUrl: PROVIDER_PROFILES[name].baseUrl,
-        getApiKey: () => apiKey,
+        getApiKey: () => apiKey!,
+        ...(authHeaders ? { authHeaders } : {}),
         modelsTimeoutMs: TEST_TIMEOUT_MS,
       })
 

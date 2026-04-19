@@ -27,8 +27,12 @@ export interface OpenAICompatConfig {
   readonly baseUrl: string               // e.g. "https://api.groq.com/openai/v1"
   // Resolved lazily so runtime key changes take effect without restart.
   readonly getApiKey: () => string
-  // Optional extra headers (e.g. Anthropic's `anthropic-version`) — resolved
-  // per request for symmetry with `getApiKey`.
+  // Optional: replace the default `Authorization: Bearer <key>` auth with
+  // provider-specific headers. Anthropic, for example, rejects Bearer and
+  // requires `x-api-key` + `anthropic-version`. Returning an empty object is
+  // allowed (no auth headers at all).
+  readonly authHeaders?: () => Record<string, string>
+  // Optional extra non-auth headers (no current callers — kept for future).
   readonly extraHeaders?: () => Record<string, string>
   readonly chatTimeoutMs?: number
   readonly modelsTimeoutMs?: number
@@ -254,11 +258,16 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
   const modelsTimeoutMs = config.modelsTimeoutMs ?? DEFAULT_MODELS_TIMEOUT_MS
   const streamIdleTimeoutMs = config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS
 
-  const headers = (): Record<string, string> => ({
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${config.getApiKey()}`,
-    ...(config.extraHeaders?.() ?? {}),
-  })
+  const headers = (): Record<string, string> => {
+    const auth = config.authHeaders
+      ? config.authHeaders()
+      : { Authorization: `Bearer ${config.getApiKey()}` }
+    return {
+      'Content-Type': 'application/json',
+      ...auth,
+      ...(config.extraHeaders?.() ?? {}),
+    }
+  }
 
   const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number): Promise<Response> => {
     const controller = new AbortController()

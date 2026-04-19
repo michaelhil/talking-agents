@@ -61,15 +61,19 @@ export const buildProvidersFromConfig = (
       ? () => options.providerKeys!.get(name)
       : () => staticKey
     const maxConcurrent = cc?.maxConcurrent
-    // Anthropic's OpenAI-compat endpoint requires an API version pin.
-    const extraHeaders = name === 'anthropic'
-      ? () => ({ 'anthropic-version': '2023-06-01' })
+    // Anthropic's OpenAI-compat endpoint rejects `Authorization: Bearer ...`
+    // and requires `x-api-key` + `anthropic-version` instead.
+    const authHeaders = name === 'anthropic'
+      ? () => ({
+          'x-api-key': getApiKey(),
+          'anthropic-version': '2023-06-01',
+        })
       : undefined
     const provider = createOpenAICompatibleProvider({
       name,
       baseUrl: PROVIDER_PROFILES[name].baseUrl,
       getApiKey,
-      ...(extraHeaders ? { extraHeaders } : {}),
+      ...(authHeaders ? { authHeaders } : {}),
     })
     gateways[name] = createProviderGateway(
       provider,

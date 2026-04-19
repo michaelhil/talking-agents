@@ -17,24 +17,32 @@ import type { RoomProfile } from './stores.ts'
 export const showToast = (
   anchor: HTMLElement,
   message: string,
-  options?: { type?: 'success' | 'error'; position?: 'relative' | 'fixed' },
+  options?: { type?: 'success' | 'error'; position?: 'relative' | 'fixed'; durationMs?: number },
 ): void => {
   const type = options?.type ?? 'success'
   const position = options?.position ?? 'relative'
+  // Errors stay up longer — they typically carry detail the user needs to
+  // read. Success toasts are short acknowledgements.
+  const defaultMs = type === 'error' ? 8000 : 3000
+  const durationMs = options?.durationMs ?? defaultMs
   const toast = document.createElement('div')
 
   if (position === 'fixed') {
-    toast.className = `fixed top-4 right-4 ${type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white text-xs px-4 py-2 rounded shadow-lg z-50 transition-opacity duration-700`
+    toast.className = `fixed top-4 right-4 ${type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white text-xs px-4 py-2 rounded shadow-lg z-50 transition-opacity duration-700 max-w-md cursor-pointer`
     document.body.appendChild(toast)
   } else {
-    toast.className = `absolute left-1/2 -translate-x-1/2 ${type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white text-xs px-3 py-1 rounded shadow transition-opacity duration-700`
+    toast.className = `absolute left-1/2 -translate-x-1/2 ${type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white text-xs px-3 py-1 rounded shadow transition-opacity duration-700 cursor-pointer`
     toast.style.bottom = '4px'
     anchor.appendChild(toast)
   }
 
   toast.textContent = message
-  setTimeout(() => { toast.style.opacity = '0' }, 2000)
-  setTimeout(() => { toast.remove() }, 3000)
+  toast.title = 'click to dismiss'
+  // Click-to-dismiss — useful for error toasts the user has already read.
+  toast.addEventListener('click', () => toast.remove(), { once: true })
+  const fadeAt = Math.max(500, durationMs - 700)
+  setTimeout(() => { toast.style.opacity = '0' }, fadeAt)
+  setTimeout(() => { toast.remove() }, durationMs)
 }
 
 // === Safe fetch with error handling ===
