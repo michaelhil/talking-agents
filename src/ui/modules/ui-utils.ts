@@ -134,50 +134,128 @@ export const getRoomByName = (name: string): RoomProfile | undefined => {
 
 // === Model dropdown builder ===
 
+export interface ModelCatalogModel {
+  id: string
+  contextMax: number
+  recommended: boolean
+  running?: boolean
+  label?: string
+}
+
+export interface ModelCatalogProvider {
+  name: string
+  status: 'ok' | 'no_key' | 'cooldown' | 'down'
+  models: ModelCatalogModel[]
+}
+
+export interface ModelCatalogResponse {
+  providers: ModelCatalogProvider[]
+  defaultModel: string
+}
+
+const SHOW_ALL_KEY = 'samsinn-model-show-all'
+export const getShowAllModels = (): boolean =>
+  typeof localStorage !== 'undefined' && localStorage.getItem(SHOW_ALL_KEY) === 'true'
+export const setShowAllModels = (v: boolean): void => {
+  if (typeof localStorage !== 'undefined') localStorage.setItem(SHOW_ALL_KEY, String(v))
+}
+
+const formatContext = (n: number): string => {
+  if (!n || n <= 0) return ''
+  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
+  return String(n)
+}
+
+const fullModelId = (providerName: string, modelId: string): string =>
+  providerName === 'ollama' ? modelId : `${providerName}:${modelId}`
+
+const statusLabel = (status: ModelCatalogProvider['status']): string => {
+  if (status === 'ok') return ''
+  if (status === 'no_key') return ' (no key)'
+  if (status === 'cooldown') return ' (cooldown)'
+  return ' (down)'
+}
+
+export const fetchModelCatalog = async (): Promise<ModelCatalogResponse> => {
+  try {
+    const res = await fetch('/api/models')
+    if (!res.ok) return { providers: [], defaultModel: '' }
+    return await res.json() as ModelCatalogResponse
+  } catch {
+    return { providers: [], defaultModel: '' }
+  }
+}
+
 /**
- * Populate a <select> element with model options from the /api/models endpoint.
- * Groups models into "Running" and "Available" optgroups.
- * Returns the default model name (or empty string if none found).
+ * Populate a <select> with models grouped by provider. Providers with status
+ * 'no_key' are hidden. When showAll=false (default), only curated/recommended
+ * models are listed; when true, all provider-reported models appear.
+ *
+ * `preferredModel` — when provided, it's pre-selected if present. Otherwise
+ * the server-reported `defaultModel` wins.
+ *
+ * Returns the value that ended up selected (possibly empty).
  */
 export const populateModelSelect = async (
   select: HTMLSelectElement,
-  preferredDefaults?: string[],
+  options: { preferredModel?: string; showAll?: boolean } = {},
 ): Promise<string> => {
   select.innerHTML = '<option value="">Loading...</option>'
-  try {
-    const res = await fetch('/api/models')
-    const data = await res.json() as { running: string[]; available: string[] }
-    select.innerHTML = ''
-    const allModels = [...(data.running ?? []), ...(data.available ?? [])]
-    const defaults = preferredDefaults ?? ['llama3.2:latest', 'qwen3:4b', 'llama3.2:3b']
-    const defaultModel = defaults.find(p => allModels.includes(p)) ?? allModels[0] ?? ''
+  const data = await fetchModelCatalog()
+  const showAll = options.showAll ?? getShowAllModels()
 
-    if (data.running.length > 0) {
-      const group = document.createElement('optgroup')
-      group.label = 'Running'
-      for (const m of data.running) {
-        const opt = document.createElement('option')
-        opt.value = m; opt.textContent = m; opt.selected = m === defaultModel
-        group.appendChild(opt)
-      }
-      select.appendChild(group)
-    }
-    if (data.available.length > 0) {
-      const group = document.createElement('optgroup')
-      group.label = 'Available'
-      for (const m of data.available) {
-        const opt = document.createElement('option')
-        opt.value = m; opt.textContent = m; opt.selected = m === defaultModel
-        group.appendChild(opt)
-      }
-      select.appendChild(group)
-    }
-    if (allModels.length === 0) {
-      select.innerHTML = '<option value="">No models found</option>'
-    }
-    return defaultModel
-  } catch {
-    select.innerHTML = '<option value="">Failed to load models</option>'
+  select.innerHTML = ''
+
+  const visible = data.providers.filter(p => p.status !== 'no_key')
+
+  if (visible.length === 0) {
+    select.innerHTML = '<option value="">No providers configured</option>'
     return ''
   }
+
+  const all: string[] = []
+  for (const prov of visible) {
+    const models = showAll ? prov.models : prov.models.filter(m => m.recommended)
+    if (models.length === 0) continue
+    const group = document.createElement('optgroup')
+    group.label = `${prov.name}${statusLabel(prov.status)}`
+    for (const m of models) {
+      const opt = document.createElement('option')
+      const full = fullModelId(prov.name, m.id)
+      opt.value = full
+      const label = m.label ? `${m.id} — ${m.label}` : m.id
+      const ctx = formatContext(m.contextMax)
+      const runTag = m.running ? ' ★' : ''
+      opt.textContent = ctx ? `${label} · ${ctx}${runTag}` : `${label}${runTag}`
+      if (prov.status === 'cooldown' || prov.status === 'down') opt.classList.add('text-gray-400')
+      group.appendChild(opt)
+      all.push(full)
+    }
+    select.appendChild(group)
+  }
+
+  if (all.length === 0) {
+    select.innerHTML = '<option value="">No models available</option>'
+    return ''
+  }
+
+  const chosen = (options.preferredModel && all.includes(options.preferredModel))
+    ? options.preferredModel
+    : (data.defaultModel && all.includes(data.defaultModel) ? data.defaultModel : all[0]!)
+  select.value = chosen
+
+  // If the preferred model wasn't in the list (e.g. a legacy Ollama model), add
+  // it at the top as "(not available)" so the user can still see the current
+  // value.
+  if (options.preferredModel && !all.includes(options.preferredModel)) {
+    const opt = document.createElement('option')
+    opt.value = options.preferredModel
+    opt.textContent = `${options.preferredModel} (not available)`
+    opt.selected = true
+    select.insertBefore(opt, select.firstChild)
+    return options.preferredModel
+  }
+
+  return chosen
 }

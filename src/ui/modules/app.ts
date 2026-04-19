@@ -30,7 +30,7 @@ import { openTextEditorModal, createModal, createButtonRow, createTextarea } fro
 import { createWorkspace } from './workspace.ts'
 import { wsDispatch } from './ws-dispatch.ts'
 import { batched } from '../lib/nanostores.ts'
-import { showToast, roomNameToId, roomIdToName, agentIdToName, populateModelSelect } from './ui-utils.ts'
+import { showToast, roomNameToId, roomIdToName, agentIdToName, populateModelSelect, getShowAllModels, setShowAllModels } from './ui-utils.ts'
 import {
   updateOllamaHealthUI, updateOllamaMetricsUI,
   wireOllamaDashboard, openOllamaDashboard,
@@ -405,14 +405,20 @@ $agentListView.subscribe(({ agents, myAgentId, selectedAgentId, selectedRoomId, 
 })
 
 // --- Room members chip row (chip row + Add picker at top of room page) ---
+// Shared opener for the create-agent modal — used by both the sidebar button
+// and the room-members "+ Create new…" picker.
+const openCreateAgentModalShared = async (): Promise<void> => {
+  const modelSelect = agentForm.querySelector('select[name="model"]') as HTMLSelectElement
+  const showAllBox = document.getElementById('model-show-all') as HTMLInputElement | null
+  if (showAllBox) showAllBox.checked = getShowAllModels()
+  agentModal.showModal()
+  await populateModelSelect(modelSelect)
+}
+
 mountRoomMembers({
   container: roomMembers,
   send,
-  openCreateAgentModal: async () => {
-    const modelSelect = agentForm.querySelector('select[name="model"]') as HTMLSelectElement
-    agentModal.showModal()
-    await populateModelSelect(modelSelect)
-  },
+  openCreateAgentModal: () => void openCreateAgentModalShared(),
   inspectAgent: (agentId) => {
     $selectedRoomId.set(null)
     $selectedAgentId.set(agentId)
@@ -725,11 +731,31 @@ chatForm.onsubmit = (e) => {
 }
 
 document.getElementById('btn-create-room')!.onclick = () => roomModal.showModal()
-document.getElementById('btn-create-agent')!.onclick = async () => {
-  const modelSelect = agentForm.querySelector('select[name="model"]') as HTMLSelectElement
-  agentModal.showModal()
-  await populateModelSelect(modelSelect)
+
+document.getElementById('btn-create-agent')!.onclick = () => void openCreateAgentModalShared()
+
+// "Show all models" toggle in agent-modal: persist preference + re-populate
+// the visible model select without reopening the modal.
+const showAllBox = document.getElementById('model-show-all') as HTMLInputElement | null
+if (showAllBox) {
+  showAllBox.addEventListener('change', async () => {
+    setShowAllModels(showAllBox.checked)
+    const modelSelect = agentForm.querySelector('select[name="model"]') as HTMLSelectElement
+    const prev = modelSelect.value
+    await populateModelSelect(modelSelect, { preferredModel: prev || undefined })
+  })
 }
+
+// Hot-reload: when keys change server-side, refresh any open model selects.
+window.addEventListener('providers-changed', () => {
+  void (async () => {
+    const selects = document.querySelectorAll<HTMLSelectElement>('select[name="model"], #agent-area select')
+    for (const sel of Array.from(selects)) {
+      const prev = sel.value
+      await populateModelSelect(sel, { preferredModel: prev || undefined })
+    }
+  })()
+})
 
 pauseToggle.onclick = () => {
   const roomId = $selectedRoomId.get()

@@ -54,7 +54,7 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
     'Create a new AI agent (not added to any room by default)',
     {
       name: z.string().describe('Agent name'),
-      model: z.string().describe('Ollama model name (e.g. llama3.2, qwen2.5:14b)'),
+      model: z.string().describe('Model ID. Cloud models are provider-prefixed: "anthropic:claude-haiku-4-5", "gemini:gemini-2.5-flash", "groq:llama-3.3-70b-versatile", etc. Ollama models are bare: "llama3.2" or "qwen2.5:14b". Call GET /api/models for the live list.'),
       systemPrompt: z.string().describe('System prompt defining the agent personality and behavior'),
       temperature: z.number().optional().describe('LLM temperature (0-1)'),
     },

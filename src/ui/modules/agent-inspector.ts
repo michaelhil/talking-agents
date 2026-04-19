@@ -6,7 +6,7 @@
 // (description only).
 // ============================================================================
 
-import { safeFetchJson, showToast, agentNameToId } from './ui-utils.ts'
+import { safeFetchJson, showToast, agentNameToId, populateModelSelect } from './ui-utils.ts'
 import { $pendingModelChanges } from './stores.ts'
 import { renderPromptToggles } from './prompt-toggles.ts'
 
@@ -139,27 +139,11 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
       const modelSelect = document.createElement('select')
       modelSelect.className = 'text-sm text-gray-500 font-normal ml-2 border-none bg-transparent cursor-pointer hover:text-blue-500 focus:outline-none'
 
-      // Load models immediately (not lazily)
+      // Load models via the structured catalog; pre-select the agent's
+      // current model (shown as "(not available)" if the provider is gone).
       const currentModel = (agentRes.model as string) ?? 'n/a'
       modelSelect.innerHTML = `<option value="${currentModel}">${currentModel}</option>`
-      safeFetchJson<{ running: string[]; available: string[] }>('/api/models').then(data => {
-        if (!data) return
-        modelSelect.innerHTML = ''
-        const allModels = [...(data.running ?? []), ...(data.available ?? [])]
-        for (const m of allModels) {
-          const opt = document.createElement('option')
-          opt.value = m; opt.textContent = m
-          if (m === currentModel) opt.selected = true
-          modelSelect.appendChild(opt)
-        }
-        // If current model isn't in the list (wrong Ollama), add it at top
-        if (!allModels.includes(currentModel)) {
-          const opt = document.createElement('option')
-          opt.value = currentModel; opt.textContent = `${currentModel} (not available)`
-          opt.selected = true
-          modelSelect.insertBefore(opt, modelSelect.firstChild)
-        }
-      })
+      void populateModelSelect(modelSelect, { preferredModel: currentModel })
       modelSelect.onchange = async () => {
         if (!modelSelect.value) return
         const newModel = modelSelect.value

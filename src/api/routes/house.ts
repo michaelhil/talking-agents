@@ -101,30 +101,105 @@ export const houseRoutes: RouteEntry[] = [
     method: 'GET',
     pattern: /^\/api\/models$/,
     handler: async (_req, _match, { system }) => {
-      // Ollama reports "running" (in VRAM) separately; cloud providers have
-      // no equivalent concept. Available models include Ollama (unprefixed,
-      // back-compat) plus cloud providers with provider-prefixed names.
+      // Structured response grouped by provider, with per-model metadata
+      // (context window, running flag, recommended flag). Consumed by the
+      // UI's model-selection dropdown.
       try {
-        const ollamaRunning = system.ollama
-          ? await (system.ollama.runningModels?.() ?? Promise.resolve([] as string[])).catch(() => [] as string[])
-          : []
-        const ollamaAll = system.ollama
-          ? await system.ollama.models().catch(() => [] as string[])
-          : []
-        const ollamaRunningSet = new Set(ollamaRunning)
-        const ollamaAvailable = ollamaAll.filter(m => !ollamaRunningSet.has(m))
+        const { CURATED_MODELS, isCuratedModel, DEFAULT_PREFERENCE_ORDER } =
+          await import('../../llm/model-catalog.ts')
+        const { PROVIDER_PROFILES } = await import('../../llm/providers-config.ts')
+        const { getContextWindowSync } = await import('../../llm/model-context.ts')
 
-        // Router-aggregated list includes all providers with prefixes
-        // ("provider:model"). Keep only the non-ollama entries for this view.
-        const routerAll = await system.llm.models().catch(() => [] as string[])
-        const cloudModels = routerAll.filter(m => !m.startsWith('ollama:'))
+        const cooldowns = system.llm.getCooldownState()
+        const providers: Array<{
+          name: string
+          status: 'ok' | 'no_key' | 'cooldown' | 'down'
+          models: Array<{ id: string; contextMax: number; recommended: boolean; running?: boolean; label?: string }>
+        }> = []
 
-        return json({
-          running: ollamaRunning,
-          available: [...ollamaAvailable, ...cloudModels],
-        })
-      } catch {
-        return json({ running: [], available: [] })
+        // Cloud providers, in router order (so UI shows them in priority order)
+        for (const name of system.providerConfig.order) {
+          if (name === 'ollama') continue
+          const gw = system.gateways[name]
+          const enabled = system.providerKeys.isEnabled(name)
+          const cool = cooldowns[name]
+          const status: 'ok' | 'no_key' | 'cooldown' | 'down' =
+            !enabled ? 'no_key' :
+            cool ? 'cooldown' :
+            'ok'
+
+          const reported = gw?.getHealth().availableModels ?? []
+          const curated = CURATED_MODELS[name] ?? []
+          // Merge: curated entries first (preserve their order + labels),
+          // then anything else the provider reports.
+          const seen = new Set<string>()
+          const models: typeof providers[number]['models'] = []
+          for (const c of curated) {
+            seen.add(c.id)
+            const ctx = getContextWindowSync(name, c.id)
+            models.push({
+              id: c.id,
+              contextMax: ctx.contextMax,
+              recommended: true,
+              ...(c.label ? { label: c.label } : {}),
+            })
+          }
+          for (const id of reported) {
+            if (seen.has(id)) continue
+            const ctx = getContextWindowSync(name, id)
+            models.push({ id, contextMax: ctx.contextMax, recommended: false })
+          }
+          providers.push({ name, status, models })
+          void PROVIDER_PROFILES
+        }
+
+        // Ollama: running vs on-disk. "recommended" = running.
+        if (system.ollama) {
+          const [running, all] = await Promise.all([
+            (system.ollama.runningModels?.() ?? Promise.resolve([] as string[])).catch(() => [] as string[]),
+            system.ollama.models().catch(() => [] as string[]),
+          ])
+          const runSet = new Set(running)
+          const cool = cooldowns.ollama
+          // All Ollama models are "recommended" — they're local and free, so
+          // there's no reason to hide them behind "show all". Running models
+          // just get an extra star.
+          const models = all.map(id => {
+            const ctx = getContextWindowSync('ollama', id)
+            return {
+              id, contextMax: ctx.contextMax,
+              recommended: true,
+              running: runSet.has(id),
+            }
+          })
+          providers.push({
+            name: 'ollama',
+            status: cool ? 'cooldown' : (all.length === 0 ? 'down' : 'ok'),
+            models,
+          })
+        }
+
+        // Default model pick — first curated entry of the first "ok" provider
+        // in the preferred order, prefixed with the provider name.
+        let defaultModel = ''
+        for (const prov of DEFAULT_PREFERENCE_ORDER) {
+          const p = providers.find(x => x.name === prov && x.status === 'ok')
+          if (!p || p.models.length === 0) continue
+          defaultModel = prov === 'ollama' ? p.models[0]!.id : `${prov}:${p.models[0]!.id}`
+          break
+        }
+        if (!defaultModel) {
+          // Fallback: first model of first ok provider
+          const p = providers.find(x => x.status === 'ok' && x.models.length > 0)
+          if (p) defaultModel = p.name === 'ollama' ? p.models[0]!.id : `${p.name}:${p.models[0]!.id}`
+        }
+
+        void isCuratedModel
+
+        return json({ providers, defaultModel })
+      } catch (err) {
+        console.error('/api/models error:', err)
+        return json({ providers: [], defaultModel: '' })
       }
     },
   },
