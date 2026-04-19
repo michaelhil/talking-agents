@@ -111,19 +111,24 @@ export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => 
   } else {
     const requested = getEnv('PROVIDER_ORDER')
     orderFromUser = !!requested
-    const raw = requested
+    // Precedence: env PROVIDER_ORDER > stored order (opts.fileStore.order) >
+    // DEFAULT_PROVIDER_ORDER. Unknown names dropped; known names not present
+    // are appended in default-order position (forward-compat when new
+    // providers ship between stored-order writes).
+    const baseRaw = requested
       ? requested.split(',').map(s => s.trim()).filter(Boolean)
-      : [...DEFAULT_PROVIDER_ORDER]
-    // Keep every known provider in the order, even without a key at boot —
-    // the router skips providers whose current key is empty via
-    // `isProviderEnabled`, so users can add a key later via the UI without
-    // restarting. Only truly unknown names are dropped.
+      : (opts.fileStore?.order && opts.fileStore.order.length > 0
+          ? [...opts.fileStore.order]
+          : [...DEFAULT_PROVIDER_ORDER])
     const known = new Set<string>(['ollama', ...Object.keys(PROVIDER_PROFILES)])
-    order = raw.filter(name => {
+    const filtered = baseRaw.filter(name => {
       if (known.has(name)) return true
       droppedFromOrder.push(name)
       return false
     })
+    const present = new Set(filtered)
+    const missing = [...DEFAULT_PROVIDER_ORDER].filter(n => known.has(n) && !present.has(n))
+    order = [...filtered, ...missing]
     if (order.length === 0) {
       // Fallback safety: always at least Ollama.
       order = ['ollama']

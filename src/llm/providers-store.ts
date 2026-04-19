@@ -31,6 +31,10 @@ export interface ProvidersFileShape {
   readonly providers: {
     readonly ollama?: StoredOllamaEntry
   } & Partial<Record<CloudProviderName, StoredCloudEntry>>
+  // User-chosen router fallback order. When present, overrides
+  // DEFAULT_PROVIDER_ORDER but is itself overridden by env PROVIDER_ORDER.
+  // Unknown names ignored on load; missing names appended in default position.
+  readonly order?: ReadonlyArray<string>
 }
 
 const EMPTY: ProvidersFileShape = { version: STORE_VERSION, providers: {} }
@@ -101,7 +105,19 @@ const validateShape = (raw: unknown, warnings: string[]): ProvidersFileShape => 
     }
     cleaned[name] = out
   }
-  return { version: STORE_VERSION, providers: cleaned as ProvidersFileShape['providers'] }
+
+  // Optional stored router order — strip non-string entries silently.
+  let order: ReadonlyArray<string> | undefined
+  if (Array.isArray(r.order)) {
+    order = (r.order as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 0)
+    if (order.length === 0) order = undefined
+  }
+
+  return {
+    version: STORE_VERSION,
+    providers: cleaned as ProvidersFileShape['providers'],
+    ...(order ? { order } : {}),
+  }
 }
 
 // === Save — atomic write with 0600 ===
@@ -127,6 +143,8 @@ export interface MergedProviderEntry {
 export interface MergedProviders {
   readonly cloud: Partial<Record<CloudProviderName, MergedProviderEntry>>
   readonly ollama: { readonly enabled: boolean; readonly maxConcurrent: number | undefined }
+  // Stored router-order preference (unchanged from the file; env still wins).
+  readonly order?: ReadonlyArray<string>
 }
 
 export const maskKey = (key: string): string => {
@@ -185,5 +203,5 @@ export const mergeWithEnv = (
       : ollamaStored?.maxConcurrent,
   }
 
-  return { cloud, ollama }
+  return { cloud, ollama, ...(store.order ? { order: store.order } : {}) }
 }

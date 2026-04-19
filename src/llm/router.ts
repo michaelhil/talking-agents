@@ -112,6 +112,8 @@ export interface ProviderRouter extends LLMProvider {
   readonly getProviderNames: () => ReadonlyArray<string>
   readonly getAggregatedMetrics: () => RouterMetrics
   readonly getCooldownState: () => Record<string, { coldUntilMs: number; reason: string } | null>
+  readonly getOrder: () => ReadonlyArray<string>
+  readonly setOrder: (names: ReadonlyArray<string>) => void
   readonly dispose: () => void
 }
 
@@ -149,7 +151,8 @@ export const createProviderRouter = (
   deps: ProviderRouterDeps = {},
 ): ProviderRouter => {
   const now = deps.now ?? Date.now
-  const order = config.order.filter(name => providers[name] !== undefined)
+  // Mutable so setOrder() can reassign at runtime (UI reorder).
+  let order: ReadonlyArray<string> = config.order.filter(name => providers[name] !== undefined)
   if (order.length === 0) {
     throw new Error('ProviderRouter: no configured providers are available')
   }
@@ -523,12 +526,36 @@ export const createProviderRouter = (
     return out
   }
 
+  // Runtime reorder — used by the UI providers panel. The posted order must
+  // be the exact set of known providers (no duplicates, no unknowns). The
+  // soft-preference cache is cleared so the new order takes effect on the
+  // next request, not eventually after existing preferences expire.
+  const setOrder = (names: ReadonlyArray<string>): void => {
+    if (!Array.isArray(names)) throw new Error('setOrder: expected an array')
+    const known = new Set(Object.keys(providers))
+    const seen = new Set<string>()
+    for (const n of names) {
+      if (typeof n !== 'string' || !n) throw new Error('setOrder: entries must be non-empty strings')
+      if (seen.has(n)) throw new Error(`setOrder: duplicate provider "${n}"`)
+      seen.add(n)
+      if (!known.has(n)) throw new Error(`setOrder: unknown provider "${n}"`)
+    }
+    for (const n of known) {
+      if (!seen.has(n)) throw new Error(`setOrder: missing provider "${n}" (must post the full list)`)
+    }
+    order = [...names]
+    lastSuccessByModel.clear()
+    lastByAgentModel.clear()
+  }
+
   return {
     chat,
     stream,
     models,
     onRoutingEvent,
     getProviderNames: () => [...order],
+    getOrder: () => [...order],
+    setOrder,
     getAggregatedMetrics,
     getCooldownState,
     dispose: () => { listeners.length = 0 },

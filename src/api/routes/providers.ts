@@ -38,7 +38,19 @@ interface ProviderStatusEntry {
   readonly enabled: boolean
   readonly maxConcurrent: number | null
   readonly cooldown: { readonly coldUntilMs: number; readonly reason: string } | null
-  readonly inRouter: boolean
+  readonly status: 'ok' | 'no_key' | 'cooldown' | 'down'
+}
+
+const computeStatus = (
+  kind: 'cloud' | 'ollama',
+  enabled: boolean,
+  cooldown: { coldUntilMs: number; reason: string } | null,
+  circuitOpen: boolean,
+): 'ok' | 'no_key' | 'cooldown' | 'down' => {
+  if (circuitOpen) return 'down'
+  if (cooldown) return 'cooldown'
+  if (kind === 'cloud' && !enabled) return 'no_key'
+  return 'ok'
 }
 
 export const providersRoutes: RouteEntry[] = [
@@ -50,39 +62,51 @@ export const providersRoutes: RouteEntry[] = [
       const { data: store, warnings } = await loadProviderStore(system.providersStorePath)
       const merged = mergeWithEnv(store)
       const cooldowns = system.llm.getCooldownState()
-      const activeOrder = system.providerConfig.order
+      const activeOrder = system.llm.getOrder()
+      const orderLockedByEnv = !!process.env.PROVIDER_ORDER
 
-      const entries: ProviderStatusEntry[] = []
+      const byName = new Map<string, ProviderStatusEntry>()
 
-      // Cloud providers
       for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
         const m = merged.cloud[name]
         if (!m) continue
-        entries.push({
+        const gw = system.gateways[name]
+        const circuitOpen = !!(gw?.getHealth().status === 'down')
+        byName.set(name, {
           name, kind: 'cloud',
           keyMask: m.maskedKey,
           source: m.source,
           enabled: m.enabled,
           maxConcurrent: m.maxConcurrent ?? PROVIDER_PROFILES[name].defaultMaxConcurrent,
           cooldown: cooldowns[name] ?? null,
-          inRouter: activeOrder.includes(name),
+          status: computeStatus('cloud', m.enabled, cooldowns[name] ?? null, circuitOpen),
         })
       }
 
-      // Ollama — no key concept; show URL + enabled / concurrency
-      entries.push({
+      // Ollama — no key concept
+      const ollamaGw = system.gateways.ollama
+      const ollamaCircuitOpen = !!(ollamaGw?.getHealth().status === 'down')
+      byName.set('ollama', {
         name: 'ollama', kind: 'ollama',
         keyMask: '',
         source: 'none',
         enabled: merged.ollama.enabled,
         maxConcurrent: merged.ollama.maxConcurrent ?? 2,
         cooldown: cooldowns.ollama ?? null,
-        inRouter: activeOrder.includes('ollama'),
+        status: computeStatus('ollama', merged.ollama.enabled, cooldowns.ollama ?? null, ollamaCircuitOpen),
       })
+
+      // Emit in router order so the UI can just render top-to-bottom.
+      const entries: ProviderStatusEntry[] = []
+      for (const name of activeOrder) {
+        const entry = byName.get(name)
+        if (entry) entries.push(entry)
+      }
 
       return json({
         providers: entries,
         activeOrder,
+        orderLockedByEnv,
         droppedFromOrder: system.providerConfig.droppedFromOrder,
         forceFailProvider: system.providerConfig.forceFailProvider,
         storeWarnings: warnings,
@@ -90,7 +114,38 @@ export const providersRoutes: RouteEntry[] = [
     },
   },
 
-  // --- Set / clear ---
+  // --- Set router order (UI reorder arrows) ---
+  // Must precede the generic /:name route so the pattern matches first.
+  {
+    method: 'PUT',
+    pattern: /^\/api\/providers\/order$/,
+    handler: async (req, _match, { system, broadcast }) => {
+      const body = await parseBody(req)
+      const incoming = body.order
+      if (!Array.isArray(incoming)) return errorResponse('order must be an array of provider names')
+      const order: string[] = []
+      for (const n of incoming) {
+        if (typeof n !== 'string' || !n) return errorResponse('order entries must be non-empty strings')
+        order.push(n)
+      }
+
+      try {
+        system.llm.setOrder(order)
+      } catch (err) {
+        return errorResponse(err instanceof Error ? err.message : String(err))
+      }
+
+      const { data: store } = await loadProviderStore(system.providersStorePath)
+      const next: ProvidersFileShape = { ...store, order }
+      await saveProviderStore(system.providersStorePath, next)
+
+      try { broadcast({ type: 'providers_changed', providers: order }) } catch { /* ignore */ }
+
+      return json({ saved: true, order })
+    },
+  },
+
+  // --- Set / clear a single provider's key / settings ---
   {
     method: 'PUT',
     pattern: /^\/api\/providers\/([^/]+)$/,
