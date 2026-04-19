@@ -193,6 +193,16 @@ export const providersRoutes: RouteEntry[] = [
         if (body.maxConcurrent > 100) return errorResponse('maxConcurrent must be ≤ 100')
         ;(patch as { maxConcurrent?: number }).maxConcurrent = body.maxConcurrent
       }
+      if ('pinnedModels' in body) {
+        if (body.pinnedModels === null) {
+          (patch as { pinnedModels?: ReadonlyArray<string> }).pinnedModels = []
+        } else if (Array.isArray(body.pinnedModels)) {
+          const pins = (body.pinnedModels as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 0)
+          ;(patch as { pinnedModels?: ReadonlyArray<string> }).pinnedModels = pins
+        } else {
+          return errorResponse('pinnedModels must be an array of strings or null')
+        }
+      }
       // Ollama entries never carry apiKey.
       if (name === 'ollama' && patch.apiKey) {
         return errorResponse('Ollama does not accept an apiKey')
@@ -251,6 +261,74 @@ export const providersRoutes: RouteEntry[] = [
           enabled: updated.enabled ?? (updated.apiKey ? true : false),
           maxConcurrent: updated.maxConcurrent ?? null,
         },
+      })
+    },
+  },
+
+  // --- Refresh the provider's model cache and return the full list with
+  //     metadata (used by the UI models popover).
+  {
+    method: 'POST',
+    pattern: /^\/api\/providers\/([^/]+)\/refresh-models$/,
+    handler: async (_req, match, { system }) => {
+      const name = decodeURIComponent(match[1] ?? '')
+      if (name !== 'ollama' && !isCloud(name)) return errorResponse(`Unknown provider: ${name}`, 404)
+
+      const gw = system.gateways[name]
+      if (!gw) return errorResponse(`Gateway not found for ${name}`, 500)
+
+      const started = performance.now()
+      let refreshError: string | undefined
+      try {
+        await gw.refreshModels()
+      } catch (err) {
+        refreshError = err instanceof Error ? err.message : String(err)
+      }
+      const elapsedMs = Math.round(performance.now() - started)
+
+      const reported = gw.getHealth().availableModels
+
+      const { CURATED_MODELS } = await import('../../llm/model-catalog.ts')
+      const { getContextWindowSync } = await import('../../llm/model-context.ts')
+
+      const curatedIds = new Set((CURATED_MODELS[name] ?? []).map(m => m.id))
+      const curatedLabel: Record<string, string | undefined> = {}
+      for (const m of (CURATED_MODELS[name] ?? [])) curatedLabel[m.id] = m.label
+
+      const { data: store } = await loadProviderStore(system.providersStorePath)
+      const merged = mergeWithEnv(store)
+      const pinned = new Set(
+        name === 'ollama'
+          ? []
+          : (merged.cloud[name as CloudProviderName]?.pinnedModels ?? []),
+      )
+
+      // Union: reported + curated (curated may include models not in the
+      // /models response for this provider — still worth showing).
+      const allIds = new Set<string>(reported)
+      for (const id of curatedIds) allIds.add(id)
+
+      const models = [...allIds].map(id => {
+        const ctx = getContextWindowSync(name, id)
+        return {
+          id,
+          contextMax: ctx.contextMax,
+          curated: curatedIds.has(id),
+          pinned: pinned.has(id),
+          ...(curatedLabel[id] ? { label: curatedLabel[id] } : {}),
+        }
+      }).sort((a, b) => {
+        // Pinned first, then curated, then alphabetical.
+        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+        if (a.curated !== b.curated) return a.curated ? -1 : 1
+        return a.id.localeCompare(b.id)
+      })
+
+      return json({
+        ok: !refreshError,
+        ...(refreshError ? { error: refreshError } : {}),
+        elapsedMs,
+        models,
       })
     },
   },

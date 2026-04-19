@@ -109,12 +109,16 @@ export const houseRoutes: RouteEntry[] = [
           await import('../../llm/model-catalog.ts')
         const { PROVIDER_PROFILES } = await import('../../llm/providers-config.ts')
         const { getContextWindowSync } = await import('../../llm/model-context.ts')
+        const { loadProviderStore, mergeWithEnv } = await import('../../llm/providers-store.ts')
+
+        const { data: storeData } = await loadProviderStore(system.providersStorePath)
+        const merged = mergeWithEnv(storeData)
 
         const cooldowns = system.llm.getCooldownState()
         const providers: Array<{
           name: string
           status: 'ok' | 'no_key' | 'cooldown' | 'down'
-          models: Array<{ id: string; contextMax: number; recommended: boolean; running?: boolean; label?: string }>
+          models: Array<{ id: string; contextMax: number; recommended: boolean; pinned?: boolean; running?: boolean; label?: string }>
         }> = []
 
         // Cloud providers, in router order (so UI shows them in priority order)
@@ -130,11 +134,32 @@ export const houseRoutes: RouteEntry[] = [
 
           const reported = gw?.getHealth().availableModels ?? []
           const curated = CURATED_MODELS[name] ?? []
-          // Merge: curated entries first (preserve their order + labels),
-          // then anything else the provider reports.
+          const pinnedList = merged.cloud[name as keyof typeof merged.cloud]?.pinnedModels ?? []
+          const pinnedSet = new Set(pinnedList)
+
+          // Merge order:
+          //   1. Pinned models (in the order the user pinned them)
+          //   2. Curated models not already pinned
+          //   3. Everything else the provider reported
           const seen = new Set<string>()
           const models: typeof providers[number]['models'] = []
+          const curatedLabel: Record<string, string | undefined> = {}
+          for (const c of curated) curatedLabel[c.id] = c.label
+
+          for (const id of pinnedList) {
+            if (seen.has(id)) continue
+            seen.add(id)
+            const ctx = getContextWindowSync(name, id)
+            models.push({
+              id,
+              contextMax: ctx.contextMax,
+              recommended: true,
+              pinned: true,
+              ...(curatedLabel[id] ? { label: curatedLabel[id] } : {}),
+            })
+          }
           for (const c of curated) {
+            if (seen.has(c.id)) continue
             seen.add(c.id)
             const ctx = getContextWindowSync(name, c.id)
             models.push({
@@ -147,7 +172,7 @@ export const houseRoutes: RouteEntry[] = [
           for (const id of reported) {
             if (seen.has(id)) continue
             const ctx = getContextWindowSync(name, id)
-            models.push({ id, contextMax: ctx.contextMax, recommended: false })
+            models.push({ id, contextMax: ctx.contextMax, recommended: false, pinned: pinnedSet.has(id) })
           }
           providers.push({ name, status, models })
           void PROVIDER_PROFILES

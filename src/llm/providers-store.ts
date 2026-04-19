@@ -19,6 +19,7 @@ export interface StoredCloudEntry {
   readonly apiKey?: string          // stored key (may be empty string)
   readonly enabled?: boolean        // default: true when apiKey present
   readonly maxConcurrent?: number   // override default in PROVIDER_PROFILES
+  readonly pinnedModels?: ReadonlyArray<string>  // user-pinned model IDs
 }
 
 export interface StoredOllamaEntry {
@@ -103,6 +104,10 @@ const validateShape = (raw: unknown, warnings: string[]): ProvidersFileShape => 
     if (typeof entry.maxConcurrent === 'number' && entry.maxConcurrent > 0) {
       (out as { maxConcurrent?: number }).maxConcurrent = entry.maxConcurrent
     }
+    if (Array.isArray(entry.pinnedModels)) {
+      const pins = (entry.pinnedModels as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 0)
+      if (pins.length > 0) (out as { pinnedModels?: ReadonlyArray<string> }).pinnedModels = pins
+    }
     cleaned[name] = out
   }
 
@@ -138,6 +143,7 @@ export interface MergedProviderEntry {
   readonly enabled: boolean
   readonly maxConcurrent: number | undefined    // undefined → use default from PROVIDER_PROFILES
   readonly maskedKey: string                    // safe for UI / logs
+  readonly pinnedModels: ReadonlyArray<string>  // [] when none
 }
 
 export interface MergedProviders {
@@ -187,6 +193,7 @@ export const mergeWithEnv = (
     cloud[name] = {
       apiKey, source, enabled, maxConcurrent,
       maskedKey: maskKey(apiKey),
+      pinnedModels: stored?.pinnedModels ?? [],
     }
   }
 

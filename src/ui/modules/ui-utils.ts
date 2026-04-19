@@ -146,6 +146,7 @@ export interface ModelCatalogModel {
   id: string
   contextMax: number
   recommended: boolean
+  pinned?: boolean
   running?: boolean
   label?: string
 }
@@ -234,8 +235,11 @@ export const populateModelSelect = async (
       opt.value = full
       const label = m.label ? `${m.id} — ${m.label}` : m.id
       const ctx = formatContext(m.contextMax)
-      const runTag = m.running ? ' ★' : ''
-      opt.textContent = ctx ? `${label} · ${ctx}${runTag}` : `${label}${runTag}`
+      const pinTag = m.pinned ? '★ ' : ''
+      const runTag = m.running ? ' (running)' : ''
+      opt.textContent = ctx
+        ? `${pinTag}${label} · ${ctx}${runTag}`
+        : `${pinTag}${label}${runTag}`
       if (prov.status === 'cooldown' || prov.status === 'down') opt.classList.add('text-gray-400')
       group.appendChild(opt)
       all.push(full)

@@ -13,6 +13,7 @@
 // ============================================================================
 
 import { showToast } from './ui-utils.ts'
+import { openModelsPopover } from './models-popover.ts'
 
 type Status = 'ok' | 'no_key' | 'cooldown' | 'down' | 'disabled'
 
@@ -110,12 +111,16 @@ const renderRow = (ctx: RowContext): HTMLElement => {
   const isCloud = entry.kind === 'cloud'
   const url = PROVIDER_URLS[entry.name] ?? '#'
 
-  // Provider name as an external-link anchor. Fixed-width column keeps the
-  // following key fields aligned across rows.
+  // Provider name: clickable link to its dashboard (no external-link glyph).
+  // A separate `[≡]` button opens the models popover.
   const nameCol = `
-    <a href="${url}" target="_blank" rel="noopener noreferrer"
-       class="w-24 shrink-0 font-medium text-gray-800 hover:text-blue-600 hover:underline inline-flex items-center gap-0.5"
-       title="Open ${entry.name} dashboard">${entry.name}<span class="text-[10px] text-gray-400">↗</span></a>
+    <div class="w-24 shrink-0 flex items-center gap-1">
+      <a href="${url}" target="_blank" rel="noopener noreferrer"
+         class="font-medium text-gray-800 hover:text-blue-600 hover:underline truncate"
+         title="Open ${entry.name} dashboard in a new tab">${entry.name}</a>
+      <button class="prov-models-btn text-gray-400 hover:text-gray-700 shrink-0"
+              title="Show available models">≡</button>
+    </div>
   `
 
   // Key field (cloud only). type=text so the stub is selectable and
@@ -291,6 +296,13 @@ export const renderProvidersPanel = (list: ProvidersResponse): void => {
     // Arrows
     row.querySelector<HTMLButtonElement>('.prov-up')?.addEventListener('click', () => moveUp(entry.name))
     row.querySelector<HTMLButtonElement>('.prov-down')?.addEventListener('click', () => moveDown(entry.name))
+
+    // Models popover
+    const modelsBtn = row.querySelector<HTMLButtonElement>('.prov-models-btn')
+    modelsBtn?.addEventListener('click', (e) => {
+      e.stopPropagation()
+      void openModelsPopover(modelsBtn, entry.name)
+    })
 
     // Status dot click → toggle user-enabled (requires a key, unless Ollama)
     row.querySelector<HTMLButtonElement>('.prov-dot-btn')?.addEventListener('click', async () => {
