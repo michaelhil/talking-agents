@@ -30,26 +30,32 @@ const isCloud = (name: string): name is CloudProviderName => knownCloudNames.has
 
 // === Status ===
 
+type ProviderStatus = 'ok' | 'no_key' | 'cooldown' | 'down' | 'disabled'
+
 interface ProviderStatusEntry {
   readonly name: string
   readonly kind: 'cloud' | 'ollama'
   readonly keyMask: string
   readonly source: 'env' | 'stored' | 'none'
-  readonly enabled: boolean
+  readonly enabled: boolean            // effective (has key AND userEnabled)
+  readonly userEnabled: boolean        // user intent, independent of key
+  readonly hasKey: boolean
   readonly maxConcurrent: number | null
   readonly cooldown: { readonly coldUntilMs: number; readonly reason: string } | null
-  readonly status: 'ok' | 'no_key' | 'cooldown' | 'down'
+  readonly status: ProviderStatus
 }
 
 const computeStatus = (
   kind: 'cloud' | 'ollama',
-  enabled: boolean,
+  hasKey: boolean,
+  userEnabled: boolean,
   cooldown: { coldUntilMs: number; reason: string } | null,
   circuitOpen: boolean,
-): 'ok' | 'no_key' | 'cooldown' | 'down' => {
+): ProviderStatus => {
+  if (!userEnabled) return 'disabled'
   if (circuitOpen) return 'down'
   if (cooldown) return 'cooldown'
-  if (kind === 'cloud' && !enabled) return 'no_key'
+  if (kind === 'cloud' && !hasKey) return 'no_key'
   return 'ok'
 }
 
@@ -72,28 +78,36 @@ export const providersRoutes: RouteEntry[] = [
         if (!m) continue
         const gw = system.gateways[name]
         const circuitOpen = !!(gw?.getHealth().status === 'down')
+        const hasKey = m.apiKey.length > 0
+        // Runtime user-enabled flag (may diverge from stored while we refactor).
+        const userEnabled = system.providerKeys.isUserEnabled(name)
         byName.set(name, {
           name, kind: 'cloud',
           keyMask: m.maskedKey,
           source: m.source,
-          enabled: m.enabled,
+          hasKey,
+          userEnabled,
+          enabled: hasKey && userEnabled,
           maxConcurrent: m.maxConcurrent ?? PROVIDER_PROFILES[name].defaultMaxConcurrent,
           cooldown: cooldowns[name] ?? null,
-          status: computeStatus('cloud', m.enabled, cooldowns[name] ?? null, circuitOpen),
+          status: computeStatus('cloud', hasKey, userEnabled, cooldowns[name] ?? null, circuitOpen),
         })
       }
 
-      // Ollama — no key concept
+      // Ollama — no key concept, but still has a user-enabled toggle.
       const ollamaGw = system.gateways.ollama
       const ollamaCircuitOpen = !!(ollamaGw?.getHealth().status === 'down')
+      const ollamaUserEnabled = merged.ollama.enabled
       byName.set('ollama', {
         name: 'ollama', kind: 'ollama',
         keyMask: '',
         source: 'none',
-        enabled: merged.ollama.enabled,
+        hasKey: true, // N/A — treat as "always keyed" so status reduces to user/cooldown/down
+        userEnabled: ollamaUserEnabled,
+        enabled: ollamaUserEnabled,
         maxConcurrent: merged.ollama.maxConcurrent ?? 2,
         cooldown: cooldowns.ollama ?? null,
-        status: computeStatus('ollama', merged.ollama.enabled, cooldowns.ollama ?? null, ollamaCircuitOpen),
+        status: computeStatus('ollama', true, ollamaUserEnabled, cooldowns.ollama ?? null, ollamaCircuitOpen),
       })
 
       // Emit in router order so the UI can just render top-to-bottom.
@@ -201,16 +215,22 @@ export const providersRoutes: RouteEntry[] = [
       // Apply immediately to the running system:
       //   - Cloud providers: mutate the in-memory keys registry; gateways pick
       //     up the new key on the next request.
-      //   - Ollama has no key concept — settings changes (enabled, maxConcurrent)
-      //     still require restart for now, but this is rare and we keep
-      //     `requiresRestart` honest for that case.
+      //   - Ollama: enabled/maxConcurrent changes need restart for now; keys
+      //     don't apply (no API key concept).
       let requiresRestart = false
       if (name !== 'ollama') {
         const nextKey = clearKey ? '' : (updated.apiKey ?? '')
         system.providerKeys.set(name, nextKey)
+        // Reflect the stored `enabled` flag in the runtime registry.
+        // Saving a fresh key auto-enables the provider (matches UI expectation
+        // that a successful save brings the provider online).
+        if (typeof body.enabled === 'boolean') {
+          system.providerKeys.setEnabled(name, body.enabled)
+        } else if (nextKey && !system.providerKeys.isUserEnabled(name)) {
+          // Implicit re-enable when user saves a key on a disabled provider.
+          system.providerKeys.setEnabled(name, true)
+        }
         // Fire-and-forget a model-list refresh so the dropdown populates.
-        // We don't await — PUT returns promptly and the WS broadcast below
-        // prompts the UI to refetch /api/models a moment later.
         const gw = system.gateways[name]
         if (gw && nextKey) {
           void gw.refreshModels().catch(() => { /* swallow — UI will surface */ })

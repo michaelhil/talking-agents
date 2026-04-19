@@ -14,7 +14,7 @@
 
 import { showToast } from './ui-utils.ts'
 
-type Status = 'ok' | 'no_key' | 'cooldown' | 'down'
+type Status = 'ok' | 'no_key' | 'cooldown' | 'down' | 'disabled'
 
 interface ProviderStatusEntry {
   name: string
@@ -22,9 +22,25 @@ interface ProviderStatusEntry {
   keyMask: string
   source: 'env' | 'stored' | 'none'
   enabled: boolean
+  userEnabled: boolean
+  hasKey: boolean
   maxConcurrent: number | null
   cooldown: { coldUntilMs: number; reason: string } | null
   status: Status
+}
+
+// Where to send users to get an API key. Top-level consoles are more stable
+// than deep-link API-keys pages. Maintained inline here — edit when dashboards
+// move.
+const PROVIDER_URLS: Record<string, string> = {
+  anthropic:  'https://console.anthropic.com',
+  gemini:     'https://aistudio.google.com',
+  cerebras:   'https://cloud.cerebras.ai',
+  groq:       'https://console.groq.com',
+  openrouter: 'https://openrouter.ai',
+  mistral:    'https://console.mistral.ai',
+  sambanova:  'https://cloud.sambanova.ai',
+  ollama:     'https://ollama.com',
 }
 
 interface ProvidersResponse {
@@ -36,38 +52,37 @@ interface ProvidersResponse {
   storeWarnings: string[]
 }
 
-const sourceBadge = (source: ProviderStatusEntry['source']): string => {
-  if (source === 'env') return `<span class="text-[10px] px-1 bg-gray-200 text-gray-700 rounded font-mono">ENV</span>`
-  if (source === 'stored') return `<span class="text-[10px] px-1 bg-blue-100 text-blue-700 rounded font-mono">STORED</span>`
-  return `<span class="text-[10px] px-1 bg-gray-100 text-gray-400 rounded font-mono">—</span>`
+const dotColourClass = (status: Status): string => {
+  if (status === 'ok') return 'bg-green-500'
+  if (status === 'cooldown') return 'bg-amber-400'
+  if (status === 'down') return 'bg-red-500'
+  // disabled + no_key both render as gray; disabled gets the slash overlay.
+  return 'bg-gray-300'
 }
 
-const statusDot = (status: Status): string => {
-  const cls =
-    status === 'ok'       ? 'bg-green-500' :
-    status === 'cooldown' ? 'bg-amber-400' :
-    status === 'down'     ? 'bg-red-500'   :
-                            'bg-gray-300'
-  const title =
-    status === 'ok'       ? 'ok'        :
-    status === 'cooldown' ? 'cooldown'  :
-    status === 'down'     ? 'down'      :
-                            'no key'
-  return `<span class="inline-block w-2 h-2 rounded-full ${cls}" title="${title}"></span>`
+const statusTooltip = (status: Status): string => {
+  if (status === 'ok') return 'ok — click to disable'
+  if (status === 'cooldown') return 'cooldown — click to disable'
+  if (status === 'down') return 'down — click to disable'
+  if (status === 'disabled') return 'disabled — click to enable'
+  return 'no key'
 }
 
-const statusText = (status: Status): string => {
-  const cls =
-    status === 'ok'       ? 'text-green-700' :
-    status === 'cooldown' ? 'text-amber-700' :
-    status === 'down'     ? 'text-red-700'   :
-                            'text-gray-400'
-  const text =
-    status === 'ok'       ? 'ok'      :
-    status === 'cooldown' ? 'cooldown':
-    status === 'down'     ? 'down'    :
-                            'no key'
-  return `<span class="text-[10px] ${cls}">${text}</span>`
+// Returns the `<button>` that holds the status dot + optional red slash.
+// The outer button is a larger click target (16×16) for comfort.
+const statusButton = (status: Status): string => {
+  const dot = `<span class="inline-block w-2.5 h-2.5 rounded-full ${dotColourClass(status)}"></span>`
+  const slash = status === 'disabled'
+    ? `<span class="absolute inset-0 flex items-center justify-center pointer-events-none"
+             aria-hidden="true"
+             style="transform: rotate(-45deg)">
+         <span class="block h-[2px] w-3.5 bg-red-500 rounded"></span>
+       </span>`
+    : ''
+  return `<button class="prov-dot-btn relative w-4 h-4 flex items-center justify-center shrink-0 cursor-pointer" title="${statusTooltip(status)}">
+    ${dot}
+    ${slash}
+  </button>`
 }
 
 // --- Row factory ---
@@ -85,7 +100,7 @@ interface RowContext {
 const renderRow = (ctx: RowContext): HTMLElement => {
   const { entry, position, orderLocked } = ctx
   const row = document.createElement('div')
-  row.className = 'border rounded px-2 py-1 bg-gray-50 flex items-center gap-1 flex-wrap'
+  row.className = 'border rounded px-2 py-1 bg-gray-50 flex items-center gap-2'
   row.dataset.provider = entry.name
 
   const locked = entry.source === 'env'
@@ -93,43 +108,61 @@ const renderRow = (ctx: RowContext): HTMLElement => {
   const mcFieldId = `prov-mc-${entry.name}`
 
   const isCloud = entry.kind === 'cloud'
+  const url = PROVIDER_URLS[entry.name] ?? '#'
 
-  const inputs = isCloud ? `
-    <input id="${keyFieldId}" type="password" placeholder="${entry.keyMask || 'paste key'}"
-           class="flex-1 min-w-[120px] px-2 py-0.5 border rounded font-mono"
+  // Provider name as an external-link anchor. Fixed-width column keeps the
+  // following key fields aligned across rows.
+  const nameCol = `
+    <a href="${url}" target="_blank" rel="noopener noreferrer"
+       class="w-24 shrink-0 font-medium text-gray-800 hover:text-blue-600 hover:underline inline-flex items-center gap-0.5"
+       title="Open ${entry.name} dashboard">${entry.name}<span class="text-[10px] text-gray-400">↗</span></a>
+  `
+
+  // Key field (cloud only). type=text so the stub is selectable and
+  // editable; value = current stub (empty when no key). Tab-out / blur
+  // triggers save. Fixed width so columns align.
+  const keyField = isCloud ? `
+    <input id="${keyFieldId}" type="text"
+           value="${entry.keyMask ?? ''}"
+           data-original="${entry.keyMask ?? ''}"
+           placeholder="paste key"
+           class="w-24 shrink-0 px-2 py-0.5 border rounded font-mono text-[11px]"
            ${locked ? 'disabled title="Key comes from environment variable"' : ''}>
-    <label class="text-gray-500 flex items-center gap-1">max
+  ` : `
+    <span class="w-24 shrink-0 text-[11px] text-gray-500 italic">local</span>
+  `
+
+  const maxField = `
+    <label class="text-gray-500 flex items-center gap-0.5 shrink-0">max
       <input id="${mcFieldId}" type="number" min="1" max="100"
              value="${entry.maxConcurrent ?? ''}"
-             class="w-12 px-1 py-0.5 border rounded">
+             data-original="${entry.maxConcurrent ?? ''}"
+             class="w-9 px-1 py-0.5 border rounded">
     </label>
-  ` : `
-    <span class="text-gray-500 flex-1">local · max <input id="${mcFieldId}" type="number" min="1" max="100" value="${entry.maxConcurrent ?? ''}" class="w-12 px-1 py-0.5 border rounded"></span>
   `
 
   const actionButtons = isCloud ? `
-    <button class="prov-save text-[11px] px-2 py-0.5 bg-blue-500 hover:bg-blue-600 text-white rounded" ${locked ? 'disabled' : ''}>Save</button>
-    <button class="prov-clear text-[11px] px-2 py-0.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded" ${locked || entry.source === 'none' ? 'disabled' : ''} title="Clear stored key">Clear</button>
-    <button class="prov-test text-[11px] px-2 py-0.5 bg-green-600 hover:bg-green-700 text-white rounded">Test</button>
+    <button class="prov-test text-[11px] px-2 py-0.5 bg-green-600 hover:bg-green-700 text-white rounded shrink-0">Test</button>
   ` : `
-    <button class="prov-save text-[11px] px-2 py-0.5 bg-blue-500 hover:bg-blue-600 text-white rounded">Save</button>
-    <button class="ollama-settings-btn text-[11px] px-2 py-0.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded">⚙ Settings</button>
+    <button class="ollama-settings-btn text-[11px] px-2 py-0.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded shrink-0">⚙ Settings</button>
   `
 
-  row.innerHTML = `
-    <div class="flex items-center gap-1.5 mr-1">
+  const arrows = `
+    <div class="flex items-center gap-1.5 shrink-0 ml-auto">
       <button class="prov-up text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
               ${position.isFirst || orderLocked ? 'disabled' : ''} title="Move up">▲</button>
       <button class="prov-down text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
               ${position.isLast || orderLocked ? 'disabled' : ''} title="Move down">▼</button>
     </div>
-    ${statusDot(entry.status)}
-    <span class="font-medium text-gray-800">${entry.name}</span>
-    ${sourceBadge(entry.source)}
-    ${inputs}
+  `
+
+  row.innerHTML = `
+    ${statusButton(entry.status)}
+    ${nameCol}
+    ${keyField}
+    ${maxField}
     ${actionButtons}
-    ${statusText(entry.status)}
-    <span class="prov-feedback text-[10px] text-gray-500 ml-1"></span>
+    ${arrows}
   `
   return row
 }
@@ -241,18 +274,14 @@ export const renderProvidersPanel = (list: ProvidersResponse): void => {
       }
       row.appendChild(details)
 
-      // Wire Ollama-specific Save (maxConcurrent).
+      // Ollama: blur on max triggers save.
       const mcField = row.querySelector<HTMLInputElement>(`#prov-mc-${entry.name}`)
-      row.querySelector<HTMLButtonElement>('.prov-save')?.addEventListener('click', async () => {
-        const body: Record<string, unknown> = {}
-        if (mcField?.value) {
-          const n = parseInt(mcField.value, 10)
-          if (Number.isFinite(n) && n > 0) body.maxConcurrent = n
-        }
-        const ok = await save('ollama', body)
-        const feedback = row.querySelector<HTMLElement>('.prov-feedback')
-        if (feedback) feedback.textContent = ok ? '✓ saved' : '✗ save failed'
-        setTimeout(() => { if (feedback) feedback.textContent = '' }, 2500)
+      mcField?.addEventListener('blur', async () => {
+        if ((mcField.dataset.original ?? '') === mcField.value) return
+        const n = parseInt(mcField.value, 10)
+        if (!Number.isFinite(n) || n <= 0) return
+        const ok = await save('ollama', { maxConcurrent: n })
+        showToast(document.body, ok ? `ollama: concurrency updated` : `ollama: save failed`, { type: ok ? 'success' : 'error', position: 'fixed' })
       })
       row.querySelector<HTMLButtonElement>('.ollama-settings-btn')?.addEventListener('click', () => {
         details.open = !details.open
@@ -263,40 +292,84 @@ export const renderProvidersPanel = (list: ProvidersResponse): void => {
     row.querySelector<HTMLButtonElement>('.prov-up')?.addEventListener('click', () => moveUp(entry.name))
     row.querySelector<HTMLButtonElement>('.prov-down')?.addEventListener('click', () => moveDown(entry.name))
 
-    // Cloud-provider Save/Clear/Test wiring
+    // Status dot click → toggle user-enabled (requires a key, unless Ollama)
+    row.querySelector<HTMLButtonElement>('.prov-dot-btn')?.addEventListener('click', async () => {
+      // No key on a cloud provider → show a nudge, don't toggle.
+      if (entry.kind === 'cloud' && !entry.hasKey) {
+        showToast(document.body, `Paste an ${entry.name} key first`, { type: 'error', position: 'fixed' })
+        return
+      }
+      const nextEnabled = !entry.userEnabled
+      const ok = await save(entry.name, { enabled: nextEnabled })
+      if (!ok) {
+        showToast(document.body, `${entry.name}: failed to ${nextEnabled ? 'enable' : 'disable'}`, { type: 'error', position: 'fixed' })
+      }
+      // `providers_changed` broadcast (fired by the PUT handler) will trigger
+      // the panel to re-render with the new status.
+    })
+
+    // Cloud-provider blur-triggered save + test; Test button still available
+    // for "validate without committing" on an unsaved typed value.
     if (entry.kind === 'cloud') {
       const keyField = row.querySelector<HTMLInputElement>(`#prov-key-${entry.name}`)
       const mcField = row.querySelector<HTMLInputElement>(`#prov-mc-${entry.name}`)
-      const feedback = row.querySelector<HTMLElement>('.prov-feedback')
 
-      row.querySelector<HTMLButtonElement>('.prov-save')?.addEventListener('click', async () => {
-        const body: Record<string, unknown> = {}
-        if (keyField?.value.trim()) body.apiKey = keyField.value.trim()
-        if (mcField?.value) {
-          const n = parseInt(mcField.value, 10)
-          if (Number.isFinite(n) && n > 0) body.maxConcurrent = n
+      // Blur on the key field — save if the value has changed.
+      keyField?.addEventListener('blur', async () => {
+        const original = keyField.dataset.original ?? ''
+        const current = keyField.value
+        if (current === original) return
+
+        const trimmed = current.trim()
+        if (trimmed === '') {
+          // Empty / whitespace → clear the stored key.
+          const ok = await save(entry.name, { apiKey: null })
+          showToast(document.body, ok
+            ? `${entry.name}: key cleared`
+            : `${entry.name}: clear failed`,
+            { type: ok ? 'success' : 'error', position: 'fixed' })
+          return
         }
-        const ok = await save(entry.name, body)
-        if (feedback) feedback.textContent = ok ? '✓ applied' : '✗ failed'
-        if (ok && keyField) keyField.value = ''
-        setTimeout(() => { if (feedback) feedback.textContent = '' }, 2500)
-      })
 
-      row.querySelector<HTMLButtonElement>('.prov-clear')?.addEventListener('click', async () => {
-        const ok = await save(entry.name, { apiKey: null })
-        if (feedback) feedback.textContent = ok ? '✓ cleared' : '✗ failed'
-        if (ok && keyField) keyField.value = ''
-        setTimeout(() => { if (feedback) feedback.textContent = '' }, 2500)
-      })
-
-      row.querySelector<HTMLButtonElement>('.prov-test')?.addEventListener('click', async () => {
-        if (feedback) feedback.textContent = 'testing…'
-        const pending = keyField?.value.trim()
-        const result = await testKey(entry.name, pending && pending.length > 0 ? pending : undefined)
+        // New value — save, then test the stored key end-to-end.
+        const savedOk = await save(entry.name, { apiKey: trimmed })
+        if (!savedOk) {
+          showToast(document.body, `${entry.name}: save failed`, { type: 'error', position: 'fixed' })
+          return
+        }
+        const result = await testKey(entry.name)
         if (result.ok) {
-          if (feedback) feedback.textContent = `✓ ${result.modelCount ?? 0} models · ${result.elapsedMs}ms`
+          showToast(document.body, `${entry.name}: saved & verified — ${result.modelCount ?? 0} models · ${result.elapsedMs}ms`, { type: 'success', position: 'fixed' })
         } else {
-          if (feedback) feedback.textContent = `✗ ${result.error ?? 'failed'}`
+          showToast(document.body, `${entry.name}: saved — test failed: ${result.error ?? 'unknown'}`, { type: 'error', position: 'fixed' })
+        }
+      })
+
+      // Blur on the max field — save if changed.
+      mcField?.addEventListener('blur', async () => {
+        const original = mcField.dataset.original ?? ''
+        if (mcField.value === original) return
+        const n = parseInt(mcField.value, 10)
+        if (!Number.isFinite(n) || n <= 0) return
+        const ok = await save(entry.name, { maxConcurrent: n })
+        showToast(document.body, ok
+          ? `${entry.name}: concurrency updated`
+          : `${entry.name}: save failed`,
+          { type: ok ? 'success' : 'error', position: 'fixed' })
+      })
+
+      // Test button: validates the typed value (or the stored key when no
+      // typed change). Posts a toast with the outcome.
+      row.querySelector<HTMLButtonElement>('.prov-test')?.addEventListener('click', async () => {
+        const typed = keyField?.value.trim()
+        const original = keyField?.dataset.original ?? ''
+        const pending = typed && typed !== original ? typed : undefined
+        showToast(document.body, `${entry.name}: testing…`, { position: 'fixed' })
+        const result = await testKey(entry.name, pending)
+        if (result.ok) {
+          showToast(document.body, `${entry.name}: ${result.modelCount ?? 0} models · ${result.elapsedMs}ms`, { type: 'success', position: 'fixed' })
+        } else {
+          showToast(document.body, `${entry.name}: ${result.error ?? 'test failed'}`, { type: 'error', position: 'fixed' })
         }
       })
     }
