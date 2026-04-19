@@ -15,6 +15,7 @@ export interface UIMessage {
   completionTokens?: number
   contextMax?: number
   provider?: string
+  model?: string
 }
 
 export interface RoomProfile {

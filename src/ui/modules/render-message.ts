@@ -64,10 +64,19 @@ export const renderMessage = (
 
     const timeEl = document.createElement('span')
     timeEl.className = 'text-xs text-gray-400'
-    timeEl.textContent = new Date(msg.timestamp).toLocaleTimeString()
+    // 24-hour HH:MM:SS — locale-invariant, no AM/PM.
+    timeEl.textContent = new Date(msg.timestamp).toLocaleTimeString('en-GB', { hour12: false })
 
     header.appendChild(nameEl)
     header.appendChild(timeEl)
+
+    if (msg.model) {
+      const modelEl = document.createElement('span')
+      modelEl.className = 'text-xs text-gray-400 font-mono'
+      modelEl.textContent = msg.model
+      modelEl.title = msg.provider ? `Model (via ${msg.provider})` : 'Model used for this message'
+      header.appendChild(modelEl)
+    }
 
     if (msg.generationMs) {
       const genEl = document.createElement('span')

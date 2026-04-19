@@ -71,6 +71,7 @@ export interface LLMCallMetrics {
   readonly completionTokens?: number
   readonly contextMax?: number
   readonly provider?: string
+  readonly model?: string
 }
 
 const streamWithRetry = async (
@@ -103,6 +104,7 @@ const streamWithRetry = async (
               completionTokens: chunk.tokensUsed?.completion,
               contextMax: chunk.contextMax,
               provider: chunk.provider,
+              model: request.model,
             }
           }
         }
@@ -123,6 +125,7 @@ const streamWithRetry = async (
           completionTokens: response.tokensUsed.completion,
           contextMax: response.contextMax,
           provider: response.provider,
+          model: request.model,
         },
       }
     } catch (err) {

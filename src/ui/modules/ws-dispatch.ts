@@ -58,6 +58,7 @@ const toUIMessage = (m: Message): UIMessage => {
     ...(typeof meta.completionTokens === 'number' ? { completionTokens: meta.completionTokens } : {}),
     ...(typeof meta.contextMax === 'number' ? { contextMax: meta.contextMax } : {}),
     ...(typeof meta.provider === 'string' ? { provider: meta.provider } : {}),
+    ...(typeof meta.model === 'string' ? { model: meta.model } : {}),
   }
 }
 

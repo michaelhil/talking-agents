@@ -152,6 +152,7 @@ export const spawnAIAgent = async (
     if (m.completionTokens !== undefined) metricsMeta.completionTokens = m.completionTokens
     if (m.contextMax !== undefined && m.contextMax > 0) metricsMeta.contextMax = m.contextMax
     if (m.provider) metricsMeta.provider = m.provider
+    if (m.model) metricsMeta.model = m.model
     const metadata = Object.keys(metricsMeta).length > 0 ? metricsMeta : undefined
 
     if (decision.response.action === 'respond') {
