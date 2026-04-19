@@ -259,9 +259,10 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
   const streamIdleTimeoutMs = config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS
 
   const headers = (): Record<string, string> => {
+    const key = config.getApiKey()
     const auth = config.authHeaders
       ? config.authHeaders()
-      : { Authorization: `Bearer ${config.getApiKey()}` }
+      : { Authorization: `Bearer ${key}` }
     return {
       'Content-Type': 'application/json',
       ...auth,
