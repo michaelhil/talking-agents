@@ -71,6 +71,12 @@ export interface ChatRequest {
   readonly tools?: ReadonlyArray<ToolDefinition>
   readonly think?: boolean
   readonly numCtx?: number
+  // Structured system-prompt blocks — opt-in, used only by providers that can
+  // attach cache markers (currently Anthropic). When present, the adapter
+  // emits the system message as an array of content parts with
+  // `cache_control` on the last cacheable block. Providers that don't
+  // understand the structured form fall back to `messages[0].content`.
+  readonly systemBlocks?: ReadonlyArray<{ readonly text: string; readonly cacheable?: boolean }>
 }
 
 export interface ChatResponse {
@@ -79,6 +85,10 @@ export interface ChatResponse {
   readonly tokensUsed: {
     readonly prompt: number
     readonly completion: number
+    // Anthropic-only: tokens written to / read from the prompt cache. Absent
+    // when the provider doesn't expose cache metrics or no cache was used.
+    readonly cacheCreation?: number
+    readonly cacheRead?: number
   }
   readonly toolCalls?: ReadonlyArray<NativeToolCall>
   readonly tokensPerSecond?: number

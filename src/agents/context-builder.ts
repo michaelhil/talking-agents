@@ -31,6 +31,9 @@ export interface ContextResult {
   readonly messages: ChatRequest['messages']
   readonly flushInfo: FlushInfo
   readonly warnings: ReadonlyArray<string>
+  // Structured system-prompt blocks, stable blocks first. Forwarded as
+  // ChatRequest.systemBlocks so Anthropic can attach cache_control markers.
+  readonly systemBlocks?: ReadonlyArray<{ readonly text: string; readonly cacheable: boolean }>
 }
 
 // === Format a single message for LLM context ===
@@ -365,45 +368,67 @@ const CTX_VARIABLE_KEYS: ReadonlyArray<SystemSectionKey> = [
   'ctx_knownAgents', 'ctx_participants', 'ctx_artifacts', 'ctx_flow',
 ]
 
-const buildSystemMessage = (
+// Produce the system prompt as an ordered list of blocks with a `cacheable`
+// flag. Stable blocks (HOUSE/ROOM/AGENT/SKILLS/RESPONSE_FORMAT + stable CONTEXT
+// subsections) are cacheable; the variable CONTEXT subsections are not.
+// Consumers that can't use cache markers simply join block texts.
+const buildSystemBlocks = (
   deps: BuildContextDeps,
   triggerRoomId: string,
-): string => {
+): ReadonlyArray<{ text: string; cacheable: boolean }> => {
   const sections = buildSystemSections(deps, triggerRoomId).filter(s => s.enabled)
   const byKey = new Map<SystemSectionKey, string>()
   for (const s of sections) byKey.set(s.key, s.text)
 
-  // Top-level prompt sections — stable, cacheable. Order: house → room →
-  // agent → skills → responseFormat (moved here from after CONTEXT so the
-  // cacheable prefix is maximised; RESPONSE_FORMAT content is stable across
-  // calls).
+  // Stable top-level prompt sections, in order.
   const promptOrder: ReadonlyArray<SystemSectionKey> = [
     'house', 'room', 'agent', 'skills', 'responseFormat',
   ]
-  const promptSections: string[] = []
+  const stableLines: string[] = []
   for (const key of promptOrder) {
     const text = byKey.get(key)
     if (text === undefined) continue
     const s = sections.find(x => x.key === key)!
-    promptSections.push(`=== ${s.label} ===\n${text}`)
+    stableLines.push(`=== ${s.label} ===\n${text}`)
   }
-
-  // Context block — stable sub-sections first, variable last.
-  const contextLines: string[] = []
+  // Stable CONTEXT subsections.
+  const stableCtx: string[] = []
   for (const key of CTX_STABLE_KEYS) {
     const text = byKey.get(key)
-    if (text) contextLines.push(text)
+    if (text) stableCtx.push(text)
   }
+  // Variable CONTEXT subsections.
+  const variableCtx: string[] = []
   for (const key of CTX_VARIABLE_KEYS) {
     const text = byKey.get(key)
-    if (text) contextLines.push(text)
+    if (text) variableCtx.push(text)
   }
-  const contextBlock = contextLines.length > 0
-    ? `=== CONTEXT ===\n${contextLines.join('\n\n')}`
-    : ''
 
-  return [...promptSections, contextBlock].filter(Boolean).join('\n\n')
+  const blocks: Array<{ text: string; cacheable: boolean }> = []
+  const stablePart = [...stableLines, stableCtx.length > 0 ? `=== CONTEXT ===\n${stableCtx.join('\n\n')}` : '']
+    .filter(Boolean).join('\n\n')
+  if (stablePart) blocks.push({ text: stablePart, cacheable: true })
+
+  if (variableCtx.length > 0) {
+    // If there was no stable CONTEXT, open a CONTEXT header here; otherwise
+    // the variable subsections extend the existing CONTEXT block visually
+    // (the stable part already has the header).
+    const needsHeader = stableCtx.length === 0
+    const text = needsHeader
+      ? `=== CONTEXT ===\n${variableCtx.join('\n\n')}`
+      : variableCtx.join('\n\n')
+    blocks.push({ text, cacheable: false })
+  }
+
+  return blocks
 }
+
+// Flat system message — joins all blocks. Kept for exports consumed by the
+// context preview API; buildContext inlines the join directly.
+export const buildSystemMessage = (
+  deps: BuildContextDeps,
+  triggerRoomId: string,
+): string => buildSystemBlocks(deps, triggerRoomId).map(b => b.text).filter(Boolean).join('\n\n')
 
 // === Token estimation ===
 // Rough heuristic: ~4 characters per token for English text.
@@ -427,7 +452,8 @@ export const buildContext = (
   const maxContextTokens = maxContextTokensArg ?? deps.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS
   const flushIds = new Set<string>()
 
-  const systemContent = buildSystemMessage(deps, triggerRoomId)
+  const systemBlocks = buildSystemBlocks(deps, triggerRoomId)
+  const systemContent = systemBlocks.map(b => b.text).filter(Boolean).join('\n\n')
 
   const chatMessages: ChatRequest['messages'][number][] = [
     { role: 'system' as const, content: systemContent },
@@ -506,5 +532,6 @@ export const buildContext = (
     messages: chatMessages,
     flushInfo: { ids: flushIds, triggerRoomId },
     warnings,
+    systemBlocks,
   }
 }

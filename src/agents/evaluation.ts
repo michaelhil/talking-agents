@@ -184,6 +184,7 @@ export const evaluate = async (
         temperature: config.temperature,
         tools: toolDefinitions,
         think: config.thinking,
+        ...(contextResult.systemBlocks ? { systemBlocks: contextResult.systemBlocks } : {}),
       }
 
       const streamResult = await streamWithRetry(llmProvider, config, request, onEvent, signal)

@@ -37,9 +37,19 @@ export interface OpenAICompatConfig {
 
 // === OpenAI wire types ===
 
+// Anthropic's OpenAI-compat endpoint accepts an array of content parts on a
+// message, where each part can carry a `cache_control` marker. We only emit
+// this shape when talking to Anthropic; other providers continue to get a
+// plain string in `content`.
+interface OAIContentPart {
+  type: 'text'
+  text: string
+  cache_control?: { type: 'ephemeral' }
+}
+
 interface OAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | null
+  content: string | ReadonlyArray<OAIContentPart> | null
   tool_calls?: ReadonlyArray<{
     id: string
     type: 'function'
@@ -58,6 +68,9 @@ interface OAIChatResponse {
     prompt_tokens?: number
     completion_tokens?: number
     total_tokens?: number
+    // Anthropic-specific. Passed through when present.
+    cache_creation_input_tokens?: number
+    cache_read_input_tokens?: number
   }
 }
 
@@ -156,15 +169,44 @@ const mapHttpError = (
 
 // === Request conversion ===
 
-const toOAIMessages = (request: ChatRequest): OAIMessage[] => {
-  const out: OAIMessage[] = request.messages.map(m => ({ role: m.role, content: m.content }))
-  return out
+const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[] => {
+  // Anthropic path: if systemBlocks are provided, emit the system message as
+  // an array of content parts with `cache_control: ephemeral` on the last
+  // cacheable block. Anthropic's caching is triggered by the marker and caches
+  // every token from message start up to (and including) that marker.
+  if (providerName === 'anthropic' && request.systemBlocks && request.systemBlocks.length > 0) {
+    const out: OAIMessage[] = []
+    const systemParts: OAIContentPart[] = []
+    // Find last cacheable block so we know where to put the single marker.
+    let lastCacheableIdx = -1
+    for (let i = 0; i < request.systemBlocks.length; i++) {
+      if (request.systemBlocks[i]!.cacheable) lastCacheableIdx = i
+    }
+    for (let i = 0; i < request.systemBlocks.length; i++) {
+      const block = request.systemBlocks[i]!
+      if (!block.text) continue
+      const part: OAIContentPart = { type: 'text', text: block.text }
+      if (i === lastCacheableIdx) part.cache_control = { type: 'ephemeral' }
+      systemParts.push(part)
+    }
+    if (systemParts.length > 0) {
+      out.push({ role: 'system', content: systemParts })
+    }
+    // Remaining non-system messages pass through as strings.
+    for (const m of request.messages) {
+      if (m.role === 'system') continue // superseded by systemParts above
+      out.push({ role: m.role, content: m.content })
+    }
+    return out
+  }
+  // Default path — plain strings.
+  return request.messages.map(m => ({ role: m.role, content: m.content }))
 }
 
-const buildOAIBody = (request: ChatRequest, stream: boolean): Record<string, unknown> => {
+const buildOAIBody = (request: ChatRequest, stream: boolean, providerName: string): Record<string, unknown> => {
   const body: Record<string, unknown> = {
     model: request.model,
-    messages: toOAIMessages(request),
+    messages: toOAIMessages(request, providerName),
     stream,
   }
   // Ask providers to include a final usage frame (supported by OpenAI, Groq,
@@ -230,7 +272,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
 
   const chat = async (request: ChatRequest): Promise<ChatResponse> => {
     const startMs = performance.now()
-    const body = buildOAIBody(request, false)
+    const body = buildOAIBody(request, false, config.name)
 
     const response = await fetchWithTimeout(
       `${config.baseUrl}/chat/completions`,
@@ -253,7 +295,14 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       })
     }
 
-    const rawContent = choice.message.content ?? ''
+    // Anthropic's OAI-compat response returns content as either a plain
+    // string or an array of content parts. Normalise to string.
+    const rawContentRaw = choice.message.content
+    const rawContent: string = typeof rawContentRaw === 'string'
+      ? rawContentRaw
+      : Array.isArray(rawContentRaw)
+        ? rawContentRaw.filter(p => p.type === 'text').map(p => p.text).join('')
+        : ''
     const { thinking, content } = splitThinkAndContent(rawContent)
     void thinking // thinking in non-streaming is discarded — samsinn only surfaces it during streaming
 
@@ -267,19 +316,23 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       : undefined
 
     const generationMs = Math.round(performance.now() - startMs)
+    const cacheCreation = data.usage?.cache_creation_input_tokens
+    const cacheRead = data.usage?.cache_read_input_tokens
     return {
       content,
       generationMs,
       tokensUsed: {
         prompt: data.usage?.prompt_tokens ?? 0,
         completion: data.usage?.completion_tokens ?? 0,
+        ...(cacheCreation !== undefined ? { cacheCreation } : {}),
+        ...(cacheRead !== undefined ? { cacheRead } : {}),
       },
       toolCalls,
     }
   }
 
   const stream = async function* (request: ChatRequest, externalSignal?: AbortSignal): AsyncIterable<StreamChunk> {
-    const body = buildOAIBody(request, true)
+    const body = buildOAIBody(request, true, config.name)
 
     const controller = new AbortController()
     let idleTimer = setTimeout(() => controller.abort(), streamIdleTimeoutMs)
