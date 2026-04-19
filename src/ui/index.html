@@ -131,10 +131,13 @@
         </div>
       </div>
 
-      <!-- Room info bar (mode info) -->
-      <div id="room-info-bar" class="px-3 flex items-center gap-3 h-5 hidden">
+      <!-- Room info bar (mode info — collapses when empty) -->
+      <div id="room-info-bar" class="px-3 flex items-center gap-3 hidden">
         <div id="room-mode-info" class="text-xs text-gray-400"></div>
       </div>
+
+      <!-- Room members (chip row + add button, shown only when a room is selected) -->
+      <div id="room-members" class="px-3 py-1.5 border-b bg-white flex flex-wrap gap-1 items-center hidden"></div>
 
       <!-- Agent inspector area (inline, replaces chat when viewing an agent) -->
       <div id="agent-area" class="flex-1 overflow-y-auto p-4 hidden"></div>

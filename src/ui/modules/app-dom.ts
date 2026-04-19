@@ -7,6 +7,7 @@ export const domRefs = {
   roomHeader: $('#room-header') as HTMLElement,
   roomNameEl: $('#room-name') as HTMLElement,
   roomInfoBar: $('#room-info-bar') as HTMLElement,
+  roomMembers: $('#room-members') as HTMLElement,
   roomsToggle: $('#rooms-toggle') as HTMLElement,
   roomsHeader: $('#rooms-header') as HTMLElement,
   agentList: $('#agent-list') as HTMLElement,

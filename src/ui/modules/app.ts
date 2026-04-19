@@ -8,6 +8,7 @@
 import { createWSClient, type WSClient } from './ws-client.ts'
 import { renderRooms, renderArtifacts } from './render-rooms.ts'
 import { renderAgents } from './render-agents.ts'
+import { mountRoomMembers, consumeAutoAddRoom, registerPendingCreateAdd, clearAutoAddRoom } from './render-room-members.ts'
 import { renderMessage } from './render-message.ts'
 import {
   updateThinkingPreview,
@@ -85,7 +86,7 @@ import { createThinkingController } from './app-thinking.ts'
 
 const {
   roomList, roomHeader, roomNameEl, roomInfoBar, roomsToggle, roomsHeader,
-  agentList, noRoomState, agentArea, chatArea, pinnedMessagesDiv,
+  agentList, roomMembers, noRoomState, agentArea, chatArea, pinnedMessagesDiv,
   workspaceBar, workspacePane, workspaceContent, workspaceLabel, workspaceAddRow,
   artifactInput, btnArtifactSubmit, messagesDiv, chatForm, chatInput,
   modeSelector, pauseToggle, roomModeInfo,
@@ -385,42 +386,37 @@ $roomListView.subscribe(({ rooms, selectedRoomId, pausedRooms, unreadCounts, gen
   roomsToggle.textContent = `▾ Rooms (${Object.keys(rooms).length})`
 })
 
-// --- Agent list (batched: agents + muted + identity + selection + members) ---
-$agentListView.subscribe(({ agents, mutedAgents, myAgentId, selectedAgentId, selectedRoomId, roomMemberIds }) => {
+// --- Agent list (batched: agents + identity + selection + members) ---
+// Per-room actions (add/remove/mute) live in the room-members chip row;
+// this sidebar list is now a read-only global registry with in-room tint.
+$agentListView.subscribe(({ agents, myAgentId, selectedAgentId, selectedRoomId, roomMemberIds }) => {
   renderAgents(agentList, {
     agents: agents as unknown as Record<string, AgentInfo>,
-    mutedAgentIds: mutedAgents,
     myAgentId,
     selectedAgentId,
-    selectedRoomId,
     roomMemberIds,
-    onToggleMute: (agentId, muted) => {
-      const roomId = $selectedRoomId.get()
-      if (!roomId) return
-      const roomName = roomIdToName(roomId)
-      const agentName = agentIdToName(agentId)
-      if (roomName && agentName) send({ type: 'set_muted', roomName, agentName, muted })
-    },
+    hasSelectedRoom: selectedRoomId !== null,
     onInspect: (agentId) => {
       $selectedRoomId.set(null)
       $selectedAgentId.set(agentId)
     },
-    onAddToRoom: (agentId) => {
-      const roomId = $selectedRoomId.get()
-      if (!roomId) return
-      const roomName = roomIdToName(roomId)
-      const agentName = agentIdToName(agentId)
-      if (roomName && agentName) send({ type: 'add_to_room', roomName, agentName })
-    },
-    onRemoveFromRoom: (agentId) => {
-      const roomId = $selectedRoomId.get()
-      if (!roomId) return
-      const roomName = roomIdToName(roomId)
-      const agentName = agentIdToName(agentId)
-      if (roomName && agentName) send({ type: 'remove_from_room', roomName, agentName })
-    },
   })
   updateAgentsLabel()
+})
+
+// --- Room members chip row (chip row + Add picker at top of room page) ---
+mountRoomMembers({
+  container: roomMembers,
+  send,
+  openCreateAgentModal: async () => {
+    const modelSelect = agentForm.querySelector('select[name="model"]') as HTMLSelectElement
+    agentModal.showModal()
+    await populateModelSelect(modelSelect)
+  },
+  inspectAgent: (agentId) => {
+    $selectedRoomId.set(null)
+    $selectedAgentId.set(agentId)
+  },
 })
 
 // --- Room selection: visibility, fetch data, render messages ---
@@ -781,9 +777,20 @@ agentForm.onsubmit = (e) => {
   const data = new FormData(agentForm)
   const rawTags = (data.get('tags') as string | null)?.trim() ?? ''
   const tags = rawTags ? rawTags.split(',').map(t => t.trim()).filter(Boolean) : undefined
-  send({ type: 'create_agent', config: { name: data.get('name') as string, model: data.get('model') as string, systemPrompt: data.get('systemPrompt') as string, ...(tags && tags.length > 0 ? { tags } : {}) } })
+  const agentName = data.get('name') as string
+  const autoAddRoom = consumeAutoAddRoom()
+  if (autoAddRoom) registerPendingCreateAdd(agentName, autoAddRoom)
+  send({ type: 'create_agent', config: { name: agentName, model: data.get('model') as string, systemPrompt: data.get('systemPrompt') as string, ...(tags && tags.length > 0 ? { tags } : {}) } })
   agentModal.close(); agentForm.reset()
 }
+
+// If the create-agent modal is closed without submitting, drop any pending
+// auto-add-to-room intent so it doesn't leak into the next open.
+agentModal.addEventListener('close', () => {
+  // Consuming clears it; we only need to clear if still set (i.e. cancel path,
+  // since submit already consumed it before close).
+  clearAutoAddRoom()
+})
 
 btnArtifactSubmit.onclick = (e) => { e.stopPropagation(); submitArtifact() }
 artifactInput.onkeydown = (e) => {
