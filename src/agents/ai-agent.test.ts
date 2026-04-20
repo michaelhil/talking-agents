@@ -13,7 +13,7 @@ import { createRoom } from '../core/room.ts'
 const makeConfig = (overrides?: Partial<AIAgentConfig>): AIAgentConfig => ({
   name: 'TestBot',
   model: 'test-model',
-  systemPrompt: 'You are a helpful test bot.',
+  persona: 'You are a helpful test bot.',
   historyLimit: 10,
   ...overrides,
 })

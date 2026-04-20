@@ -27,7 +27,7 @@ export const handleAgentCommand = async (msg: WSInbound, ctx: CommandContext): P
       const agent = system.team.getAgent(msg.name)
       const aiAgent = agent ? asAIAgent(agent) : undefined
       if (aiAgent) {
-        if (msg.systemPrompt) aiAgent.updateSystemPrompt(msg.systemPrompt)
+        if (msg.persona) aiAgent.updatePersona(msg.persona)
         if (msg.model) aiAgent.updateModel(msg.model)
         if (msg.includePrompts) aiAgent.updateIncludePrompts(msg.includePrompts)
         if (msg.includeContext) aiAgent.updateIncludeContext(msg.includeContext)

@@ -8,7 +8,7 @@ import type { ContextSection, IncludeContext, IncludePrompts, PromptSection } fr
 import type { ToolRegistry } from '../../core/types/tool.ts'
 import type { RouteEntry } from './types.ts'
 
-const PROMPT_SECTIONS: ReadonlyArray<PromptSection> = ['agent', 'room', 'house', 'responseFormat', 'skills']
+const PROMPT_SECTIONS: ReadonlyArray<PromptSection> = ['persona', 'room', 'house', 'responseFormat', 'skills']
 const CONTEXT_SECTIONS: ReadonlyArray<ContextSection> = ['participants', 'flow', 'artifacts', 'activity', 'knownAgents']
 
 // Compute approximate token cost of each registered tool's definition.
@@ -75,7 +75,7 @@ export const agentRoutes: RouteEntry[] = [
       }
       const aiAgent = asAIAgent(agent)
       if (aiAgent) {
-        detail.systemPrompt = aiAgent.getSystemPrompt()
+        detail.persona = aiAgent.getPersona()
         detail.model = aiAgent.getModel()
         detail.temperature = aiAgent.getTemperature()
         detail.historyLimit = aiAgent.getHistoryLimit()
@@ -108,8 +108,8 @@ export const agentRoutes: RouteEntry[] = [
     pattern: /^\/api\/agents$/,
     handler: async (req, _match, { system, broadcast, subscribeAgentState }) => {
       const body = await parseBody(req)
-      if (!body.name || !body.model || !body.systemPrompt) {
-        return errorResponse('name, model, and systemPrompt are required')
+      if (!body.name || !body.model || !body.persona) {
+        return errorResponse('name, model, and persona are required')
       }
       // Best-effort model validation — warn but don't block.
       // Use router-level model list (covers Ollama + cloud, prefixed) plus
@@ -125,7 +125,7 @@ export const agentRoutes: RouteEntry[] = [
         const agent = await system.spawnAIAgent({
           name: body.name as string,
           model: requestedModel,
-          systemPrompt: body.systemPrompt as string,
+          persona: body.persona as string,
           temperature: body.temperature as number | undefined,
           historyLimit: body.historyLimit as number | undefined,
         })
@@ -148,7 +148,7 @@ export const agentRoutes: RouteEntry[] = [
       const body = await parseBody(req)
       const aiAgent = asAIAgent(agent)
       if (aiAgent) {
-        if (body.systemPrompt) aiAgent.updateSystemPrompt(body.systemPrompt as string)
+        if (body.persona) aiAgent.updatePersona(body.persona as string)
         if (body.model) aiAgent.updateModel(body.model as string)
         if (body.temperature !== undefined) aiAgent.updateTemperature?.(body.temperature as number | undefined)
         if (body.historyLimit !== undefined) aiAgent.updateHistoryLimit?.(body.historyLimit as number)

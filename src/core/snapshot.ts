@@ -7,21 +7,9 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v3: House prompts are no longer persisted — defaults live in code.
-//     All tool calling is native (no text protocol).
-// v4: Per-agent Context & Prompts toggles (includePrompts, includeTools,
-//     maxHistoryChars). v3 snapshots are auto-migrated with defaults that
-//     preserve v3 behavior (all prompts on, tools on, no char cap).
-// v5: Extended Context panel — includePrompts.skills, includeContext,
-//     includeFlowStepPrompt, maxContextTokens. All additive; missing fields
-//     resolve to defaults at load that preserve v4 behavior.
-// v6: Removed maxHistoryChars and maxContextTokens. Context budget now comes
-//     exclusively from the model's context window (70% of modelMax, fallback
-//     8000 when unknown). v5 snapshots containing those fields still load —
-//     the factory ignores unknown keys on AIAgentConfig, so removal is a
-//     silent drop at load time.
-// v7: Adds system-wide `bookmarks: Bookmark[]`. Absent on v6 snapshots — the
-//     restore path resolves missing to []. Migration is a pure version bump.
+// v8: current. Older versions are rejected at load — no migration ladder.
+//     AIAgentConfig stores `persona` (renamed from systemPrompt); IncludePrompts
+//     uses `persona` key (renamed from `agent`).
 // ============================================================================
 
 import type { Agent, AIAgentConfig } from './types/agent.ts'
@@ -34,7 +22,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 7
+export const SNAPSHOT_VERSION = 8
 
 // --- Snapshot schema ---
 
@@ -55,7 +43,7 @@ export interface AgentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '7'
+  readonly version: '8'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>
@@ -128,7 +116,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const artifacts = system.house.artifacts.list({ includeResolved: true })
 
   return {
-    version: '7',
+    version: '8',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -146,46 +134,8 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
 const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
   raw.version === String(SNAPSHOT_VERSION)
 
-// --- Migration ---
-// v3 → v4: no stored fields, new toggles default to "current behavior"
-// (includePrompts all-true, includeTools true, maxHistoryChars undefined).
-// The factory resolves missing fields to these defaults, so migration only
-// needs to bump the version string; no shape changes required.
-const migrateV3ToV4 = (raw: Record<string, unknown>): Record<string, unknown> => {
-  if (raw.version !== '3') return raw
-  return { ...raw, version: '4' }
-}
-
-// v4 → v5: additive-only. New fields (includePrompts.skills, includeContext,
-// includeFlowStepPrompt, maxContextTokens) resolve to defaults at the
-// factory, so migration is a version bump.
-const migrateV4ToV5 = (raw: Record<string, unknown>): Record<string, unknown> => {
-  if (raw.version !== '4') return raw
-  return { ...raw, version: '5' }
-}
-
-// v5 → v6: removed maxHistoryChars, maxContextTokens. Old values linger in
-// the raw JSON; the factory ignores them on load. Version bump only.
-const migrateV5ToV6 = (raw: Record<string, unknown>): Record<string, unknown> => {
-  if (raw.version !== '5') return raw
-  return { ...raw, version: '6' }
-}
-
-// v6 → v7: additive — new `bookmarks` field defaults to [] when absent.
-// Restore path resolves missing to []. Version bump only.
-const migrateV6ToV7 = (raw: Record<string, unknown>): Record<string, unknown> => {
-  if (raw.version !== '6') return raw
-  return { ...raw, version: '7' }
-}
-
-const migrate = (raw: Record<string, unknown>): Record<string, unknown> => {
-  let out = raw
-  out = migrateV3ToV4(out)
-  out = migrateV4ToV5(out)
-  out = migrateV5ToV6(out)
-  out = migrateV6ToV7(out)
-  return out
-}
+// No migration ladder — v8 is a clean break (persona rename). Older
+// snapshots are rejected by isValidSnapshot and the server starts fresh.
 
 // --- Save / Load ---
 
@@ -203,8 +153,7 @@ export const loadSnapshot = async (path: string): Promise<SystemSnapshot | null>
 
   try {
     const text = await file.text()
-    const rawParsed = JSON.parse(text) as Record<string, unknown>
-    const raw = migrate(rawParsed)
+    const raw = JSON.parse(text) as Record<string, unknown>
 
     if (!isValidSnapshot(raw)) {
       console.warn(`Snapshot at "${path}" is incompatible (expected v${SNAPSHOT_VERSION}). Ignoring — delete the snapshot file to reset.`)

@@ -138,7 +138,7 @@ describe('WS Handler', () => {
 
   test('cancel_generation for AI agent succeeds with no error', async () => {
     const bot = createAIAgent(
-      { name: 'Bot', model: 'test', systemPrompt: 'You are a test bot.' },
+      { name: 'Bot', model: 'test', persona: 'You are a test bot.' },
       makeLLMProvider(),
       () => {},
     )

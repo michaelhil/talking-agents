@@ -27,42 +27,15 @@ describe('Snapshot', () => {
     try { await unlink(`${TEST_SNAPSHOT_PATH}.tmp`) } catch { /* ignore */ }
   })
 
-  describe('v3 → v4 migration', () => {
-    test('loads a v3 snapshot as v4 with no Context & Prompts fields set', async () => {
+  describe('old-version rejection', () => {
+    test('rejects any non-current snapshot version', async () => {
       await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
-      const v3Snapshot = {
-        version: '3',
-        timestamp: Date.now(),
-        rooms: [],
-        agents: [],
-        artifacts: [],
+      for (const v of ['3', '6', '7']) {
+        const stale = { version: v, timestamp: Date.now(), rooms: [], agents: [], artifacts: [] }
+        await Bun.write(TEST_SNAPSHOT_PATH, JSON.stringify(stale))
+        const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
+        expect(loaded).toBeNull()
       }
-      await Bun.write(TEST_SNAPSHOT_PATH, JSON.stringify(v3Snapshot))
-
-      const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
-      expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('7')
-      // Missing includePrompts/includeTools/maxHistoryChars on agents is
-      // expected — the factory resolves to defaults at spawn time.
-    })
-  })
-
-  describe('v6 → v7 migration (bookmarks)', () => {
-    test('loads a v6 snapshot as v7 with empty bookmarks', async () => {
-      await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
-      const v6Snapshot = {
-        version: '6',
-        timestamp: Date.now(),
-        rooms: [],
-        agents: [],
-        artifacts: [],
-      }
-      await Bun.write(TEST_SNAPSHOT_PATH, JSON.stringify(v6Snapshot))
-
-      const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
-      expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('7')
-      expect(loaded!.bookmarks ?? []).toEqual([])
     })
   })
 
@@ -106,7 +79,7 @@ describe('Snapshot', () => {
       const system = createTestSystem()
       const snapshot = serializeSystem(system)
 
-      expect(snapshot.version).toBe('7')
+      expect(snapshot.version).toBe('8')
       expect(snapshot.timestamp).toBeGreaterThan(0)
       expect(snapshot.rooms.length).toBe(1) // default Introductions room
       expect(snapshot.agents.length).toBe(0)
@@ -174,7 +147,7 @@ describe('Snapshot', () => {
 
       const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
       expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('7')
+      expect(loaded!.version).toBe('8')
       expect(loaded!.rooms.length).toBe(snapshot.rooms.length)
 
       const chatMsgs = loaded!.rooms[0]!.messages.filter(m => m.type === 'chat')

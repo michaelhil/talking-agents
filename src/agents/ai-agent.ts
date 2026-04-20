@@ -88,7 +88,7 @@ export const createAIAgent = (
 
   const cm = createConcurrencyManager(agentId)
 
-  let currentSystemPrompt: string = config.systemPrompt
+  let currentPersona: string = config.persona
   let currentModel: string = config.model
   let currentTemperature: number | undefined = config.temperature
   let currentThinking: boolean = config.thinking ?? false
@@ -99,7 +99,7 @@ export const createAIAgent = (
   let currentTags: ReadonlyArray<string> = config.tags ?? []
   // Context & Prompts toggles — resolve defaults to preserve current behavior
   const includePromptsState: Required<IncludePrompts> = {
-    agent: config.includePrompts?.agent ?? true,
+    persona: config.includePrompts?.persona ?? true,
     room: config.includePrompts?.room ?? true,
     house: config.includePrompts?.house ?? true,
     responseFormat: config.includePrompts?.responseFormat ?? true,
@@ -162,7 +162,7 @@ export const createAIAgent = (
 
   const contextDeps = (): BuildContextDeps => ({
     agentId,
-    systemPrompt: currentSystemPrompt,
+    persona: currentPersona,
     housePrompt: getHousePrompt?.(),
     responseFormat: getResponseFormat?.(),
     history: agentHistory,
@@ -208,7 +208,7 @@ export const createAIAgent = (
     const evalConfig = {
       ...config,
       model: currentModel,
-      systemPrompt: currentSystemPrompt,
+      persona: currentPersona,
       temperature: currentTemperature,
       thinking: currentThinking,
       historyLimit,
@@ -445,8 +445,8 @@ Respond with only the summary — no preamble or explanation.`
       currentTags = tags
       liveMetadata.tags = tags
     },
-    updateSystemPrompt: (prompt: string) => { currentSystemPrompt = prompt },
-    getSystemPrompt: () => currentSystemPrompt,
+    updatePersona: (persona: string) => { currentPersona = persona },
+    getPersona: () => currentPersona,
     updateModel: (model: string) => { currentModel = model },
     getModel: () => currentModel,
     getTemperature: () => currentTemperature,
@@ -514,7 +514,7 @@ Respond with only the summary — no preamble or explanation.`
     getConfig: () => ({
       ...config,
       model: currentModel,
-      systemPrompt: currentSystemPrompt,
+      persona: currentPersona,
       temperature: currentTemperature,
       historyLimit,
       tools: currentTools,

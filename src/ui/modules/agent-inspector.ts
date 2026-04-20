@@ -244,15 +244,15 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
 
     container.appendChild(header)
 
-    // --- Agent prompt (AI) or Description (human) ---
+    // --- Agent persona (AI) or Description (human) ---
     if (isAI) {
       const { container: promptContainer, textarea: promptTextarea } = createEditableField(
-        'Agent Prompt',
-        (agentRes.systemPrompt as string) ?? '',
+        'Agent Persona',
+        (agentRes.persona as string) ?? '',
         async (val) => {
           await safeFetchJson(`/api/agents/${enc}`, {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ systemPrompt: val }),
+            body: JSON.stringify({ persona: val }),
           })
         },
       )

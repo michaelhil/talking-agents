@@ -840,7 +840,7 @@ agentForm.onsubmit = (e) => {
   const agentName = data.get('name') as string
   const autoAddRoom = consumeAutoAddRoom()
   if (autoAddRoom) registerPendingCreateAdd(agentName, autoAddRoom)
-  send({ type: 'create_agent', config: { name: agentName, model: data.get('model') as string, systemPrompt: data.get('systemPrompt') as string, ...(tags && tags.length > 0 ? { tags } : {}) } })
+  send({ type: 'create_agent', config: { name: agentName, model: data.get('model') as string, persona: data.get('persona') as string, ...(tags && tags.length > 0 ? { tags } : {}) } })
   agentModal.close(); agentForm.reset()
 }
 

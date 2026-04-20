@@ -18,7 +18,7 @@ const mkHistory = (roomId: string, name: string, prompt?: string, messages: Mess
 
 const mkDeps = (overrides: Partial<BuildContextDeps> = {}): BuildContextDeps => ({
   agentId: 'agent-1',
-  systemPrompt: 'You are Alpha.',
+  persona: 'You are Alpha.',
   housePrompt: 'Be concise.',
   responseFormat: 'Reply in plain text.',
   history: mkHistory('room-1', 'General', 'Topic: weather.'),
@@ -54,8 +54,8 @@ describe('context-builder includePrompts', () => {
     expect(sys).toContain('=== YOUR IDENTITY ===')
   })
 
-  test('agent: false suppresses YOUR IDENTITY only', () => {
-    const result = buildContext(mkDeps({ includePrompts: { agent: false } }), 'room-1')
+  test('persona: false suppresses YOUR IDENTITY only', () => {
+    const result = buildContext(mkDeps({ includePrompts: { persona: false } }), 'room-1')
     const sys = result.messages[0]!.content
     expect(sys).not.toContain('=== YOUR IDENTITY ===')
     expect(sys).toContain('=== HOUSE RULES ===')
@@ -70,7 +70,7 @@ describe('context-builder includePrompts', () => {
 
   test('all four off: none of the four sections present; CONTEXT still emitted', () => {
     const result = buildContext(mkDeps({
-      includePrompts: { agent: false, room: false, house: false, responseFormat: false },
+      includePrompts: { persona: false, room: false, house: false, responseFormat: false },
     }), 'room-1')
     const sys = result.messages[0]!.content
     expect(sys).not.toContain('=== HOUSE RULES ===')
@@ -91,7 +91,7 @@ describe('context-builder includePrompts', () => {
   test('promptsEnabled: false excludes every prompt regardless of per-key flags', () => {
     const result = buildContext(mkDeps({
       promptsEnabled: false,
-      includePrompts: { agent: true, room: true, house: true, responseFormat: true, skills: true },
+      includePrompts: { persona: true, room: true, house: true, responseFormat: true, skills: true },
     }), 'room-1')
     const sys = result.messages[0]!.content
     expect(sys).not.toContain('=== HOUSE RULES ===')
@@ -116,7 +116,7 @@ describe('buildSystemSections', () => {
     const byKey = Object.fromEntries(sections.map(s => [s.key, s]))
     expect(byKey.house?.enabled).toBe(true)
     expect(byKey.room?.enabled).toBe(true)
-    expect(byKey.agent?.enabled).toBe(true)
+    expect(byKey.persona?.enabled).toBe(true)
     expect(byKey.responseFormat?.enabled).toBe(true)
     expect(byKey.skills?.enabled).toBe(false) // getSkills not provided
     expect(byKey.ctx_newHint?.optional).toBe(false)

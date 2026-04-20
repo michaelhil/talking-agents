@@ -11,7 +11,7 @@ import { openModal } from './modal.ts'
 // --- Shared types ---
 
 export interface AgentData {
-  systemPrompt?: string
+  persona?: string
   tools?: string[]
   rooms?: string[]
 }
@@ -40,7 +40,7 @@ export interface ContextPreview {
 
 // Prompt and context key definitions — ordering drives render order.
 export const PROMPT_KEYS = [
-  { code: 'agent',          section: 'agent',          label: 'Agent prompt' },
+  { code: 'persona',        section: 'persona',        label: 'Agent persona' },
   { code: 'room',           section: 'room',           label: 'Room prompt' },
   { code: 'house',          section: 'house',          label: 'System prompt' },
   { code: 'responseFormat', section: 'responseFormat', label: 'Response format' },
@@ -207,7 +207,7 @@ export const buildPromptsGroup = (deps: GroupDeps): HTMLElement => {
         await patchAgent({ includePrompts: { [p.code]: next } })
         await rerender()
       },
-      p.code === 'agent'
+      p.code === 'persona'
         ? () => {
             promptTextarea.scrollIntoView({ behavior: 'smooth', block: 'center' })
             promptTextarea.classList.add('ring-2', 'ring-blue-400')

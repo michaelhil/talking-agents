@@ -41,12 +41,12 @@ export interface Agent {
 
 // Per-agent toggles controlling which prompt sections are injected into the
 // LLM system message. UI labels map to config keys as:
-//   UI "Agent prompt"    → `agent`          (the per-agent systemPrompt)
+//   UI "Agent persona"   → `persona`        (the per-agent persona string)
 //   UI "Room prompt"     → `room`           (the trigger room's roomPrompt)
 //   UI "System prompt"   → `house`          (global housePrompt — NOT the LLM `role:'system'`)
 //   UI "Response format" → `responseFormat` (global responseFormat)
 // All default true; undefined at load → preserve current behavior.
-export type PromptSection = 'agent' | 'room' | 'house' | 'responseFormat' | 'skills'
+export type PromptSection = 'persona' | 'room' | 'house' | 'responseFormat' | 'skills'
 export type IncludePrompts = Partial<Record<PromptSection, boolean>>
 
 // Sub-sections inside the generated CONTEXT block. Default all true; undefined
@@ -58,8 +58,8 @@ export type IncludeContext = Partial<Record<ContextSection, boolean>>
 
 export interface AIAgent extends Agent {
   readonly whenIdle: (timeoutMs?: number) => Promise<void>
-  readonly updateSystemPrompt: (prompt: string) => void
-  readonly getSystemPrompt: () => string
+  readonly updatePersona: (persona: string) => void
+  readonly getPersona: () => string
   readonly updateModel: (model: string) => void
   readonly getModel: () => string
   readonly cancelGeneration: () => void
@@ -163,7 +163,7 @@ export type RouteMessage = (target: MessageTarget, params: PostParams) => Readon
 export interface AIAgentConfig {
   readonly name: string
   readonly model: string
-  readonly systemPrompt: string
+  readonly persona: string
   readonly temperature?: number
   readonly historyLimit?: number
   readonly tools?: ReadonlyArray<string>        // tool names this agent can use
@@ -173,7 +173,7 @@ export interface AIAgentConfig {
   readonly thinking?: boolean                    // enable model CoT (qwen3 thinking mode)
   readonly compressionThreshold?: number        // history length triggering LLM compression (default: 3 × historyLimit)
   // Context & Prompts toggles — all default true; undefined preserves current behavior
-  readonly includePrompts?: IncludePrompts      // per-section prompt inclusion (agent/room/house/responseFormat/skills)
+  readonly includePrompts?: IncludePrompts      // per-section prompt inclusion (persona/room/house/responseFormat/skills)
   readonly includeContext?: IncludeContext      // CONTEXT sub-sections (participants/flow/artifacts/activity/knownAgents)
   readonly includeFlowStepPrompt?: boolean      // include [Step instruction: ...] suffix on flow messages (default: true)
   readonly includeTools?: boolean               // master: send tool definitions to LLM (default: true)

@@ -19,7 +19,7 @@ export type WSInbound =
   | {
       readonly type: 'update_agent'
       readonly name: string
-      readonly systemPrompt?: string
+      readonly persona?: string
       readonly model?: string
       readonly includePrompts?: IncludePrompts
       readonly includeContext?: IncludeContext

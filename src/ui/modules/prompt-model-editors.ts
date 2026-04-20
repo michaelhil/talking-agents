@@ -1,5 +1,5 @@
 // ============================================================================
-// Prompt & Model Editor Modals — Edit agent system prompt and model.
+// Persona & Model Editor Modals — Edit agent persona and model.
 // ============================================================================
 
 import { createModal, createButtonRow, createTextarea } from './modal.ts'
@@ -13,11 +13,11 @@ export const openPromptEditor = (
     .then(res => res.ok ? res.json() : null)
     .then(data => {
       if (!data) return
-      const modal = createModal({ title: `System Prompt — ${agentName}` })
-      const textarea = createTextarea(data.systemPrompt ?? '')
+      const modal = createModal({ title: `Persona — ${agentName}` })
+      const textarea = createTextarea(data.persona ?? '')
       const buttons = createButtonRow(
         modal.close,
-        () => { send({ type: 'update_agent', name: agentName, systemPrompt: textarea.value }); modal.close() },
+        () => { send({ type: 'update_agent', name: agentName, persona: textarea.value }); modal.close() },
       )
       modal.body.appendChild(textarea)
       modal.body.appendChild(buttons)

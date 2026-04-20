@@ -260,7 +260,7 @@ In the **Create Agent** modal (or via API), list tool names in the `tools` field
 {
   "name": "Researcher",
   "model": "qwen2.5:14b",
-  "systemPrompt": "You are a research assistant...",
+  "persona": "You are a research assistant...",
   "tools": ["get_time", "query_agent", "delegate", "list_todos", "add_todo", "update_todo", "arxiv_search", "fetch_url"]
 }
 ```
@@ -448,7 +448,7 @@ Base URL: `http://localhost:3000`
 | `GET` | `/api/agents` | List agents |
 | `POST` | `/api/agents` | Create AI agent |
 | `GET` | `/api/agents/:name` | Agent details (includes `tags` for both AI and human) |
-| `PATCH` | `/api/agents/:name` | Update system prompt / model / tags / description |
+| `PATCH` | `/api/agents/:name` | Update persona / model / tags / description |
 | `DELETE` | `/api/agents/:name` | Remove agent |
 | `GET` | `/api/agents/:name/rooms` | Rooms agent is in |
 | `POST` | `/api/agents/:name/cancel` | Cancel active generation |
@@ -487,7 +487,7 @@ On connection, the server sends a `snapshot` message with the full current state
 { type: 'remove_from_room'; roomName: string; agentName: string }
 { type: 'create_agent';     config: AIAgentConfig }
 { type: 'remove_agent';     name: string }
-{ type: 'update_agent';     name: string; systemPrompt?: string; model?: string }
+{ type: 'update_agent';     name: string; persona?: string; model?: string }
 { type: 'set_delivery_mode'; roomName: string; mode: 'broadcast' | 'manual' }
 { type: 'activate_agent';   roomName: string; agentName: string }
 { type: 'set_paused';       roomName: string; paused: boolean }

@@ -105,7 +105,7 @@ export const getParticipantsForRoom = (
 
 export interface BuildContextDeps {
   readonly agentId: string
-  readonly systemPrompt: string
+  readonly persona: string
   readonly housePrompt?: string
   readonly responseFormat?: string
   readonly history: AgentHistory
@@ -124,7 +124,7 @@ export interface BuildContextDeps {
 }
 
 const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePrompts> => ({
-  agent: inc?.agent ?? true,
+  persona: inc?.persona ?? true,
   room: inc?.room ?? true,
   house: inc?.house ?? true,
   responseFormat: inc?.responseFormat ?? true,
@@ -216,7 +216,7 @@ export interface SystemSection {
 }
 
 export type SystemSectionKey =
-  | 'house' | 'room' | 'agent' | 'responseFormat' | 'skills'
+  | 'house' | 'room' | 'persona' | 'responseFormat' | 'skills'
   | 'ctx_intro'       // "You are in room X" — always emitted
   | 'ctx_flow'
   | 'ctx_participants'
@@ -233,7 +233,7 @@ export const buildSystemSections = (
   const contextEnabled = deps.contextEnabled ?? true
   const includes = promptsEnabled
     ? resolveIncludes(deps.includePrompts)
-    : { agent: false, room: false, house: false, responseFormat: false, skills: false }
+    : { persona: false, room: false, house: false, responseFormat: false, skills: false }
   const ctxIncludes = contextEnabled
     ? resolveIncludeContext(deps.includeContext)
     : { participants: false, flow: false, artifacts: false, activity: false, knownAgents: false }
@@ -257,10 +257,10 @@ export const buildSystemSections = (
   })
 
   out.push({
-    key: 'agent',
+    key: 'persona',
     label: 'YOUR IDENTITY',
-    text: deps.systemPrompt,
-    enabled: includes.agent,
+    text: deps.persona,
+    enabled: includes.persona,
     optional: true,
   })
 
@@ -389,7 +389,7 @@ const buildSystemBlocks = (
 
   // Stable top-level prompt sections, in order.
   const promptOrder: ReadonlyArray<SystemSectionKey> = [
-    'house', 'room', 'agent', 'skills', 'responseFormat',
+    'house', 'room', 'persona', 'skills', 'responseFormat',
   ]
   const stableLines: string[] = []
   for (const key of promptOrder) {

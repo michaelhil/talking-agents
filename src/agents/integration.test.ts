@@ -83,7 +83,7 @@ describe('Integration — Full message lifecycle', () => {
     const provider = makeRespondProvider('Hello from AI!')
     const decisions: Decision[] = []
     const agent = createAIAgent(
-      { name: 'Bot', model: 'mock', systemPrompt: 'Be helpful.' },
+      { name: 'Bot', model: 'mock', persona: 'Be helpful.' },
       provider,
       (d) => {
         decisions.push(d)
@@ -129,7 +129,7 @@ describe('Integration — Full message lifecycle', () => {
 
     const provider = makePassProvider('nothing to add')
     const agent = createAIAgent(
-      { name: 'Quiet', model: 'mock', systemPrompt: 'Stay quiet.' },
+      { name: 'Quiet', model: 'mock', persona: 'Stay quiet.' },
       provider,
       () => {}, // no-op onDecision for pass
     )
@@ -166,7 +166,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Bot', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Bot', model: 'mock', persona: 'Test.' },
       provider,
       () => {},
     )
@@ -227,7 +227,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Bot', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Bot', model: 'mock', persona: 'Test.' },
       provider,
       (d) => {
         if (d.response.action === 'respond') {
@@ -276,7 +276,7 @@ describe('Integration — Full message lifecycle', () => {
 
     const decisionsA: Decision[] = []
     const agentA = createAIAgent(
-      { name: 'AgentA', model: 'mock', systemPrompt: 'Respond.' },
+      { name: 'AgentA', model: 'mock', persona: 'Respond.' },
       providerA,
       (d) => {
         decisionsA.push(d)
@@ -294,7 +294,7 @@ describe('Integration — Full message lifecycle', () => {
 
     const decisionsB: Decision[] = []
     const agentB = createAIAgent(
-      { name: 'AgentB', model: 'mock', systemPrompt: 'Acknowledge.' },
+      { name: 'AgentB', model: 'mock', persona: 'Acknowledge.' },
       providerB,
       (d) => { decisionsB.push(d) },
     )
@@ -356,7 +356,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Joiner', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Joiner', model: 'mock', persona: 'Test.' },
       provider,
       () => {},
     )
@@ -397,7 +397,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Observer', model: 'mock', systemPrompt: 'Observe.' },
+      { name: 'Observer', model: 'mock', persona: 'Observe.' },
       provider,
       () => {},
     )
@@ -450,7 +450,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Multi', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Multi', model: 'mock', persona: 'Test.' },
       provider,
       () => {},
     )
@@ -501,7 +501,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'Bot', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Bot', model: 'mock', persona: 'Test.' },
       provider,
       () => {},
     )
@@ -541,7 +541,7 @@ describe('Integration — Full message lifecycle', () => {
     }
 
     const agent = createAIAgent(
-      { name: 'StateBot', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'StateBot', model: 'mock', persona: 'Test.' },
       provider,
       () => {},
     )
@@ -580,7 +580,7 @@ describe('Integration — spawnAIAgent full wiring', () => {
 
     const provider = makeRespondProvider('Spawned response!')
     const agent = await spawnAIAgent(
-      { name: 'Spawned', model: 'mock', systemPrompt: 'Respond.' },
+      { name: 'Spawned', model: 'mock', persona: 'Respond.' },
       provider, house, team, routeMessage,
     )
 
@@ -607,7 +607,7 @@ describe('Integration — spawnAIAgent full wiring', () => {
 
     const provider = makePassProvider()
     const agent = await spawnAIAgent(
-      { name: 'Joiner', model: 'mock', systemPrompt: 'Test.' },
+      { name: 'Joiner', model: 'mock', persona: 'Test.' },
       provider, house, team, routeMessage,
     )
 
@@ -657,7 +657,7 @@ describe('Integration — spawnAIAgent full wiring', () => {
     await spawnHumanAgent(human, house, team, routeMessage, [intro])
 
     const agent = await spawnAIAgent(
-      { name: 'ToolBot', model: 'mock', systemPrompt: 'Use tools.', tools: ['get_time'] },
+      { name: 'ToolBot', model: 'mock', persona: 'Use tools.', tools: ['get_time'] },
       provider, house, team, routeMessage, toolRegistry,
     )
     await addAgentToRoom(agent.id, agent.name, intro.profile.id, undefined, team, routeMessage, house)
@@ -690,7 +690,7 @@ describe('Integration — spawnAIAgent full wiring', () => {
     await human.join(room)
 
     const bot = createAIAgent(
-      { name: 'Bot', model: 'mock', systemPrompt: 'Help.' },
+      { name: 'Bot', model: 'mock', persona: 'Help.' },
       makePassProvider(),
       () => {},
     )
@@ -826,7 +826,7 @@ describe('Integration — AI Agent with real Ollama', () => {
       {
         name: 'Analyst',
         model: FAST_MODEL,
-        systemPrompt: 'You are a data analyst. Be concise.',
+        persona: 'You are a data analyst. Be concise.',
       },
       ollamaProvider, house, team, routeMessage,
     )
@@ -860,7 +860,7 @@ describe('Integration — AI Agent with real Ollama', () => {
       {
         name: 'Responder',
         model: FAST_MODEL,
-        systemPrompt: 'You are a friendly assistant. Always respond to questions concisely. Never pass. Always target the room you are in.',
+        persona: 'You are a friendly assistant. Always respond to questions concisely. Never pass. Always target the room you are in.',
       },
       ollamaProvider, house, team, routeMessage,
     )

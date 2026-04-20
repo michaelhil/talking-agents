@@ -55,12 +55,12 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
     {
       name: z.string().describe('Agent name'),
       model: z.string().describe('Model ID. Cloud models are provider-prefixed: "anthropic:claude-haiku-4-5", "gemini:gemini-2.5-flash", "groq:llama-3.3-70b-versatile", etc. Ollama models are bare: "llama3.2" or "qwen2.5:14b". Call GET /api/models for the live list.'),
-      systemPrompt: z.string().describe('System prompt defining the agent personality and behavior'),
+      persona: z.string().describe('Persona defining who the agent is and how it should behave'),
       temperature: z.number().optional().describe('LLM temperature (0-1)'),
     },
-    async ({ name, model, systemPrompt, temperature }) => {
+    async ({ name, model, persona, temperature }) => {
       try {
-        const agent = await system.spawnAIAgent({ name, model, systemPrompt, temperature })
+        const agent = await system.spawnAIAgent({ name, model, persona, temperature })
         return textResult({ id: agent.id, name: agent.name })
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to create agent')
@@ -82,7 +82,7 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
         }
         const aiAgent = asAIAgent(agent)
         if (aiAgent) {
-          detail.systemPrompt = aiAgent.getSystemPrompt()
+          detail.persona = aiAgent.getPersona()
           detail.model = aiAgent.getModel()
         }
         return textResult(detail)
@@ -108,19 +108,19 @@ export const registerAgentTools = (mcpServer: McpServer, system: System): void =
   )
 
   mcpServer.tool(
-    'update_agent_prompt',
-    'Update an AI agent system prompt',
+    'update_agent_persona',
+    'Update an AI agent persona',
     {
       name: z.string().describe('Agent name'),
-      systemPrompt: z.string().describe('New system prompt'),
+      persona: z.string().describe('New persona'),
     },
-    async ({ name, systemPrompt }) => {
+    async ({ name, persona }) => {
       try {
         const agent = resolveAgent(system, name)
-        if (agent.kind !== 'ai' || !('updateSystemPrompt' in agent)) {
+        if (agent.kind !== 'ai' || !('updatePersona' in agent)) {
           return errorResult('Only AI agents can be updated')
         }
-        ;(agent as AIAgent).updateSystemPrompt(systemPrompt)
+        ;(agent as AIAgent).updatePersona(persona)
         return textResult({ updated: true, name: agent.name })
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'Failed to update agent')
