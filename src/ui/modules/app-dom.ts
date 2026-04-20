@@ -40,6 +40,12 @@ export const domRefs = {
   macroChipName: $('#macro-chip-name') as HTMLElement,
   macroChipStep: $('#macro-chip-step') as HTMLElement,
   btnMacroStop: $('#btn-macro-stop') as HTMLButtonElement,
+  // Summary & compression group
+  summaryGroup: $('#summary-group') as HTMLElement,
+  btnSummaryToggle: $('#btn-summary-toggle') as HTMLButtonElement,
+  btnSummarySettings: $('#btn-summary-settings') as HTMLButtonElement,
+  btnSummaryInspect: $('#btn-summary-inspect') as HTMLButtonElement,
+  btnSummaryRegenerate: $('#btn-summary-regenerate') as HTMLButtonElement,
   roomModeInfo: $('#room-mode-info') as HTMLElement,
   nameModal: $('#name-modal') as HTMLDialogElement,
   nameForm: $('#name-form') as HTMLFormElement,

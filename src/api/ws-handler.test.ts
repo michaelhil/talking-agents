@@ -76,6 +76,19 @@ const makeSystem = (): System => {
     setOnProviderAllFailed: () => {},
     setOnProviderStreamFailed: () => {},
     dispatchProviderEvent: () => {},
+    summaryScheduler: {
+      onMessagePosted: () => {},
+      onConfigChanged: () => {},
+      onRoomRemoved: () => {},
+      triggerNow: async () => {},
+      isRunning: () => false,
+      dispose: () => {},
+    },
+    setOnSummaryRunStarted: () => {},
+    setOnSummaryRunDelta: () => {},
+    setOnSummaryRunCompleted: () => {},
+    setOnSummaryRunFailed: () => {},
+    setOnSummaryConfigChanged: () => {},
   } as unknown as System
 }
 

@@ -38,6 +38,13 @@ import {
 } from './ollama-dashboard.ts'
 import { startProvidersPanel, stopProvidersPanel } from './providers-panel.ts'
 import {
+  openSummarySettingsModal,
+  openSummaryInspectModal,
+  isSummaryGroupExpanded,
+  toggleSummaryGroup,
+} from './summary-panel.ts'
+import type { SummaryConfig } from '../../core/types/summary.ts'
+import {
   $myAgentId,
   $myName,
   $sessionToken,
@@ -93,6 +100,7 @@ const {
   roomStatusDot, btnModeBroadcast, btnModeManual,
   btnMacroPicker, btnMacroList, btnMacroNext, btnMacroCreate,
   macroChip, macroChipName, macroChipStep, btnMacroStop,
+  btnSummaryToggle, btnSummarySettings, btnSummaryInspect, btnSummaryRegenerate,
   roomModeInfo,
   nameModal, nameForm, roomModal, roomForm, agentModal, agentForm,
   sidebar, btnCollapseSidebar,
@@ -324,6 +332,13 @@ const refreshRoomControls = (): void => {
   btnMacroList.classList.toggle('hidden', !expanded)
   btnMacroNext.classList.toggle('hidden', !expanded)
   btnMacroCreate.classList.toggle('hidden', !expanded)
+
+  // Summary group expand state (per-room)
+  const summaryExpanded = roomId ? isSummaryGroupExpanded(roomId) : false
+  btnSummaryToggle.setAttribute('aria-pressed', summaryExpanded ? 'true' : 'false')
+  btnSummarySettings.classList.toggle('hidden', !summaryExpanded)
+  btnSummaryInspect.classList.toggle('hidden', !summaryExpanded)
+  btnSummaryRegenerate.classList.toggle('hidden', !summaryExpanded)
 
   // Disabled states inside the group
   const noMacros = macros.length === 0
@@ -861,6 +876,50 @@ btnMacroPicker.onclick = (e) => {
   if (wasOpen) closeMacroListPopover()
   macroGroupExpanded.set(roomId, !wasOpen)
   refreshRoomControls()
+}
+
+// --- Summary group: toggle expand + sub-actions ---
+btnSummaryToggle.onclick = (e) => {
+  e.stopPropagation()
+  const roomId = $selectedRoomId.get()
+  if (!roomId) return
+  toggleSummaryGroup(roomId)
+  refreshRoomControls()
+}
+
+btnSummarySettings.onclick = async (e) => {
+  e.stopPropagation()
+  const roomId = $selectedRoomId.get()
+  if (!roomId) return
+  const roomName = roomIdToName(roomId)
+  if (!roomName) return
+  try {
+    const resp = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/summary-config`)
+    if (!resp.ok) throw new Error(await resp.text())
+    const cfg = await resp.json() as SummaryConfig
+    openSummarySettingsModal(roomName, cfg, { send })
+  } catch (err) {
+    showToast(document.body, `Failed to load summary config: ${err instanceof Error ? err.message : String(err)}`, { type: 'error', position: 'fixed' })
+  }
+}
+
+btnSummaryInspect.onclick = (e) => {
+  e.stopPropagation()
+  const roomId = $selectedRoomId.get()
+  if (!roomId) return
+  const roomName = roomIdToName(roomId)
+  if (!roomName) return
+  void openSummaryInspectModal(roomName, { send })
+}
+
+btnSummaryRegenerate.onclick = (e) => {
+  e.stopPropagation()
+  const roomId = $selectedRoomId.get()
+  if (!roomId) return
+  const roomName = roomIdToName(roomId)
+  if (!roomName) return
+  send({ type: 'regenerate_summary', roomName, target: 'both' })
+  showToast(document.body, 'Regenerating summary + compression…', { position: 'fixed', durationMs: 2500 })
 }
 
 // --- Macro list popover (opened by 📋 button) ---

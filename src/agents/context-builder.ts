@@ -53,7 +53,7 @@ export const formatMessage = (
     const suffix = staleRef ? '\n[↩ context compressed]' : ''
     return { role: 'assistant' as const, content: `${msg.content}${suffix}` }
   }
-  const name = resolveName(msg.senderId)
+  const name = msg.type === 'room_summary' ? 'Room Summary' : resolveName(msg.senderId)
   const stepLine = stepPrompt && includeMacroStepPrompt ? `\n[Step instruction: ${stepPrompt}]` : ''
   return { role: 'user' as const, content: `${prefix}[${name}]: ${msg.content}${stepLine}` }
 }

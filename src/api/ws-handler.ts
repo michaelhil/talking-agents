@@ -107,6 +107,36 @@ export const createWSManager = (system: System): WSManager => {
     })
   })
 
+  // Summary + compression — config changes and run lifecycle.
+  const roomNameFor = (roomId: string): string | null =>
+    system.house.getRoom(roomId)?.profile.name ?? null
+
+  system.setOnSummaryConfigChanged((roomId, config) => {
+    const roomName = roomNameFor(roomId)
+    if (!roomName) return
+    broadcast({ type: 'summary_config_changed', roomName, config })
+  })
+  system.setOnSummaryRunStarted((roomId, target) => {
+    const roomName = roomNameFor(roomId)
+    if (!roomName) return
+    broadcast({ type: 'summary_run_started', roomName, target })
+  })
+  system.setOnSummaryRunDelta((roomId, target, delta) => {
+    const roomName = roomNameFor(roomId)
+    if (!roomName) return
+    broadcast({ type: 'summary_run_delta', roomName, target, delta })
+  })
+  system.setOnSummaryRunCompleted((roomId, target, text) => {
+    const roomName = roomNameFor(roomId)
+    if (!roomName) return
+    broadcast({ type: 'summary_run_completed', roomName, target, text })
+  })
+  system.setOnSummaryRunFailed((roomId, target, reason) => {
+    const roomName = roomNameFor(roomId)
+    if (!roomName) return
+    broadcast({ type: 'summary_run_failed', roomName, target, reason })
+  })
+
   // Subscribe-based ollama metrics push (keyed by agent ID)
   const metricsSubscribers = new Set<string>()
   let metricsPushTimer: ReturnType<typeof setInterval> | undefined

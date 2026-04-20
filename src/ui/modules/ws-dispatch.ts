@@ -42,6 +42,12 @@ import type { WSOutbound } from '../../core/types/ws-protocol.ts'
 import type { Message, AgentProfile, RoomProfile as ServerRoomProfile } from '../../core/types/messaging.ts'
 import type { Artifact } from '../../core/types/artifact.ts'
 import { showToast, roomNameToId } from './ui-utils.ts'
+import {
+  handleSummaryRunStarted,
+  handleSummaryRunDelta,
+  handleSummaryRunCompleted,
+  handleSummaryRunFailed,
+} from './summary-panel.ts'
 
 // --- Pending create hooks ---
 // Callers (e.g. the Macro create flow) register a hook keyed by requestId
@@ -537,6 +543,30 @@ const handlers: Handlers = {
     // CustomEvent so subscribers (agent-modal, inspector, editor) can opt in
     // without tight coupling to this dispatcher.
     window.dispatchEvent(new CustomEvent('providers-changed'))
+  },
+
+  // --- Summary + compression ---
+
+  summary_config_changed(_msg) {
+    // Room config is server-authoritative; the settings modal re-fetches on open.
+    // No store write needed unless we want to surface the current config elsewhere.
+  },
+
+  summary_run_started(msg) {
+    handleSummaryRunStarted(msg.roomName, msg.target)
+  },
+
+  summary_run_delta(msg) {
+    handleSummaryRunDelta(msg.roomName, msg.target, msg.delta)
+  },
+
+  summary_run_completed(msg) {
+    handleSummaryRunCompleted(msg.roomName, msg.target, msg.text)
+  },
+
+  summary_run_failed(msg) {
+    handleSummaryRunFailed(msg.roomName, msg.target, msg.reason)
+    showToast(document.body, `Summary (${msg.target}) failed: ${msg.reason}`, { type: 'error', position: 'fixed' })
   },
 
   // --- Errors ---

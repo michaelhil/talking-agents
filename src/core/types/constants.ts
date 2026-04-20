@@ -6,5 +6,4 @@ export const DEFAULTS = {
   port: 3000,
   ollamaBaseUrl: 'http://127.0.0.1:11434',
   historyLimit: 10,
-  roomMessageLimit: 500,
 } as const

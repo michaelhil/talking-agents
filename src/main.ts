@@ -10,8 +10,12 @@ import type { DeliverFn, ResolveAgentName, ResolveTagFn } from './core/types/mes
 import type {
   House, HouseCallbacks, OnBookmarksChanged, OnDeliveryModeChanged, OnMacroEvent,
   OnMacroSelectionChanged, OnMembershipChanged, OnMessagePosted, OnModeAutoSwitched,
-  OnRoomCreated, OnRoomDeleted, OnTurnChanged,
+  OnRoomCreated, OnRoomDeleted, OnSummaryConfigChanged, OnSummaryUpdated,
+  OnTurnChanged,
 } from './core/types/room.ts'
+import type { SummaryScheduler, SummaryTarget } from './core/summary-scheduler.ts'
+import { createSummaryEngine } from './core/summary-engine.ts'
+import { createSummaryScheduler } from './core/summary-scheduler.ts'
 import type { OnArtifactChanged } from './core/types/artifact.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
 import type { ToolRegistry } from './core/types/tool.ts'
@@ -113,6 +117,14 @@ export interface System {
   // Dispatch entry point for the provider router (wired in Phase 4 via
   // router.onRoutingEvent(system.dispatchProviderEvent)).
   readonly dispatchProviderEvent: (event: ProviderRoutingEvent) => void
+  // Summary + compression scheduler (per-room). Exposed so REST/WS can call
+  // triggerNow() for manual regenerate.
+  readonly summaryScheduler: SummaryScheduler
+  readonly setOnSummaryRunStarted: (cb: (roomId: string, target: SummaryTarget) => void) => void
+  readonly setOnSummaryRunDelta: (cb: (roomId: string, target: SummaryTarget, delta: string) => void) => void
+  readonly setOnSummaryRunCompleted: (cb: (roomId: string, target: SummaryTarget, text: string) => void) => void
+  readonly setOnSummaryRunFailed: (cb: (roomId: string, target: SummaryTarget, reason: string) => void) => void
+  readonly setOnSummaryConfigChanged: (cb: OnSummaryConfigChanged) => void
 }
 
 export interface CreateSystemOptions {
@@ -160,6 +172,12 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const providerBound = lateBinding<OnProviderBound>()
   const providerAllFailed = lateBinding<OnProviderAllFailed>()
   const providerStreamFailed = lateBinding<OnProviderStreamFailed>()
+  const summaryConfigChanged = lateBinding<OnSummaryConfigChanged>()
+  const summaryUpdated = lateBinding<OnSummaryUpdated>()
+  const summaryRunStarted = lateBinding<(roomId: string, target: SummaryTarget) => void>()
+  const summaryRunDelta = lateBinding<(roomId: string, target: SummaryTarget, delta: string) => void>()
+  const summaryRunCompleted = lateBinding<(roomId: string, target: SummaryTarget, text: string) => void>()
+  const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>()
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
@@ -189,27 +207,61 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
         setCurrent: () => {},
       }
 
+  // Forward-declared: the summary scheduler is built after `house`, but the
+  // house's onMessagePosted callback needs to feed into it. We bridge with a
+  // mutable slot that's set after construction.
+  let schedulerRef: SummaryScheduler | undefined
+
   const houseCallbacks: HouseCallbacks = {
     deliver,
     resolveAgentName,
     resolveTag,
     resolveKind,
-    onMessagePosted: messagePosted.proxy,
+    onMessagePosted: (roomId, message) => {
+      messagePosted.proxy(roomId, message)
+      schedulerRef?.onMessagePosted(roomId, message)
+    },
     onTurnChanged: turnChanged.proxy,
     onDeliveryModeChanged: deliveryModeChanged.proxy,
     onMacroEvent: macroEvent.proxy,
     onArtifactChanged: artifactChanged.proxy,
     onRoomCreated: roomCreated.proxy,
-    onRoomDeleted: roomDeleted.proxy,
+    onRoomDeleted: (roomId, roomName) => {
+      roomDeleted.proxy(roomId, roomName)
+      schedulerRef?.onRoomRemoved(roomId)
+    },
     onBookmarksChanged: bookmarksChanged.proxy,
     onManualModeEntered: (roomId: string) => { cancelGenerationsInRoom(roomId) },
     onModeAutoSwitched: modeAutoSwitched.proxy,
     onMacroSelectionChanged: macroSelectionChanged.proxy,
+    onSummaryConfigChanged: (roomId, config) => {
+      summaryConfigChanged.proxy(roomId, config)
+      schedulerRef?.onConfigChanged(roomId)
+    },
+    onSummaryUpdated: summaryUpdated.proxy,
     callSystemLLM: (options) => callLLM(llm, options),
   }
   const house = createHouse(houseCallbacks)
   const routeMessage = createMessageRouter({ house })
   const toolRegistry = createToolRegistry()
+
+  // Summary engine + scheduler — default model is the first AI agent's model,
+  // or a fallback when none exists yet.
+  const defaultSummaryModel = (): string => {
+    const firstAi = team.listByKind('ai')[0]
+    const model = firstAi ? (firstAi as AIAgent).getModel?.() : undefined
+    return model ?? 'llama3.2'
+  }
+  const summaryEngine = createSummaryEngine({ llm, defaultModel: defaultSummaryModel })
+  const summaryScheduler = createSummaryScheduler({
+    engine: summaryEngine,
+    getRoom: (id) => house.getRoom(id),
+    onRunStarted: (roomId, target) => summaryRunStarted.proxy(roomId, target),
+    onRunDelta: (roomId, target, delta) => summaryRunDelta.proxy(roomId, target, delta),
+    onRunCompleted: (roomId, target, text) => summaryRunCompleted.proxy(roomId, target, text),
+    onRunFailed: (roomId, target, reason) => summaryRunFailed.proxy(roomId, target, reason),
+  })
+  schedulerRef = summaryScheduler
 
   // Register built-in artifact types — task_list needs store reference for checkAutoResolve
   house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
@@ -450,6 +502,12 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
         providerStreamFailed.proxy(event.agentId, event.model, event.provider, event.reason)
       }
     },
+    summaryScheduler,
+    setOnSummaryRunStarted: summaryRunStarted.set,
+    setOnSummaryRunDelta: summaryRunDelta.set,
+    setOnSummaryRunCompleted: summaryRunCompleted.set,
+    setOnSummaryRunFailed: summaryRunFailed.set,
+    setOnSummaryConfigChanged: summaryConfigChanged.set,
   }
 }
 

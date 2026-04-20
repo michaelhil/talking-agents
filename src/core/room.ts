@@ -30,10 +30,12 @@ import type {
 } from './types/messaging.ts'
 import type { Macro } from './types/macro.ts'
 import type {
-  OnDeliveryModeChanged, OnMacroEvent, OnMessagePosted, OnTurnChanged,
-  Room, RoomRestoreParams, RoomState,
+  OnDeliveryModeChanged, OnMacroEvent, OnMessagePosted, OnSummaryConfigChanged,
+  OnSummaryUpdated, OnTurnChanged, Room, RoomRestoreParams, RoomState,
 } from './types/room.ts'
-import { DEFAULTS, SYSTEM_SENDER_ID } from './types/constants.ts'
+import type { SummaryConfig } from './types/summary.ts'
+import { DEFAULT_SUMMARY_CONFIG } from './types/summary.ts'
+import { SYSTEM_SENDER_ID } from './types/constants.ts'
 import { parseAddressedAgents } from './addressing.ts'
 import { advanceMacroStep, buildMacroStepContext, deliverBroadcast, deliverMacroStep } from './delivery-modes.ts'
 import { createMacroRunState } from './macro-runs.ts'
@@ -49,19 +51,19 @@ export interface RoomCallbacks {
   readonly onMacroEvent?: OnMacroEvent
   readonly onManualModeEntered?: (roomId: string) => void
   readonly onModeAutoSwitched?: (roomId: string, toMode: DeliveryMode, reason: 'second-ai-joined') => void
+  readonly onSummaryConfigChanged?: OnSummaryConfigChanged
+  readonly onSummaryUpdated?: OnSummaryUpdated
 }
 
 export const createRoom = (
   initialProfile: RoomProfile,
   callbacks?: RoomCallbacks,
-  maxMessages?: number,
 ): Room => {
   let profile = initialProfile
   const messages: Message[] = []
   const compressedIds = new Set<string>()
   const members = new Set<string>()
   const muted = new Set<string>()
-  const messageLimit = maxMessages ?? DEFAULTS.roomMessageLimit
 
   const deliver = callbacks?.deliver
   const resolveAgentName = callbacks?.resolveAgentName
@@ -72,6 +74,8 @@ export const createRoom = (
   let mode: DeliveryMode = 'broadcast'
   let paused = false
   let selectedMacroId: string | undefined
+  let summaryConfig: SummaryConfig = DEFAULT_SUMMARY_CONFIG
+  let latestSummary: string | undefined
 
   const macroRunState = createMacroRunState(profile.id, callbacks?.onMacroEvent)
 
@@ -142,11 +146,6 @@ export const createRoom = (
 
     if (params.senderId !== SYSTEM_SENDER_ID && params.type !== 'join' && params.type !== 'leave') {
       members.add(params.senderId)
-    }
-
-    if (messages.length > messageLimit) {
-      const pruned = messages.splice(0, messages.length - messageLimit)
-      for (const msg of pruned) compressedIds.add(msg.id)
     }
 
     const nonDeliverable = message.type === 'system' || message.type === 'mute' || message.type === 'room_summary'
@@ -438,6 +437,8 @@ export const createRoom = (
         members: [...members],
         ...(run ? { activeMacroRun: { macroId: run.macro.id, stepIndex: run.stepIndex } } : {}),
         ...(selectedMacroId ? { selectedMacroId } : {}),
+        summaryConfig,
+        ...(latestSummary ? { latestSummary } : {}),
       }
     },
 
@@ -458,6 +459,42 @@ export const createRoom = (
 
     getCompressedIds: (): ReadonlySet<string> => new Set(compressedIds),
 
+    get summaryConfig() { return summaryConfig },
+    setSummaryConfig: (cfg: SummaryConfig): void => {
+      summaryConfig = cfg
+      callbacks?.onSummaryConfigChanged?.(profile.id, cfg)
+    },
+    getLatestSummary: (): string | undefined => latestSummary,
+    setLatestSummary: (text: string): void => {
+      latestSummary = text
+      callbacks?.onSummaryUpdated?.(profile.id, 'summary')
+    },
+    replaceCompression: (oldestIds: ReadonlyArray<string>, newText: string): Message => {
+      // Remove previous room_summary (if present anywhere in the stream).
+      const prevIdx = messages.findIndex(m => m.type === 'room_summary')
+      if (prevIdx !== -1) messages.splice(prevIdx, 1)
+      // Drop the compressed messages from the delivery stream; flag tombstones.
+      const idSet = new Set(oldestIds)
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (idSet.has(messages[i]!.id)) messages.splice(i, 1)
+      }
+      for (const id of oldestIds) compressedIds.add(id)
+      const summaryMessage: Message = {
+        id: crypto.randomUUID(),
+        roomId: profile.id,
+        senderId: SYSTEM_SENDER_ID,
+        senderName: 'System',
+        content: newText,
+        timestamp: Date.now(),
+        type: 'room_summary',
+      }
+      messages.unshift(summaryMessage)
+      callbacks?.onSummaryUpdated?.(profile.id, 'compression')
+      return summaryMessage
+    },
+    getCurrentCompressionMessage: (): Message | undefined =>
+      messages.find(m => m.type === 'room_summary'),
+
     restoreState: (state: RoomRestoreParams): void => {
       members.clear()
       for (const id of state.members) members.add(id)
@@ -470,6 +507,8 @@ export const createRoom = (
         for (const id of state.compressedIds) compressedIds.add(id)
       }
       selectedMacroId = state.selectedMacroId
+      if (state.summaryConfig) summaryConfig = state.summaryConfig
+      if (state.latestSummary !== undefined) latestSummary = state.latestSummary
     },
   }
 }

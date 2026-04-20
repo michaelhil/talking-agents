@@ -155,6 +155,19 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
       }))
       return true
     }
+    case 'set_summary_config': {
+      const room = requireRoom(ws, system, msg.roomName)
+      if (!room) return true
+      room.setSummaryConfig(msg.config)
+      // The onSummaryConfigChanged callback broadcasts summary_config_changed.
+      return true
+    }
+    case 'regenerate_summary': {
+      const room = requireRoom(ws, system, msg.roomName)
+      if (!room) return true
+      void system.summaryScheduler.triggerNow(room.profile.id, msg.target)
+      return true
+    }
     default:
       return false
   }

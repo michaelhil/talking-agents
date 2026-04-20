@@ -164,36 +164,6 @@ describe('Room — self-contained component', () => {
     expect(ids.size).toBe(100)
   })
 
-  test('evicts oldest messages when exceeding maxMessages', () => {
-    const room = createRoom(makeProfile(), undefined, 5)
-
-    for (let i = 0; i < 8; i++) {
-      room.post({ senderId: 'alice', content: `msg-${i}`, type: 'chat' })
-    }
-
-    expect(room.getMessageCount()).toBe(5)
-    const recent = room.getRecent(10)
-    expect(recent[0]!.content).toBe('msg-3')
-    expect(recent[4]!.content).toBe('msg-7')
-  })
-
-  test('eviction does not affect member tracking', () => {
-    const room = createRoom(makeProfile(), undefined, 3)
-
-    room.post({ senderId: 'alice', content: 'a', type: 'chat' })
-    room.post({ senderId: 'bob', content: 'b', type: 'chat' })
-    room.post({ senderId: 'charlie', content: 'c', type: 'chat' })
-    room.post({ senderId: 'dave', content: 'd', type: 'chat' })
-    room.post({ senderId: 'dave', content: 'e', type: 'chat' })
-    room.post({ senderId: 'dave', content: 'f', type: 'chat' })
-
-    expect(room.hasMember('alice')).toBe(true)
-    expect(room.hasMember('bob')).toBe(true)
-    expect(room.hasMember('charlie')).toBe(true)
-    expect(room.hasMember('dave')).toBe(true)
-    expect(room.getParticipantIds()).toHaveLength(4)
-  })
-
   // === Member management ===
 
   test('addMember adds without requiring a post', () => {

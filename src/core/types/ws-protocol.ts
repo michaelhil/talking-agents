@@ -3,11 +3,12 @@
 
 import type { Message, MessageTarget, RoomProfile, AgentProfile, DeliveryMode } from './messaging.ts'
 import type { AIAgentConfig, IncludeContext, IncludePrompts, StateValue } from './agent.ts'
-import type { RoomState } from './room.ts'
+import type { RoomState, SummaryTarget } from './room.ts'
 import type { Artifact } from './artifact.ts'
 import type { EvalEvent } from './agent-eval.ts'
 import type { MacroEventDetails, MacroEventName } from './macro.ts'
 import type { OllamaHealth, GatewayMetrics } from './llm.ts'
+import type { SummaryConfig } from './summary.ts'
 
 export type WSInbound =
   | { readonly type: 'post_message'; readonly target: MessageTarget; readonly content: string }
@@ -54,6 +55,9 @@ export type WSInbound =
   | { readonly type: 'delete_room'; readonly roomName: string }
   | { readonly type: 'delete_message'; readonly roomName: string; readonly messageId: string }
   | { readonly type: 'clear_messages'; readonly roomName: string }
+  // Summary + compression
+  | { readonly type: 'set_summary_config'; readonly roomName: string; readonly config: SummaryConfig }
+  | { readonly type: 'regenerate_summary'; readonly roomName: string; readonly target: 'summary' | 'compression' | 'both' }
 
 export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
@@ -89,3 +93,9 @@ export type WSOutbound =
   // Fired after the providers admin endpoint applies a live key change. UI
   // listeners refresh their model-list dropdowns without a reload.
   | { readonly type: 'providers_changed'; readonly providers: ReadonlyArray<string> }
+  // Summary + compression
+  | { readonly type: 'summary_config_changed'; readonly roomName: string; readonly config: SummaryConfig }
+  | { readonly type: 'summary_run_started'; readonly roomName: string; readonly target: SummaryTarget }
+  | { readonly type: 'summary_run_delta'; readonly roomName: string; readonly target: SummaryTarget; readonly delta: string }
+  | { readonly type: 'summary_run_completed'; readonly roomName: string; readonly target: SummaryTarget; readonly text: string }
+  | { readonly type: 'summary_run_failed'; readonly roomName: string; readonly target: SummaryTarget; readonly reason: string }

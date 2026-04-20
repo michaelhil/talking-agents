@@ -7,8 +7,11 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v10: current. Older versions are rejected at load — no migration ladder.
-//      v10 adds RoomSnapshot.selectedMacroId (sticky per-room macro selection).
+// v11: current. Older versions are rejected at load — no migration ladder.
+//      v11 adds RoomSnapshot.summaryConfig + latestSummary. Also removes the
+//      cap-based message pruning path, so compressedIds are only populated by
+//      the summary-engine's replaceCompression() now.
+//      v10 added RoomSnapshot.selectedMacroId (sticky per-room macro selection).
 //      v9 had the flow→macro rename + delivery mode reduction to broadcast/manual.
 // ============================================================================
 
@@ -16,13 +19,14 @@ import type { Agent, AIAgentConfig } from './types/agent.ts'
 import type { Artifact } from './types/artifact.ts'
 import type { DeliveryMode, Message, RoomProfile } from './types/messaging.ts'
 import type { Bookmark, Room } from './types/room.ts'
+import type { SummaryConfig } from './types/summary.ts'
 import { asAIAgent } from '../agents/shared.ts'
 import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 10
+export const SNAPSHOT_VERSION = 11
 
 // --- Snapshot schema ---
 
@@ -35,6 +39,8 @@ export interface RoomSnapshot {
   readonly muted: ReadonlyArray<string>
   readonly compressedIds?: ReadonlyArray<string>
   readonly selectedMacroId?: string
+  readonly summaryConfig?: SummaryConfig
+  readonly latestSummary?: string
 }
 
 export interface AgentSnapshot {
@@ -44,7 +50,7 @@ export interface AgentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '10'
+  readonly version: '11'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>
@@ -98,6 +104,8 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       muted: [...state.muted],
       compressedIds: room.getCompressedIds().size > 0 ? [...room.getCompressedIds()] : undefined,
       ...(state.selectedMacroId ? { selectedMacroId: state.selectedMacroId } : {}),
+      summaryConfig: room.summaryConfig,
+      ...(state.latestSummary ? { latestSummary: state.latestSummary } : {}),
     })
   }
 
@@ -118,7 +126,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const artifacts = system.house.artifacts.list({ includeResolved: true })
 
   return {
-    version: '10',
+    version: '11',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -208,6 +216,8 @@ export const restoreFromSnapshot = async (
       paused: roomSnap.paused,
       compressedIds: roomSnap.compressedIds,
       ...(roomSnap.selectedMacroId ? { selectedMacroId: roomSnap.selectedMacroId } : {}),
+      ...(roomSnap.summaryConfig ? { summaryConfig: roomSnap.summaryConfig } : {}),
+      ...(roomSnap.latestSummary ? { latestSummary: roomSnap.latestSummary } : {}),
     })
     roomMap.set(room.profile.id, room)
   }

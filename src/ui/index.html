@@ -179,6 +179,12 @@
             <button id="btn-macro-next" class="mode-btn hidden" title="Next step — requires a selected macro" disabled>➤</button>
             <button id="btn-macro-create" class="mode-btn hidden" title="Create new macro">＋</button>
           </div>
+          <div id="summary-group" class="mode-switcher">
+            <button id="btn-summary-toggle" class="mode-btn" title="Summary & compression" aria-pressed="false">🗜</button>
+            <button id="btn-summary-settings" class="mode-btn hidden" title="Summary settings">⚙</button>
+            <button id="btn-summary-inspect" class="mode-btn hidden" title="Inspect summary + compression">🔍</button>
+            <button id="btn-summary-regenerate" class="mode-btn hidden" title="Regenerate now">↻</button>
+          </div>
         </div>
       </div>
 
@@ -347,6 +353,80 @@
             <button id="od-cfg-save" class="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600">Save Config</button>
           </div>
         </details>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Summary settings modal -->
+  <dialog id="summary-settings-modal" class="rounded-lg shadow-xl p-0 w-[520px] max-w-[95vw]">
+    <form id="summary-settings-form" method="dialog" class="p-4 space-y-3">
+      <h2 class="text-lg font-semibold">Summary & Compression</h2>
+      <div class="text-xs text-gray-500">Per-room settings for <span id="summary-settings-roomname" class="font-mono"></span></div>
+
+      <div>
+        <label class="text-xs font-semibold">Model</label>
+        <input id="summary-cfg-model" type="text" class="w-full px-2 py-1 border rounded text-sm" placeholder="leave blank for default">
+      </div>
+
+      <fieldset class="border rounded p-3 space-y-2">
+        <legend class="text-xs font-semibold px-1">Summary</legend>
+        <label class="flex items-center gap-2 text-sm"><input id="summary-cfg-summary-enabled" type="checkbox"> Enable rolling summary</label>
+        <div class="flex gap-3 items-center text-sm">
+          <label class="flex items-center gap-1"><input type="radio" name="summary-schedule" id="summary-cfg-summary-by-msg" checked> every <input id="summary-cfg-summary-msg-count" type="number" min="1" value="25" class="w-16 px-1 py-0.5 border rounded"> messages</label>
+          <label class="flex items-center gap-1"><input type="radio" name="summary-schedule" id="summary-cfg-summary-by-time"> every <input id="summary-cfg-summary-sec-count" type="number" min="5" value="300" class="w-16 px-1 py-0.5 border rounded"> sec</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="border rounded p-3 space-y-2">
+        <legend class="text-xs font-semibold px-1">Compression</legend>
+        <label class="flex items-center gap-2 text-sm"><input id="summary-cfg-comp-enabled" type="checkbox"> Enable context compression</label>
+        <div class="flex gap-3 items-center text-sm">
+          <label class="flex items-center gap-1"><input type="radio" name="comp-schedule" id="summary-cfg-comp-by-msg" checked> every <input id="summary-cfg-comp-msg-count" type="number" min="1" value="30" class="w-16 px-1 py-0.5 border rounded"> messages</label>
+          <label class="flex items-center gap-1"><input type="radio" name="comp-schedule" id="summary-cfg-comp-by-time"> every <input id="summary-cfg-comp-sec-count" type="number" min="5" value="300" class="w-16 px-1 py-0.5 border rounded"> sec</label>
+        </div>
+        <div class="flex gap-3 items-center text-sm">
+          <label class="flex items-center gap-1">Keep fresh <input id="summary-cfg-keep-fresh" type="number" min="1" value="40" class="w-16 px-1 py-0.5 border rounded"></label>
+          <label class="flex items-center gap-1">Batch size <input id="summary-cfg-batch-size" type="number" min="1" value="30" class="w-16 px-1 py-0.5 border rounded"></label>
+        </div>
+        <label class="flex items-center gap-2 text-sm">Aggressiveness
+          <select id="summary-cfg-aggressiveness" class="px-1 py-0.5 border rounded text-sm">
+            <option value="low">Low</option>
+            <option value="med" selected>Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" id="summary-cfg-cancel" class="px-3 py-1 text-sm text-gray-600">Cancel</button>
+        <button type="submit" class="px-3 py-1 bg-purple-500 text-white rounded text-sm">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Summary inspect modal -->
+  <dialog id="summary-inspect-modal" class="rounded-lg shadow-xl p-0 w-[720px] max-w-[95vw] max-h-[85vh]">
+    <div class="p-4 space-y-3 flex flex-col max-h-[85vh]">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">Inspect — <span id="summary-inspect-roomname" class="font-mono"></span></h2>
+        <button type="button" id="summary-inspect-close" class="px-2 py-1 text-sm text-gray-600">Close</button>
+      </div>
+
+      <div class="flex gap-2 text-xs">
+        <button id="summary-inspect-regen-summary" class="px-2 py-1 bg-gray-100 rounded border">Regenerate summary</button>
+        <button id="summary-inspect-regen-compression" class="px-2 py-1 bg-gray-100 rounded border">Regenerate compression</button>
+        <button id="summary-inspect-regen-both" class="px-2 py-1 bg-gray-100 rounded border">Regenerate both</button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 flex-1 overflow-hidden">
+        <div class="flex flex-col min-h-0">
+          <div class="text-xs font-semibold mb-1">Summary <span id="summary-inspect-summary-status" class="text-gray-500 font-normal"></span></div>
+          <pre id="summary-inspect-summary-text" class="flex-1 overflow-y-auto bg-gray-50 border rounded p-2 text-xs whitespace-pre-wrap"></pre>
+        </div>
+        <div class="flex flex-col min-h-0">
+          <div class="text-xs font-semibold mb-1">Compression <span id="summary-inspect-compression-status" class="text-gray-500 font-normal"></span></div>
+          <pre id="summary-inspect-compression-text" class="flex-1 overflow-y-auto bg-gray-50 border rounded p-2 text-xs whitespace-pre-wrap"></pre>
+        </div>
       </div>
     </div>
   </dialog>

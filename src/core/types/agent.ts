@@ -171,7 +171,6 @@ export interface AIAgentConfig {
   readonly maxToolResultChars?: number          // default: 4000
   readonly tags?: ReadonlyArray<string>         // capability/role tags for [[tag:X]] addressing
   readonly thinking?: boolean                    // enable model CoT (qwen3 thinking mode)
-  readonly compressionThreshold?: number        // history length triggering LLM compression (default: 3 × historyLimit)
   // Context & Prompts toggles — all default true; undefined preserves current behavior
   readonly includePrompts?: IncludePrompts      // per-section prompt inclusion (persona/room/house/responseFormat/skills)
   readonly includeContext?: IncludeContext      // CONTEXT sub-sections (participants/macro/artifacts/activity/knownAgents)

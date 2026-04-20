@@ -2,6 +2,7 @@ import { json, errorResponse, parseBody } from '../http-routes.ts'
 import { SYSTEM_SENDER_ID } from '../../core/types/constants.ts'
 import { SETTABLE_DELIVERY_MODES } from '../../core/types/messaging.ts'
 import type { SettableDeliveryMode } from '../../core/types/messaging.ts'
+import type { SummaryConfig } from '../../core/types/summary.ts'
 import type { RouteEntry } from './types.ts'
 
 export const roomRoutes: RouteEntry[] = [
@@ -243,6 +244,60 @@ export const roomRoutes: RouteEntry[] = [
       if (!agent) return errorResponse(`Agent "${agentName}" not found`, 404)
       const result = system.activateAgentInRoom(agent.id, room.profile.id)
       return json(result, result.ok ? 200 : 400)
+    },
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/rooms\/([^/]+)\/summary-config$/,
+    handler: (_req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const room = system.house.getRoom(name)
+      if (!room) return errorResponse(`Room "${name}" not found`, 404)
+      return json(room.summaryConfig)
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: /^\/api\/rooms\/([^/]+)\/summary-config$/,
+    handler: async (req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const room = system.house.getRoom(name)
+      if (!room) return errorResponse(`Room "${name}" not found`, 404)
+      const body = await parseBody(req)
+      // Trust the shape — UI sends the full SummaryConfig.
+      room.setSummaryConfig(body as unknown as SummaryConfig)
+      return json(room.summaryConfig)
+    },
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/rooms\/([^/]+)\/summary$/,
+    handler: (_req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const room = system.house.getRoom(name)
+      if (!room) return errorResponse(`Room "${name}" not found`, 404)
+      const compression = room.getCurrentCompressionMessage()
+      return json({
+        summary: room.getLatestSummary() ?? null,
+        compression: compression ? { id: compression.id, content: compression.content, timestamp: compression.timestamp } : null,
+      })
+    },
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/rooms\/([^/]+)\/summary\/regenerate$/,
+    handler: async (req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const room = system.house.getRoom(name)
+      if (!room) return errorResponse(`Room "${name}" not found`, 404)
+      const body = await parseBody(req)
+      const target = body.target as 'summary' | 'compression' | 'both'
+      if (target !== 'summary' && target !== 'compression' && target !== 'both') {
+        return errorResponse('target must be "summary", "compression", or "both"', 400)
+      }
+      // Fire and forget — the WS events carry progress + completion.
+      void system.summaryScheduler.triggerNow(room.profile.id, target)
+      return json({ triggered: target })
     },
   },
 ]

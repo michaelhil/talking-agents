@@ -142,11 +142,6 @@ export const createAIAgent = (
   const getSkills = options?.getSkills
   const onEvalEvent = options?.onEvalEvent
 
-  // Agent-level compressed IDs — tracks messages replaced by LLM summaries.
-  // Separate from room-level compressedIds (which tracks messages pruned by messageLimit).
-  const localCompressedIds = new Set<string>()
-  // Guard: rooms currently undergoing async compression — prevents double-compression.
-  const compressingRooms = new Set<string>()
   // Active abort controller for stream cancellation
   let activeAbortController: AbortController | null = null
 
@@ -177,13 +172,7 @@ export const createAIAgent = (
     promptsEnabled,
     contextEnabled,
     contextTokenBudget: resolveContextTokenBudget(),
-    // Merge room-level pruned IDs with agent-level compression IDs
-    getCompressedIds: (roomId: string) => {
-      const roomIds = getCompressedIds?.(roomId)
-      if (!roomIds || roomIds.size === 0) return localCompressedIds
-      if (localCompressedIds.size === 0) return roomIds
-      return new Set([...roomIds, ...localCompressedIds])
-    },
+    getCompressedIds: (roomId: string) => getCompressedIds?.(roomId) ?? new Set<string>(),
   })
 
   // --- Evaluation loop: per-room generation with pending queue ---
@@ -303,19 +292,11 @@ export const createAIAgent = (
 
     if (message.type === 'system' || message.type === 'join' || message.type === 'leave' || message.type === 'pass') return
 
-    // Trigger async compression if processed history exceeds threshold (fire-and-forget)
-    const threshold = config.compressionThreshold ?? historyLimit * 3
-    const ctx = agentHistory.rooms.get(message.roomId)
-    if (ctx && ctx.history.length > threshold && !compressingRooms.has(message.roomId)) {
-      void compressRoomHistory(message.roomId)
-    }
-
     tryEvaluate(message.roomId)
   }
 
   // --- LLM summarisation helper ---
-  // Shared by join() (onboarding) and compressRoomHistory() (compression).
-  // Formats messages using senderName for readability, then calls callLLM.
+  // Used by join() to produce an onboarding summary for a new room member.
 
   const summariseMessages = async (
     msgs: ReadonlyArray<Message>,
@@ -334,47 +315,6 @@ export const createAIAgent = (
       messages: [{ role: 'user', content: userContent }],
       temperature: 0.3,
     })
-  }
-
-  // --- History compression ---
-  // Replaces messages older than the historyLimit window with an LLM summary.
-  // Runs asynchronously — evaluation is never blocked. Guard prevents concurrent runs.
-
-  const COMPRESSION_PROMPT = `Compress the following conversation history into a compact summary paragraph.
-Preserve: key decisions, important facts, who said what (use [name] format), unresolved questions.
-Respond with only the summary — no preamble or explanation.`
-
-  const compressRoomHistory = async (roomId: string): Promise<void> => {
-    compressingRooms.add(roomId)
-    try {
-      const ctx = agentHistory.rooms.get(roomId)
-      if (!ctx) return
-      const threshold = config.compressionThreshold ?? historyLimit * 3
-      if (ctx.history.length <= threshold) return
-
-      const cutoff = ctx.history.length - historyLimit
-      const toCompress = ctx.history.slice(0, cutoff)
-      const toKeep = ctx.history.slice(cutoff)
-
-      const summary = await summariseMessages(toCompress, COMPRESSION_PROMPT)
-      if (!summary) return
-
-      const summaryMessage: Message = {
-        id: crypto.randomUUID(),
-        roomId,
-        senderId: SYSTEM_SENDER_ID,
-        senderName: 'System',
-        content: summary,
-        timestamp: toCompress.at(-1)?.timestamp ?? Date.now(),
-        type: 'room_summary',
-      }
-      ctx.history = [summaryMessage, ...toKeep]
-      for (const m of toCompress) localCompressedIds.add(m.id)
-    } catch (err) {
-      console.error(`[${config.name}] History compression failed:`, err)
-    } finally {
-      compressingRooms.delete(roomId)
-    }
   }
 
   // --- Join ---

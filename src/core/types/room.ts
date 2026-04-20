@@ -13,6 +13,7 @@ import type {
 import type { Macro, MacroRun, MacroEventDetails, MacroEventName } from './macro.ts'
 import type { ArtifactStore, ArtifactTypeRegistry, OnArtifactChanged } from './artifact.ts'
 import type { LLMCallOptions } from './llm.ts'
+import type { SummaryConfig } from './summary.ts'
 
 // === Room event callbacks ===
 
@@ -29,6 +30,11 @@ export type OnBookmarksChanged = () => void
 export type OnModeAutoSwitched = (roomId: string, toMode: DeliveryMode, reason: 'second-ai-joined') => void
 // Fired when a room's sticky macro selection changes. null when cleared (e.g. macro deleted).
 export type OnMacroSelectionChanged = (roomId: string, macroArtifactId: string | null) => void
+// Fired when a room's summary config changes.
+export type OnSummaryConfigChanged = (roomId: string, config: SummaryConfig) => void
+// Fired when a summary or compression output is persisted to the room.
+export type SummaryTarget = 'summary' | 'compression'
+export type OnSummaryUpdated = (roomId: string, target: SummaryTarget) => void
 
 // === Bookmarks — system-wide message snippets (Phase 1) ===
 
@@ -52,6 +58,8 @@ export interface RoomState {
   // Independent from activeMacroRun: a selection can exist without a run,
   // and a run's macro is always the selected one (they match while running).
   readonly selectedMacroId?: string
+  readonly summaryConfig?: SummaryConfig
+  readonly latestSummary?: string
 }
 
 // === Room — self-contained component: stores messages and delivers to members ===
@@ -100,8 +108,23 @@ export interface Room {
   readonly selectedMacroId: string | undefined
   readonly setSelectedMacroId: (id: string | undefined) => void
 
-  // Compression tracking — IDs of messages pruned from history (tombstones)
+  // Compression tracking — IDs of messages subsumed by the single evolving
+  // `room_summary` message at the top of the stream. Populated only by
+  // replaceCompression(); no cap-based pruning.
   readonly getCompressedIds: () => ReadonlySet<string>
+
+  // Summary & compression state (per-room feature).
+  readonly summaryConfig: SummaryConfig
+  readonly setSummaryConfig: (config: SummaryConfig) => void
+  readonly getLatestSummary: () => string | undefined
+  readonly setLatestSummary: (text: string) => void
+  // Replace the single evolving compression at the top of the stream.
+  // Removes the prior `room_summary` message (if any), flags oldestIds as
+  // compressed (tombstones), and inserts a fresh `room_summary` at position 0.
+  // Returns the inserted message.
+  readonly replaceCompression: (oldestIds: ReadonlyArray<string>, newText: string) => Message
+  // Current `room_summary` at top of stream, if any.
+  readonly getCurrentCompressionMessage: () => Message | undefined
 
   // Snapshot restore — bypass delivery, populate state directly
   readonly injectMessages: (msgs: ReadonlyArray<Message>) => void
@@ -115,6 +138,8 @@ export interface RoomRestoreParams {
   readonly paused: boolean
   readonly compressedIds?: ReadonlyArray<string>
   readonly selectedMacroId?: string
+  readonly summaryConfig?: SummaryConfig
+  readonly latestSummary?: string
 }
 
 // === CreateResult — returned when name uniqueness is enforced ===
@@ -143,6 +168,8 @@ export interface HouseCallbacks {
   readonly onManualModeEntered?: (roomId: string) => void
   readonly onModeAutoSwitched?: OnModeAutoSwitched
   readonly onMacroSelectionChanged?: OnMacroSelectionChanged
+  readonly onSummaryConfigChanged?: OnSummaryConfigChanged
+  readonly onSummaryUpdated?: OnSummaryUpdated
   readonly callSystemLLM?: (options: LLMCallOptions) => Promise<string>
 }
 
