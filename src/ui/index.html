@@ -31,8 +31,8 @@
   <style>
     .msg-system { color: #6b7280; font-style: italic; }
     .msg-pass { color: #9ca3af; font-style: italic; font-size: 0.75rem; }
-    .prompt-icon { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: #e5e7eb; color: #6b7280; font-size: 10px; font-weight: bold; }
-    .prompt-icon:hover { background: #3b82f6; color: white; }
+    .prompt-icon { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: transparent; color: #6b7280; font-size: 12px; }
+    .prompt-icon:hover { color: #3b82f6; }
     .prompt-tooltip { display: none; position: absolute; z-index: 40; background: #1f2937; color: white; padding: 6px 10px; border-radius: 6px; font-size: 11px; max-width: 280px; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
     .prompt-icon:hover + .prompt-tooltip { display: block; }
     .msg-self { background: #eff6ff; }
@@ -59,16 +59,25 @@
     <!-- Sidebar (left, only sidebar) -->
     <aside id="sidebar" class="shrink-0 bg-white border-r flex flex-col transition-all" style="width: fit-content; min-width: 120px; max-width: 200px">
       <!-- Sidebar header -->
-      <div class="p-2 border-b flex items-center justify-between gap-2">
+      <div class="p-2 border-b flex items-center justify-between gap-1">
         <span class="sidebar-content text-sm font-semibold text-gray-700 whitespace-nowrap">samsinn</span>
-        <button id="btn-collapse-sidebar" class="text-gray-400 hover:text-gray-600 w-6 h-6 flex items-center justify-center text-xs" title="Toggle sidebar">◀</button>
+        <div class="flex items-center gap-1">
+          <button id="btn-system-prompt" class="text-gray-400 hover:text-blue-500 w-5 h-5 flex items-center justify-center" title="System Prompt">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </button>
+          <button id="btn-ollama-dashboard" class="text-gray-400 hover:text-blue-500 w-5 h-5 flex items-center justify-center" title="Providers">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          </button>
+          <span id="ollama-status-dot" style="display:none"></span>
+          <button id="btn-collapse-sidebar" class="text-gray-400 hover:text-gray-600 w-6 h-6 flex items-center justify-center text-xs" title="Toggle sidebar">◀</button>
+        </div>
       </div>
 
       <!-- Rooms section -->
       <div class="sidebar-content border-b">
         <div id="rooms-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-gray-50">
           <span id="rooms-toggle" class="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">▾ Rooms</span>
-          <button id="btn-create-room" class="text-xs text-blue-500 hover:text-blue-700 font-bold" title="Create Room">+</button>
+          <button id="btn-create-room" class="text-xs text-gray-500 hover:text-gray-700 font-bold" title="Create Room">+</button>
         </div>
         <div id="room-list" class="overflow-y-auto max-h-48"></div>
       </div>
@@ -77,7 +86,7 @@
       <div class="sidebar-content border-b">
         <div id="agents-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-gray-50">
           <span id="agents-toggle" class="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">▾ Agents</span>
-          <button id="btn-create-agent" class="text-xs text-green-500 hover:text-green-700 font-bold" title="Create Agent">+</button>
+          <button id="btn-create-agent" class="text-xs text-gray-500 hover:text-gray-700 font-bold" title="Create Agent">+</button>
         </div>
         <div id="agent-list" class="overflow-y-auto max-h-72"></div>
       </div>
@@ -94,20 +103,9 @@
       <div class="sidebar-content border-b">
         <div id="skills-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-gray-50">
           <span id="skills-toggle" class="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">▸ Skills</span>
-          <button id="btn-create-skill" class="text-xs text-blue-500 hover:text-blue-700 font-bold" title="Create Skill">+</button>
+          <button id="btn-create-skill" class="text-xs text-gray-500 hover:text-gray-700 font-bold" title="Create Skill">+</button>
         </div>
         <div id="skills-list" class="overflow-y-auto max-h-48 hidden"></div>
-      </div>
-
-      <!-- Settings section (collapsed by default) -->
-      <div class="sidebar-content">
-        <div id="settings-header" class="px-3 py-1.5 cursor-pointer hover:bg-gray-50">
-          <span id="settings-toggle" class="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">▸ Settings</span>
-        </div>
-        <div id="settings-list" class="hidden">
-          <button id="btn-system-prompt" class="w-full text-left px-3 py-1 text-xs text-gray-600 hover:bg-gray-50">System Prompt</button>
-          <button id="btn-ollama-dashboard" class="w-full text-left px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 flex items-center gap-1.5"><span id="ollama-status-dot" class="inline-block w-2 h-2 rounded-full bg-gray-400"></span>Providers</button>
-        </div>
       </div>
 
     </aside>
@@ -124,7 +122,8 @@
         <span id="room-name" class="text-sm font-medium text-gray-800"></span>
         <div class="flex items-center gap-1">
           <button id="btn-clear-messages" class="prompt-icon" title="Clear messages">🗑</button>
-          <button id="btn-room-prompt" class="prompt-icon" title="Room Prompt">R</button>
+          <button id="btn-bookmarks" class="prompt-icon" title="Bookmarks"><svg width="14" height="14" viewBox="0 0 24 24" fill="#ef4444" style="transform: rotate(45deg)"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
+          <button id="btn-room-prompt" class="prompt-icon" title="Room Prompt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
           <button id="btn-pause-toggle" class="w-5 h-5 flex items-center justify-center text-xs rounded hover:bg-gray-200" title="Pause/Resume">▶</button>
           <select id="mode-selector" class="text-xs border rounded px-1 py-0.5 bg-gray-50">
             <option value="broadcast">Broadcast</option>

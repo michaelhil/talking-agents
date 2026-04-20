@@ -2,6 +2,7 @@ import { json, errorResponse, parseBody } from '../http-routes.ts'
 import { asAIAgent } from '../../agents/shared.ts'
 import { buildToolSupport } from '../../agents/spawn.ts'
 import { toolsToDefinitions } from '../../llm/tool-capability.ts'
+import { modelSupportsTools } from '../../llm/model-catalog.ts'
 import { estimateTokens } from '../../agents/context-builder.ts'
 import type { ContextSection, IncludeContext, IncludePrompts, PromptSection } from '../../core/types/agent.ts'
 import type { ToolRegistry } from '../../core/types/tool.ts'
@@ -96,6 +97,9 @@ export const agentRoutes: RouteEntry[] = [
       if (agent.getDescription) {
         detail.description = agent.getDescription()
       }
+      if (agent.getTags) {
+        detail.tags = agent.getTags()
+      }
       return json(detail)
     },
   },
@@ -178,6 +182,13 @@ export const agentRoutes: RouteEntry[] = [
       if (typeof body.description === 'string' && agent.updateDescription) {
         agent.updateDescription(body.description)
       }
+      if (Array.isArray(body.tags) && agent.updateTags) {
+        const tags = (body.tags as unknown[])
+          .filter((t): t is string => typeof t === 'string')
+          .map(t => t.trim())
+          .filter(t => t.length > 0)
+        agent.updateTags(tags)
+      }
       return json({ updated: true, name: agent.name })
     },
   },
@@ -199,10 +210,12 @@ export const agentRoutes: RouteEntry[] = [
       if (!roomId) return errorResponse('Agent is not in any rooms', 400)
       const preview = ai.getContextPreview(roomId)
       const registered = system.toolRegistry.list().map(t => t.name)
+      const model = ai.getConfig().model
       return json({
         ...preview,
         toolTokens: computeToolTokens(registered, system.toolRegistry),
         registeredTools: registered,
+        modelSupportsTools: modelSupportsTools(model),
       })
     },
   },

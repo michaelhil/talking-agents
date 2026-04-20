@@ -9,7 +9,7 @@
 // ============================================================================
 
 import type { Artifact, ArtifactStore, ArtifactTypeRegistry, OnArtifactChanged } from './types/artifact.ts'
-import type { CreateResult, House, HouseCallbacks, Room, RoomConfig } from './types/room.ts'
+import type { Bookmark, CreateResult, House, HouseCallbacks, Room, RoomConfig } from './types/room.ts'
 import type { RoomProfile } from './types/messaging.ts'
 import { createRoom, type RoomCallbacks } from './room.ts'
 import { createArtifactStore } from './artifact-store.ts'
@@ -29,9 +29,9 @@ const DEFAULT_RESPONSE_FORMAT = `- Write your message as natural text. Your resp
 
 export const createHouse = (callbacks: HouseCallbacks = {}): House => {
   const {
-    deliver, resolveAgentName, resolveTag, onMessagePosted, onTurnChanged,
+    deliver, resolveAgentName, resolveTag, resolveKind, onMessagePosted, onTurnChanged,
     onDeliveryModeChanged, onFlowEvent, onRoomCreated, onRoomDeleted,
-    callSystemLLM,
+    onBookmarksChanged, onManualModeEntered, callSystemLLM,
   } = callbacks
 
   const rooms = new Map<string, Room>()
@@ -89,7 +89,7 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
     nameIndex.has(name.toLowerCase())
 
   const makeRoomCallbacks = (): RoomCallbacks => ({
-    deliver, resolveAgentName, resolveTag, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent,
+    deliver, resolveAgentName, resolveTag, resolveKind, onMessagePosted, onTurnChanged, onDeliveryModeChanged, onFlowEvent, onManualModeEntered,
   })
 
   const storeRoom = (config: RoomConfig, name: string): Room => {
@@ -135,6 +135,43 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
   const getRoomsForAgent = (agentId: string): ReadonlyArray<Room> =>
     [...rooms.values()].filter(r => r.hasMember(agentId))
 
+  // --- Bookmarks (system-wide, newest-first) ---
+
+  const bookmarks: Bookmark[] = []
+
+  const notifyBookmarks = (): void => { onBookmarksChanged?.() }
+
+  const listBookmarks = (): ReadonlyArray<Bookmark> => bookmarks.slice()
+
+  const addBookmark = (content: string): Bookmark => {
+    const entry: Bookmark = { id: crypto.randomUUID(), content }
+    bookmarks.unshift(entry)
+    notifyBookmarks()
+    return entry
+  }
+
+  const updateBookmark = (id: string, content: string): Bookmark | undefined => {
+    const idx = bookmarks.findIndex(b => b.id === id)
+    if (idx < 0) return undefined
+    const updated: Bookmark = { id, content }
+    bookmarks[idx] = updated
+    notifyBookmarks()
+    return updated
+  }
+
+  const deleteBookmark = (id: string): boolean => {
+    const idx = bookmarks.findIndex(b => b.id === id)
+    if (idx < 0) return false
+    bookmarks.splice(idx, 1)
+    notifyBookmarks()
+    return true
+  }
+
+  const restoreBookmarks = (entries: ReadonlyArray<Bookmark>): void => {
+    bookmarks.length = 0
+    for (const b of entries) bookmarks.push({ id: b.id, content: b.content })
+  }
+
   const removeRoom = (id: string): boolean => {
     const room = rooms.get(id)
     if (!room) return false
@@ -166,6 +203,11 @@ export const createHouse = (callbacks: HouseCallbacks = {}): House => {
 
     artifacts: artifactStore as ArtifactStore,
     artifactTypes: artifactTypeRegistry as ArtifactTypeRegistry,
+    listBookmarks,
+    addBookmark,
+    updateBookmark,
+    deleteBookmark,
+    restoreBookmarks,
     callSystemLLM,
   }
 }

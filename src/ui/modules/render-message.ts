@@ -20,15 +20,19 @@ const renderMarkdownContent = (el: HTMLElement, text: string): void => {
   }
 }
 
-export const renderMessage = (
-  container: HTMLElement,
-  msg: UIMessage,
-  myAgentId: string,
-  agents: Record<string, AgentInfo> | Map<string, AgentInfo>,
-  onPin?: (msgId: string, senderName: string, content: string) => void,
-  onDelete?: (msgId: string) => void,
-  onViewContext?: (msgId: string) => void,
-): void => {
+export interface RenderMessageOptions {
+  readonly container: HTMLElement
+  readonly msg: UIMessage
+  readonly myAgentId: string
+  readonly agents: Record<string, AgentInfo> | Map<string, AgentInfo>
+  readonly onPin?: (msgId: string, senderName: string, content: string) => void
+  readonly onDelete?: (msgId: string) => void
+  readonly onViewContext?: (msgId: string) => void
+  readonly onBookmark?: (content: string) => void
+}
+
+export const renderMessage = (opts: RenderMessageOptions): void => {
+  const { container, msg, myAgentId, agents, onPin, onDelete, onViewContext, onBookmark } = opts
   const getAgent = (id: string): AgentInfo | undefined =>
     agents instanceof Map ? agents.get(id) : agents[id]
 
@@ -115,7 +119,7 @@ export const renderMessage = (
       header.appendChild(ctxEl)
     }
 
-    if (onPin || onDelete || onViewContext) {
+    if (onPin || onDelete || onViewContext || onBookmark) {
       const spacer = document.createElement('span')
       spacer.className = 'ml-auto'
       header.appendChild(spacer)
@@ -128,6 +132,15 @@ export const renderMessage = (
         ctxBtn.title = 'View prompt context'
         ctxBtn.onclick = (e) => { e.stopPropagation(); onViewContext(msg.id) }
         header.appendChild(ctxBtn)
+      }
+
+      if (onBookmark) {
+        const bmBtn = document.createElement('button')
+        bmBtn.className = 'text-xs opacity-0 group-hover:opacity-100'
+        bmBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="#ef4444" style="transform: rotate(45deg); display: inline-block; vertical-align: middle;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>'
+        bmBtn.title = 'Bookmark message'
+        bmBtn.onclick = (e) => { e.stopPropagation(); onBookmark(msg.content) }
+        header.appendChild(bmBtn)
       }
 
       if (onPin) {

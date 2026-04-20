@@ -78,6 +78,21 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
       broadcast({ type: 'messages_cleared', roomName: room.profile.name })
       return true
     }
+    case 'activate_agent': {
+      const room = requireRoom(ws, system, msg.roomName)
+      const agent = requireAgent(ws, system, msg.agentName)
+      if (!room || !agent) return true
+      const result = system.activateAgentInRoom(agent.id, room.profile.id)
+      ws.send(JSON.stringify({
+        type: 'activation_result',
+        roomName: room.profile.name,
+        agentName: agent.name,
+        ok: result.ok,
+        queued: result.queued,
+        reason: result.reason,
+      }))
+      return true
+    }
     default:
       return false
   }

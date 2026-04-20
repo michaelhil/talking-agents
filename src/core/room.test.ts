@@ -280,6 +280,54 @@ describe('Room — Delivery modes', () => {
     room.setDeliveryMode('broadcast')
     expect(room.deliveryMode).toBe('broadcast')
   })
+
+  test('manual mode delivers only to humans and the AI sender (AI peers skipped)', () => {
+    const { delivered, deliver } = trackDeliveries()
+    const kinds: Record<string, 'ai' | 'human'> = {
+      'ai-a': 'ai', 'ai-b': 'ai', 'human-1': 'human',
+    }
+    const resolveKind = (id: string) => kinds[id]
+    const room = createRoom(makeProfile(), { deliver, resolveKind })
+    room.addMember('ai-a'); room.addMember('ai-b'); room.addMember('human-1')
+    room.setDeliveryMode('manual')
+
+    // Human posts — only the human member receives (senders are added to members when posting).
+    room.post({ senderId: 'human-1', content: 'Hello', type: 'chat' })
+    expect(delivered.map(d => d.agentId).sort()).toEqual(['human-1'])
+    delivered.length = 0
+
+    // AI-a posts — AI-a receives (self), human-1 receives, ai-b is skipped.
+    room.post({ senderId: 'ai-a', content: 'Reply', type: 'chat' })
+    expect(delivered.map(d => d.agentId).sort()).toEqual(['ai-a', 'human-1'])
+  })
+
+  test('manual mode ignores [[AgentName]] addressing', () => {
+    const { delivered, deliver } = trackDeliveries()
+    const kinds: Record<string, 'ai' | 'human'> = { 'ai-a': 'ai', 'human-1': 'human' }
+    const room = createRoom(makeProfile(), {
+      deliver,
+      resolveKind: (id) => kinds[id],
+      resolveAgentName: makeResolver({ 'Alpha': 'ai-a' }),
+    })
+    room.addMember('ai-a'); room.addMember('human-1')
+    room.setDeliveryMode('manual')
+
+    room.post({ senderId: 'human-1', content: '[[Alpha]] please respond', type: 'chat' })
+    expect(delivered.map(d => d.agentId).sort()).toEqual(['human-1'])
+  })
+
+  test('onManualModeEntered fires only on transition into manual', () => {
+    const calls: string[] = []
+    const room = createRoom(makeProfile(), { onManualModeEntered: (id) => calls.push(id) })
+    expect(calls).toEqual([])
+    room.setDeliveryMode('manual')
+    expect(calls).toEqual(['test-room'])
+    room.setDeliveryMode('manual') // no-op re-entry — still counts? setDeliveryMode is called; prevMode === manual now, skipped.
+    expect(calls).toEqual(['test-room'])
+    room.setDeliveryMode('broadcast')
+    room.setDeliveryMode('manual')
+    expect(calls).toEqual(['test-room', 'test-room'])
+  })
 })
 
 // ============================================================================

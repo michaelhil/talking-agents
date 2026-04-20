@@ -117,6 +117,11 @@ export const createServer = (system: System, config?: ServerConfig) => {
     wsManager.broadcast({ type: 'artifact_changed', action, artifact })
   }))
 
+  // Bookmark mutations arrive via REST; the callback only needs to schedule
+  // a snapshot save — there is no WS broadcast (single-user admin surface,
+  // panel refetches on open).
+  system.setOnBookmarksChanged(withAutoSave(() => {}))
+
   const server = Bun.serve<WSData>({
     port,
 

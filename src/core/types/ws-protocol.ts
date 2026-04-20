@@ -30,7 +30,8 @@ export type WSInbound =
       readonly tools?: ReadonlyArray<string>
     }
   // Delivery mode
-  | { readonly type: 'set_delivery_mode'; readonly roomName: string; readonly mode: 'broadcast' }
+  | { readonly type: 'set_delivery_mode'; readonly roomName: string; readonly mode: 'broadcast' | 'manual' }
+  | { readonly type: 'activate_agent'; readonly roomName: string; readonly agentName: string }
   // Pause
   | { readonly type: 'set_paused'; readonly roomName: string; readonly paused: boolean }
   // Muting
@@ -66,6 +67,7 @@ export type WSOutbound =
   | { readonly type: 'room_deleted'; readonly roomName: string }
   | { readonly type: 'message_deleted'; readonly roomName: string; readonly messageId: string }
   | { readonly type: 'messages_cleared'; readonly roomName: string }
+  | { readonly type: 'activation_result'; readonly roomName: string; readonly agentName: string; readonly ok: boolean; readonly queued: boolean; readonly reason?: string }
   | { readonly type: 'ollama_health'; readonly health: OllamaHealth }
   | { readonly type: 'ollama_metrics'; readonly metrics: GatewayMetrics }
   | { readonly type: 'agent_activity'; readonly agentName: string; readonly event: EvalEvent }

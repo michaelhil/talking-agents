@@ -67,11 +67,15 @@ export const createHumanAgent = (
     }
   }
 
+  const seededTags = (config.metadata?.tags as ReadonlyArray<string> | undefined) ?? []
+  let currentTags: ReadonlyArray<string> = seededTags
+  const liveMetadata: Record<string, unknown> = { ...(config.metadata ?? {}), tags: currentTags }
+
   return {
     id: agentId,
     name: config.name,
     kind: 'human',
-    metadata: config.metadata ?? {},
+    metadata: liveMetadata,
     state,
     receive,
     join,
@@ -81,5 +85,10 @@ export const createHumanAgent = (
     setInactive: (value: boolean) => { isInactive = value },
     getDescription: () => description,
     updateDescription: (desc: string) => { description = desc },
+    getTags: () => currentTags,
+    updateTags: (tags: ReadonlyArray<string>) => {
+      currentTags = tags
+      liveMetadata.tags = tags
+    },
   }
 }

@@ -231,4 +231,18 @@ export const roomRoutes: RouteEntry[] = [
       return json({ cancelled: true, mode: room.deliveryMode })
     },
   },
+  {
+    method: 'POST',
+    pattern: /^\/api\/rooms\/([^/]+)\/agents\/([^/]+)\/activate$/,
+    handler: (_req, match, { system }) => {
+      const roomName = decodeURIComponent(match[1]!)
+      const agentName = decodeURIComponent(match[2]!)
+      const room = system.house.getRoom(roomName)
+      if (!room) return errorResponse(`Room "${roomName}" not found`, 404)
+      const agent = system.team.getAgent(agentName)
+      if (!agent) return errorResponse(`Agent "${agentName}" not found`, 404)
+      const result = system.activateAgentInRoom(agent.id, room.profile.id)
+      return json(result, result.ok ? 200 : 400)
+    },
+  },
 ]

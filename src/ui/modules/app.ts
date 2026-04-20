@@ -92,7 +92,6 @@ const {
   modeSelector, pauseToggle, roomModeInfo,
   nameModal, nameForm, roomModal, roomForm, agentModal, agentForm,
   sidebar, btnCollapseSidebar,
-  settingsHeader, settingsToggle, settingsList,
   agentsHeader, agentsToggle,
   toolsHeader, toolsToggle, toolsList,
   skillsHeader, skillsToggle, skillsList,
@@ -140,6 +139,20 @@ const handleDeleteRoom = (roomId: string, roomName: string): void => {
 
 const handlePin = (msgId: string, senderName: string, content: string): void => {
   $pinnedMessages.setKey(msgId, { senderId: '', content, senderName })
+}
+
+const handleBookmark = async (content: string): Promise<void> => {
+  try {
+    const res = await fetch('/api/bookmarks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    showToast(document.body, 'Bookmarked')
+  } catch {
+    showToast(document.body, 'Bookmark failed')
+  }
 }
 
 const handleDeleteMessage = (msgId: string): void => {
@@ -266,7 +279,10 @@ const fetchArtifactsForRoom = async (roomId: string, roomName: string): Promise<
 
 const refreshModeSelector = (): void => {
   modeSelector.innerHTML = ''
-  const modes = [{ value: 'broadcast', label: 'Broadcast' }]
+  const modes = [
+    { value: 'broadcast', label: 'Broadcast' },
+    { value: 'manual', label: 'Manual' },
+  ]
   for (const m of modes) {
     const opt = document.createElement('option')
     opt.value = m.value
@@ -459,7 +475,11 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
     messagesDiv.style.scrollBehavior = 'auto'
     const cached = $roomMessages.get()[roomId]
     if (cached) {
-      for (const m of cached) renderMessage(messagesDiv, m, $myAgentId.get() ?? '', $agents.get() as unknown as Record<string, AgentInfo>, handlePin, handleDeleteMessage, handleViewContext)
+      for (const m of cached) renderMessage({
+        container: messagesDiv, msg: m, myAgentId: $myAgentId.get() ?? '',
+        agents: $agents.get() as unknown as Record<string, AgentInfo>,
+        onPin: handlePin, onDelete: handleDeleteMessage, onViewContext: handleViewContext, onBookmark: handleBookmark,
+      })
     } else {
       fetchRoomMessages(roomId, room.name)
     }
@@ -518,7 +538,11 @@ $roomMessages.listen((allMessages, _old, changedRoomId) => {
   )
   for (const m of msgs) {
     if (!existingIds.has(m.id)) {
-      renderMessage(messagesDiv, m, $myAgentId.get() ?? '', $agents.get() as unknown as Record<string, AgentInfo>, handlePin, handleDeleteMessage, handleViewContext)
+      renderMessage({
+        container: messagesDiv, msg: m, myAgentId: $myAgentId.get() ?? '',
+        agents: $agents.get() as unknown as Record<string, AgentInfo>,
+        onPin: handlePin, onDelete: handleDeleteMessage, onViewContext: handleViewContext, onBookmark: handleBookmark,
+      })
     }
   }
   // Remove deleted messages
@@ -835,11 +859,6 @@ artifactInput.onkeydown = (e) => {
 }
 
 // Sidebar section toggles
-settingsHeader.onclick = () => {
-  const nowHidden = settingsList.classList.toggle('hidden')
-  settingsToggle.textContent = nowHidden ? '▸ Settings' : '▾ Settings'
-}
-
 roomsHeader.onclick = (e) => {
   if ((e.target as HTMLElement).closest('button')) return
   roomsSectionExpanded = !roomsSectionExpanded
@@ -937,6 +956,18 @@ btnClearMessages.onclick = () => {
   if (!roomName) return
   if (!confirm(`Clear all messages in "${roomName}"?`)) return
   send({ type: 'clear_messages', roomName })
+}
+
+const btnBookmarks = $('#btn-bookmarks') as HTMLButtonElement
+btnBookmarks.onclick = async () => {
+  const { openBookmarksPanel } = await import('./bookmarks-panel.ts')
+  await openBookmarksPanel({
+    send,
+    getSelectedRoomName: () => {
+      const rid = $selectedRoomId.get()
+      return rid ? roomIdToName(rid) ?? undefined : undefined
+    },
+  })
 }
 
 const btnRoomPrompt = $('#btn-room-prompt') as HTMLButtonElement

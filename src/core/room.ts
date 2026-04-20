@@ -38,10 +38,12 @@ export interface RoomCallbacks {
   readonly deliver?: DeliverFn
   readonly resolveAgentName?: ResolveAgentName
   readonly resolveTag?: ResolveTagFn
+  readonly resolveKind?: (id: string) => 'ai' | 'human' | undefined
   readonly onMessagePosted?: OnMessagePosted
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
   readonly onFlowEvent?: OnFlowEvent
+  readonly onManualModeEntered?: (roomId: string) => void
 }
 
 export const createRoom = (
@@ -59,6 +61,7 @@ export const createRoom = (
   const deliver = callbacks?.deliver
   const resolveAgentName = callbacks?.resolveAgentName
   const resolveTag = callbacks?.resolveTag
+  const resolveKind = callbacks?.resolveKind
 
   // --- State ---
   let mode: DeliveryMode = 'broadcast'
@@ -153,9 +156,13 @@ export const createRoom = (
       return message
     }
 
-    const addressedNames = parseAddressedAgents(message.content)
-    if (addressedNames.length > 0 && dispatchToAddressed(message, addressedNames)) {
-      return message
+    // In manual mode, [[AgentName]] addressing is inert — only explicit
+    // activation via system.activateAgentInRoom delivers to AI peers.
+    if (mode !== 'manual') {
+      const addressedNames = parseAddressedAgents(message.content)
+      if (addressedNames.length > 0 && dispatchToAddressed(message, addressedNames)) {
+        return message
+      }
     }
 
     if (paused) return message
@@ -164,6 +171,19 @@ export const createRoom = (
       case 'broadcast':
         deliverBroadcast(message, eligible, deliver)
         break
+
+      case 'manual': {
+        // Deliver only to humans and to the sender (if AI) so senders still
+        // track their own reply in history. AI peers are skipped entirely —
+        // they catch up at explicit activation time.
+        for (const id of eligible) {
+          const kind = resolveKind?.(id)
+          if (kind === 'human' || id === params.senderId) {
+            deliverToOne(id, message)
+          }
+        }
+        break
+      }
 
       case 'flow': {
         const flowExecution = flowState.getExecution()
@@ -197,9 +217,13 @@ export const createRoom = (
       flowState.clearExecution()
       flowState.notifyFlowEvent('cancelled', { flowId })
     }
+    const prevMode = mode
     mode = newMode
     paused = false
     notifyModeChanged()
+    if (newMode === 'manual' && prevMode !== 'manual') {
+      callbacks?.onManualModeEntered?.(profile.id)
+    }
   }
 
   // --- Muting ---

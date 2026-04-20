@@ -32,6 +32,9 @@ export interface Agent {
   readonly setInactive?: (value: boolean) => void
   readonly getDescription?: () => string
   readonly updateDescription?: (desc: string) => void
+  // Capability/role tags — used for [[tag:X]] addressing via team.listByTag.
+  readonly getTags?: () => ReadonlyArray<string>
+  readonly updateTags?: (tags: ReadonlyArray<string>) => void
 }
 
 // === AIAgent — extended Agent with observability ===
@@ -99,6 +102,12 @@ export interface AIAgent extends Agent {
   // Returns a snapshot of the agent's current configuration (mutable fields resolved).
   // Use this when you need multiple config fields at once (e.g. for serialization).
   readonly getConfig: () => AIAgentConfig
+  // Manual-mode primitives (general-purpose, not mode-specific):
+  // ingestHistory appends unseen messages to the agent's room history without
+  // triggering evaluation or compression; forceEvaluate triggers one eval
+  // regardless of the room's delivery mode.
+  readonly ingestHistory?: (roomId: string, messages: ReadonlyArray<Message>) => void
+  readonly forceEvaluate?: (roomId: string) => void
 }
 
 export interface ContextPreviewSection {

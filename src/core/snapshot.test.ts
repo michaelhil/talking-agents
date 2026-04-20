@@ -41,9 +41,63 @@ describe('Snapshot', () => {
 
       const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
       expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('6')
+      expect(loaded!.version).toBe('7')
       // Missing includePrompts/includeTools/maxHistoryChars on agents is
       // expected — the factory resolves to defaults at spawn time.
+    })
+  })
+
+  describe('v6 → v7 migration (bookmarks)', () => {
+    test('loads a v6 snapshot as v7 with empty bookmarks', async () => {
+      await mkdir(TEST_SNAPSHOT_DIR, { recursive: true })
+      const v6Snapshot = {
+        version: '6',
+        timestamp: Date.now(),
+        rooms: [],
+        agents: [],
+        artifacts: [],
+      }
+      await Bun.write(TEST_SNAPSHOT_PATH, JSON.stringify(v6Snapshot))
+
+      const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
+      expect(loaded).not.toBeNull()
+      expect(loaded!.version).toBe('7')
+      expect(loaded!.bookmarks ?? []).toEqual([])
+    })
+  })
+
+  describe('bookmarks round-trip', () => {
+    test('serializes and restores bookmarks, newest-first', () => {
+      const system = createTestSystem()
+      const first = system.house.addBookmark('first message')
+      const second = system.house.addBookmark('second message')
+
+      const snapshot = serializeSystem(system)
+      expect(snapshot.bookmarks?.length).toBe(2)
+      // addBookmark prepends → second comes first in the list
+      expect(snapshot.bookmarks?.[0]?.id).toBe(second.id)
+      expect(snapshot.bookmarks?.[1]?.id).toBe(first.id)
+
+      // Restore into a fresh house
+      const fresh = createHouse({ deliver: noopDeliver })
+      fresh.restoreBookmarks(snapshot.bookmarks ?? [])
+      expect(fresh.listBookmarks().map(b => b.content)).toEqual(['second message', 'first message'])
+    })
+
+    test('update preserves position; delete removes', () => {
+      const system = createTestSystem()
+      const a = system.house.addBookmark('a')
+      const b = system.house.addBookmark('b')
+      const c = system.house.addBookmark('c')
+      // Order after adds: [c, b, a]
+      expect(system.house.listBookmarks().map(x => x.id)).toEqual([c.id, b.id, a.id])
+
+      system.house.updateBookmark(b.id, 'B!')
+      expect(system.house.listBookmarks().map(x => x.id)).toEqual([c.id, b.id, a.id])
+      expect(system.house.listBookmarks().find(x => x.id === b.id)?.content).toBe('B!')
+
+      expect(system.house.deleteBookmark(a.id)).toBe(true)
+      expect(system.house.listBookmarks().map(x => x.id)).toEqual([c.id, b.id])
     })
   })
 
@@ -52,7 +106,7 @@ describe('Snapshot', () => {
       const system = createTestSystem()
       const snapshot = serializeSystem(system)
 
-      expect(snapshot.version).toBe('6')
+      expect(snapshot.version).toBe('7')
       expect(snapshot.timestamp).toBeGreaterThan(0)
       expect(snapshot.rooms.length).toBe(1) // default Introductions room
       expect(snapshot.agents.length).toBe(0)
@@ -120,7 +174,7 @@ describe('Snapshot', () => {
 
       const loaded = await loadSnapshot(TEST_SNAPSHOT_PATH)
       expect(loaded).not.toBeNull()
-      expect(loaded!.version).toBe('6')
+      expect(loaded!.version).toBe('7')
       expect(loaded!.rooms.length).toBe(snapshot.rooms.length)
 
       const chatMsgs = loaded!.rooms[0]!.messages.filter(m => m.type === 'chat')

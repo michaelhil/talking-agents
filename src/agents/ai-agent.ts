@@ -96,6 +96,7 @@ export const createAIAgent = (
   let toolExecutor = options?.toolExecutor
   let toolDefinitions = options?.toolDefinitions
   let currentTools: ReadonlyArray<string> | undefined = config.tools
+  let currentTags: ReadonlyArray<string> = config.tags ?? []
   // Context & Prompts toggles — resolve defaults to preserve current behavior
   const includePromptsState: Required<IncludePrompts> = {
     agent: config.includePrompts?.agent ?? true,
@@ -423,11 +424,15 @@ Respond with only the summary — no preamble or explanation.`
     }
   }
 
+  // Live metadata — mutated by updateTags so team.listByTag sees current
+  // values without needing to rebuild the agent.
+  const liveMetadata: Record<string, unknown> = { model: currentModel, tags: currentTags }
+
   return {
     id: agentId,
     name: config.name,
     kind: 'ai',
-    metadata: { model: currentModel, ...(config.tags ? { tags: config.tags } : {}) },
+    metadata: liveMetadata,
     state: cm.state,
     receive,
     join,
@@ -435,6 +440,11 @@ Respond with only the summary — no preamble or explanation.`
       agentHistory.rooms.delete(roomId)
     },
     whenIdle: cm.whenIdle,
+    getTags: () => currentTags,
+    updateTags: (tags: ReadonlyArray<string>) => {
+      currentTags = tags
+      liveMetadata.tags = tags
+    },
     updateSystemPrompt: (prompt: string) => { currentSystemPrompt = prompt },
     getSystemPrompt: () => currentSystemPrompt,
     updateModel: (model: string) => { currentModel = model },
@@ -508,6 +518,7 @@ Respond with only the summary — no preamble or explanation.`
       temperature: currentTemperature,
       historyLimit,
       tools: currentTools,
+      tags: currentTags,
       includePrompts: { ...includePromptsState },
       includeContext: { ...includeContextState },
       includeFlowStepPrompt,
@@ -521,6 +532,27 @@ Respond with only the summary — no preamble or explanation.`
     refreshTools: (support) => {
       if (support.toolExecutor !== undefined) toolExecutor = support.toolExecutor
       if (support.toolDefinitions !== undefined) toolDefinitions = support.toolDefinitions
+    },
+    // Manual-mode primitive: append unseen messages to the room's history
+    // without triggering eval or compression. `extractProfile` still runs so
+    // peer profile awareness stays current. No-op for rooms the agent isn't
+    // in — relies on a prior `join()`.
+    ingestHistory: (roomId: string, messages: ReadonlyArray<Message>): void => {
+      const ctx = agentHistory.rooms.get(roomId)
+      if (!ctx) return
+      const seen = new Set(ctx.history.map(m => m.id))
+      for (const msg of messages) {
+        if (seen.has(msg.id)) continue
+        extractProfile(msg, agentId, agentHistory.agentProfiles)
+        ctx.history = [...ctx.history, msg]
+        seen.add(msg.id)
+      }
+    },
+    // Manual-mode primitive: force one evaluation for the given room, bypassing
+    // the room's delivery-mode check. If the agent is busy elsewhere, the
+    // concurrency manager queues this via its own pending list.
+    forceEvaluate: (roomId: string): void => {
+      tryEvaluate(roomId)
     },
     getHistory: (roomId: string) => [...(agentHistory.rooms.get(roomId)?.history ?? [])],
     getIncoming: () => [...agentHistory.incoming],

@@ -13,6 +13,11 @@ export interface CuratedModel {
   // Human-readable label shown alongside the id (optional — if omitted, UI
   // uses the id).
   readonly label?: string
+  // Function-calling support. `true` / `false` when known; `undefined` means
+  // unverified (default-allow). Only mark `false` when the provider is
+  // documented to reject `tools:` in the request for this model — the UI
+  // shows a warning in the agent inspector's Tools group when this is false.
+  readonly supportsTools?: boolean
 }
 
 // Keyed by provider name. Order within an array is the display order.
@@ -60,4 +65,25 @@ export const isCuratedModel = (provider: string, modelId: string): boolean => {
   const list = CURATED_MODELS[provider]
   if (!list) return false
   return list.some(m => m.id === modelId)
+}
+
+// Return tool-capability for a model reference, or `undefined` when unknown.
+// Accepts both prefixed (`provider:modelId`) and bare (`modelId`) refs.
+// Unknown is default-allow — the UI only warns on an explicit `false`.
+export const modelSupportsTools = (modelRef: string): boolean | undefined => {
+  const colonIdx = modelRef.indexOf(':')
+  const [provider, modelId] = colonIdx > 0
+    ? [modelRef.slice(0, colonIdx), modelRef.slice(colonIdx + 1)]
+    : [undefined, modelRef]
+  const search = (list: ReadonlyArray<CuratedModel> | undefined): boolean | undefined => {
+    const hit = list?.find(m => m.id === modelId)
+    return hit?.supportsTools
+  }
+  if (provider) return search(CURATED_MODELS[provider])
+  // No prefix — scan all providers, return the first explicit verdict.
+  for (const list of Object.values(CURATED_MODELS)) {
+    const v = search(list)
+    if (v !== undefined) return v
+  }
+  return undefined
 }

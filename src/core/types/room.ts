@@ -23,6 +23,14 @@ export type OnFlowEvent = <E extends FlowEventName>(roomId: string, event: E, de
 export type OnRoomCreated = (profile: RoomProfile) => void
 export type OnRoomDeleted = (roomId: string, roomName: string) => void
 export type OnMembershipChanged = (roomId: string, roomName: string, agentId: string, agentName: string, action: 'added' | 'removed') => void
+export type OnBookmarksChanged = () => void
+
+// === Bookmarks — system-wide message snippets (Phase 1) ===
+
+export interface Bookmark {
+  readonly id: string
+  readonly content: string
+}
 
 // === Room state snapshot (for UI sync on connect/reconnect) ===
 
@@ -103,6 +111,7 @@ export interface HouseCallbacks {
   readonly deliver?: DeliverFn
   readonly resolveAgentName?: ResolveAgentName
   readonly resolveTag?: ResolveTagFn
+  readonly resolveKind?: (id: string) => 'ai' | 'human' | undefined
   readonly onMessagePosted?: OnMessagePosted
   readonly onTurnChanged?: OnTurnChanged
   readonly onDeliveryModeChanged?: OnDeliveryModeChanged
@@ -110,6 +119,8 @@ export interface HouseCallbacks {
   readonly onArtifactChanged?: OnArtifactChanged
   readonly onRoomCreated?: OnRoomCreated
   readonly onRoomDeleted?: OnRoomDeleted
+  readonly onBookmarksChanged?: OnBookmarksChanged
+  readonly onManualModeEntered?: (roomId: string) => void
   readonly callSystemLLM?: (options: LLMCallOptions) => Promise<string>
 }
 
@@ -130,6 +141,12 @@ export interface House {
   // Artifact system
   readonly artifacts: ArtifactStore
   readonly artifactTypes: ArtifactTypeRegistry
+  // System-wide message bookmarks. New entries at index 0 (top).
+  readonly listBookmarks: () => ReadonlyArray<Bookmark>
+  readonly addBookmark: (content: string) => Bookmark
+  readonly updateBookmark: (id: string, content: string) => Bookmark | undefined
+  readonly deleteBookmark: (id: string) => boolean
+  readonly restoreBookmarks: (bookmarks: ReadonlyArray<Bookmark>) => void
   // System-level LLM access — available when callSystemLLM is provided via HouseCallbacks
   readonly callSystemLLM?: (options: LLMCallOptions) => Promise<string>
 }

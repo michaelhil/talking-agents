@@ -235,7 +235,7 @@ export const $roomListView = batched(
 
 /** Combined agent list view — triggers one render when any input changes. */
 export const $agentListView = batched(
-  [$agents, $mutedAgents, $myAgentId, $selectedAgentId, $selectedRoomId, $roomMembers],
+  [$agents, $mutedAgents, $myAgentId, $selectedAgentId, $selectedRoomId, $roomMembers, $currentDeliveryMode],
   (
     agents: Record<string, AgentEntry>,
     mutedAgents: Set<string>,
@@ -243,6 +243,7 @@ export const $agentListView = batched(
     selectedAgentId: string | null,
     selectedRoomId: string | null,
     roomMembers: Record<string, string[]>,
+    deliveryMode: string,
   ) => ({
     agents,
     mutedAgents,
@@ -250,5 +251,6 @@ export const $agentListView = batched(
     selectedAgentId,
     selectedRoomId,
     roomMemberIds: selectedRoomId ? (roomMembers[selectedRoomId] ?? []) : [],
+    deliveryMode,
   }),
 )

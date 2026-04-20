@@ -20,19 +20,21 @@
 //     8000 when unknown). v5 snapshots containing those fields still load —
 //     the factory ignores unknown keys on AIAgentConfig, so removal is a
 //     silent drop at load time.
+// v7: Adds system-wide `bookmarks: Bookmark[]`. Absent on v6 snapshots — the
+//     restore path resolves missing to []. Migration is a pure version bump.
 // ============================================================================
 
 import type { Agent, AIAgentConfig } from './types/agent.ts'
 import type { Artifact } from './types/artifact.ts'
 import type { DeliveryMode, Message, RoomProfile } from './types/messaging.ts'
-import type { Room } from './types/room.ts'
+import type { Bookmark, Room } from './types/room.ts'
 import { asAIAgent } from '../agents/shared.ts'
 import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 6
+export const SNAPSHOT_VERSION = 7
 
 // --- Snapshot schema ---
 
@@ -53,11 +55,12 @@ export interface AgentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '6'
+  readonly version: '7'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>
   readonly artifacts: ReadonlyArray<Artifact>
+  readonly bookmarks?: ReadonlyArray<Bookmark>
   readonly ollamaUrls?: ReadonlyArray<string>
   readonly ollamaUrl?: string
 }
@@ -74,6 +77,7 @@ interface SerializableSystem {
     readonly artifacts: {
       readonly list: (filter?: { includeResolved?: boolean }) => ReadonlyArray<Artifact>
     }
+    readonly listBookmarks: () => ReadonlyArray<Bookmark>
   }
   readonly team: {
     readonly listAgents: () => ReadonlyArray<Agent>
@@ -124,11 +128,12 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const artifacts = system.house.artifacts.list({ includeResolved: true })
 
   return {
-    version: '6',
+    version: '7',
     timestamp: Date.now(),
     rooms,
     agents,
     artifacts: [...artifacts],
+    bookmarks: [...system.house.listBookmarks()],
     ...(system.ollamaUrls ? {
       ollamaUrls: system.ollamaUrls.list(),
       ollamaUrl: system.ollamaUrls.getCurrent(),
@@ -166,11 +171,19 @@ const migrateV5ToV6 = (raw: Record<string, unknown>): Record<string, unknown> =>
   return { ...raw, version: '6' }
 }
 
+// v6 → v7: additive — new `bookmarks` field defaults to [] when absent.
+// Restore path resolves missing to []. Version bump only.
+const migrateV6ToV7 = (raw: Record<string, unknown>): Record<string, unknown> => {
+  if (raw.version !== '6') return raw
+  return { ...raw, version: '7' }
+}
+
 const migrate = (raw: Record<string, unknown>): Record<string, unknown> => {
   let out = raw
   out = migrateV3ToV4(out)
   out = migrateV4ToV5(out)
   out = migrateV5ToV6(out)
+  out = migrateV6ToV7(out)
   return out
 }
 
@@ -215,6 +228,7 @@ interface RestorableSystem {
     readonly artifacts: {
       readonly restore: (artifacts: ReadonlyArray<Artifact>) => void
     }
+    readonly restoreBookmarks: (entries: ReadonlyArray<Bookmark>) => void
   }
   readonly spawnAIAgent: (config: AIAgentConfig, options?: { overrideId?: string }) => Promise<unknown>
   readonly team?: {
@@ -238,7 +252,9 @@ export const restoreFromSnapshot = async (
     room.restoreState({
       members: roomSnap.members,
       muted: roomSnap.muted,
-      mode: 'broadcast',  // Flow execution is never persisted
+      // Flow execution is never persisted; restore flow rooms as broadcast.
+      // Manual mode is persisted — resumes the user's turn-taking session.
+      mode: roomSnap.deliveryMode === 'manual' ? 'manual' : 'broadcast',
       paused: roomSnap.paused,
       compressedIds: roomSnap.compressedIds,
     })
@@ -262,6 +278,9 @@ export const restoreFromSnapshot = async (
 
   // 4. Restore artifacts
   system.house.artifacts.restore(snapshot.artifacts ?? [])
+
+  // 4b. Restore bookmarks (system-wide)
+  system.house.restoreBookmarks(snapshot.bookmarks ?? [])
 
   // 5. Restore Ollama URLs
   if (system.ollamaUrls && snapshot.ollamaUrls) {

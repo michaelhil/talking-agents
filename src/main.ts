@@ -8,7 +8,7 @@
 import type { Agent, AIAgent, AIAgentConfig, RouteMessage, Team } from './core/types/agent.ts'
 import type { DeliverFn, ResolveAgentName, ResolveTagFn } from './core/types/messaging.ts'
 import type {
-  House, HouseCallbacks, OnDeliveryModeChanged, OnFlowEvent,
+  House, HouseCallbacks, OnBookmarksChanged, OnDeliveryModeChanged, OnFlowEvent,
   OnMembershipChanged, OnMessagePosted, OnRoomCreated, OnRoomDeleted, OnTurnChanged,
 } from './core/types/room.ts'
 import type { OnArtifactChanged } from './core/types/artifact.ts'
@@ -17,6 +17,7 @@ import type { ToolRegistry } from './core/types/tool.ts'
 import type { OnProviderBound, OnProviderAllFailed, OnProviderStreamFailed } from './core/types/llm.ts'
 import type { ProviderRoutingEvent } from './llm/router.ts'
 import { createHouse } from './core/house.ts'
+import { asAIAgent } from './agents/shared.ts'
 import { createTeam } from './agents/team.ts'
 import { createMessageRouter } from './core/delivery.ts'
 import type { LLMGateway } from './llm/gateway.ts'
@@ -91,6 +92,8 @@ export interface System {
   readonly removeAgentFromRoom: (agentId: string, roomId: string, removedBy?: string) => void
   readonly spawnAIAgent: (config: AIAgentConfig, options?: SpawnOptions) => Promise<Agent>
   readonly spawnHumanAgent: (config: HumanAgentConfig, send: TransportSend) => Promise<HumanAgent>
+  // Manual-mode activation: catch the agent up and force one eval.
+  readonly activateAgentInRoom: (agentId: string, roomId: string) => { ok: boolean; queued: boolean; reason?: string }
   readonly setOnMessagePosted: (callback: OnMessagePosted) => void
   readonly setOnTurnChanged: (callback: OnTurnChanged) => void
   readonly setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => void
@@ -99,6 +102,7 @@ export interface System {
   readonly setOnRoomCreated: (callback: OnRoomCreated) => void
   readonly setOnRoomDeleted: (callback: OnRoomDeleted) => void
   readonly setOnMembershipChanged: (callback: OnMembershipChanged) => void
+  readonly setOnBookmarksChanged: (callback: OnBookmarksChanged) => void
   readonly setOnEvalEvent: (callback: OnEvalEvent) => void
   readonly setOnProviderBound: (callback: OnProviderBound) => void
   readonly setOnProviderAllFailed: (callback: OnProviderAllFailed) => void
@@ -146,6 +150,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const roomCreated = lateBinding<OnRoomCreated>()
   const roomDeleted = lateBinding<OnRoomDeleted>()
   const membershipChanged = lateBinding<OnMembershipChanged>()
+  const bookmarksChanged = lateBinding<OnBookmarksChanged>()
   const evalEvent = lateBinding<OnEvalEvent>()
   const providerBound = lateBinding<OnProviderBound>()
   const providerAllFailed = lateBinding<OnProviderAllFailed>()
@@ -153,6 +158,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
+  const resolveKind = (id: string): 'ai' | 'human' | undefined => team.getAgent(id)?.kind
 
   // Saved Ollama URLs — only meaningful when Ollama is in the router.
   // When absent, setters are no-ops and getCurrent returns empty.
@@ -182,6 +188,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     deliver,
     resolveAgentName,
     resolveTag,
+    resolveKind,
     onMessagePosted: messagePosted.proxy,
     onTurnChanged: turnChanged.proxy,
     onDeliveryModeChanged: deliveryModeChanged.proxy,
@@ -189,6 +196,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     onArtifactChanged: artifactChanged.proxy,
     onRoomCreated: roomCreated.proxy,
     onRoomDeleted: roomDeleted.proxy,
+    onBookmarksChanged: bookmarksChanged.proxy,
+    onManualModeEntered: (roomId: string) => { cancelGenerationsInRoom(roomId) },
     callSystemLLM: (options) => callLLM(llm, options),
   }
   const house = createHouse(houseCallbacks)
@@ -240,6 +249,54 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       }
     }
     return removed
+  }
+
+  // Cancel in-flight AI generation only for agents whose current generation
+  // context is this room. Called by the room's onManualModeEntered hook.
+  function cancelGenerationsInRoom(roomId: string): void {
+    const room = house.getRoom(roomId)
+    if (!room) return
+    for (const id of room.getParticipantIds()) {
+      const agent = team.getAgent(id)
+      if (!agent || agent.kind !== 'ai') continue
+      if (agent.state.getContext() !== roomId) continue
+      const ai = asAIAgent(agent)
+      ai?.cancelGeneration()
+    }
+  }
+
+  // Explicit one-turn activation for manual mode. Catches the agent up on
+  // messages it hasn't seen, then forces a single evaluation. If the agent
+  // is busy generating elsewhere, `tryEvaluate` queues internally — callers
+  // surface the `queued: true` result as a UI toast.
+  const activateAgentInRoom = (
+    agentId: string,
+    roomId: string,
+  ): { ok: boolean; queued: boolean; reason?: string } => {
+    const room = house.getRoom(roomId)
+    if (!room) return { ok: false, queued: false, reason: 'room not found' }
+    if (room.deliveryMode !== 'manual') {
+      return { ok: false, queued: false, reason: 'room is not in manual mode' }
+    }
+    const agent = team.getAgent(agentId)
+    if (!agent || agent.kind !== 'ai') {
+      return { ok: false, queued: false, reason: 'agent is not an AI agent in this room' }
+    }
+    if (!room.hasMember(agentId)) {
+      return { ok: false, queued: false, reason: 'agent is not a member of this room' }
+    }
+    if (room.isMuted(agentId)) {
+      return { ok: false, queued: false, reason: 'agent is muted' }
+    }
+    const ai = asAIAgent(agent)
+    if (!ai || !ai.ingestHistory || !ai.forceEvaluate) {
+      return { ok: false, queued: false, reason: 'agent does not support manual activation' }
+    }
+    const recent = room.getRecent((ai.getHistoryLimit() ?? 20) * 2)
+    ai.ingestHistory(roomId, recent)
+    const queued = agent.state.get() === 'generating' && agent.state.getContext() !== roomId
+    ai.forceEvaluate(roomId)
+    return { ok: true, queued }
   }
 
   const removeAgent = (id: string): boolean => {
@@ -361,6 +418,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     removeAgentFromRoom: systemRemoveAgentFromRoom,
     spawnAIAgent: boundSpawnAIAgent,
     spawnHumanAgent: boundSpawnHumanAgent,
+    activateAgentInRoom,
     setOnMessagePosted: messagePosted.set,
     setOnTurnChanged: turnChanged.set,
     setOnDeliveryModeChanged: deliveryModeChanged.set,
@@ -369,6 +427,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     setOnRoomCreated: roomCreated.set,
     setOnRoomDeleted: roomDeleted.set,
     setOnMembershipChanged: membershipChanged.set,
+    setOnBookmarksChanged: bookmarksChanged.set,
     setOnEvalEvent: evalEvent.set,
     setOnProviderBound: providerBound.set,
     setOnProviderAllFailed: providerAllFailed.set,

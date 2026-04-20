@@ -75,7 +75,7 @@ export const mountRoomMembers = (deps: RoomMembersDeps): void => {
   })
 
   // --- Render on any relevant state change ---
-  $agentListView.subscribe(({ agents, mutedAgents, selectedRoomId, roomMemberIds }) => {
+  $agentListView.subscribe(({ agents, mutedAgents, selectedRoomId, roomMemberIds, deliveryMode }) => {
     if (!selectedRoomId) {
       container.classList.add('hidden')
       container.innerHTML = ''
@@ -87,6 +87,7 @@ export const mountRoomMembers = (deps: RoomMembersDeps): void => {
       mutedAgentIds: mutedAgents,
       memberIds: roomMemberIds,
       selectedRoomId,
+      deliveryMode,
       send,
       openCreateAgentModal,
       inspectAgent,
@@ -101,6 +102,7 @@ interface RenderOpts {
   readonly mutedAgentIds: Set<string>
   readonly memberIds: ReadonlyArray<string>
   readonly selectedRoomId: string
+  readonly deliveryMode: string
   readonly send: (data: unknown) => void
   readonly openCreateAgentModal: () => void
   readonly inspectAgent: (agentId: string) => void
@@ -112,11 +114,13 @@ const render = (container: HTMLElement, opts: RenderOpts): void => {
   const roomName = roomIdToName(opts.selectedRoomId)
   if (!roomName) return
 
+  const isManual = opts.deliveryMode === 'manual'
+
   for (const agentId of opts.memberIds) {
     const agent = opts.agents[agentId]
     if (!agent) continue
     const isGenerating = agent.state === 'generating'
-    container.appendChild(renderChip(agent, opts.mutedAgentIds.has(agentId), isGenerating, roomName, opts.send, opts.inspectAgent))
+    container.appendChild(renderChip(agent, opts.mutedAgentIds.has(agentId), isGenerating, isManual, roomName, opts.send, opts.inspectAgent))
   }
 
   container.appendChild(renderAddButton(opts, roomName))
@@ -126,6 +130,7 @@ const renderChip = (
   agent: AgentEntry,
   isMuted: boolean,
   isGenerating: boolean,
+  isManualMode: boolean,
   roomName: string,
   send: (data: unknown) => void,
   inspectAgent: (agentId: string) => void,
@@ -160,6 +165,24 @@ const renderChip = (
   emoji.textContent = agent.kind === 'ai' ? '🤖' : '🧠'
   chip.appendChild(emoji)
 
+  // In manual mode, show a ▶ on AI agent chips (hidden when muted). Click
+  // fires activate_agent — the server catches the agent up on missed
+  // messages and triggers one evaluation.
+  if (isManualMode && agent.kind === 'ai' && !isMuted) {
+    const activateBtn = document.createElement('button')
+    const disabled = isGenerating
+    activateBtn.className = `text-xs px-1 ${disabled ? 'text-gray-300 cursor-not-allowed' : 'text-emerald-500 hover:text-emerald-700'}`
+    activateBtn.textContent = '▶'
+    activateBtn.title = disabled ? `${agent.name} is generating` : `Activate ${agent.name} for one turn`
+    activateBtn.disabled = disabled
+    activateBtn.onclick = (e) => {
+      e.stopPropagation()
+      if (disabled) return
+      send({ type: 'activate_agent', roomName, agentName: agent.name })
+    }
+    chip.appendChild(activateBtn)
+  }
+
   const removeBtn = document.createElement('button')
   removeBtn.className = 'opacity-0 group-hover/chip:opacity-100 text-orange-400 hover:text-orange-700 text-xs ml-0.5'
   removeBtn.textContent = '×'
@@ -179,7 +202,7 @@ const renderAddButton = (opts: RenderOpts, roomName: string): HTMLElement => {
 
   const btn = document.createElement('button')
   btn.className = 'px-2 py-0.5 text-xs border border-dashed border-gray-300 text-gray-500 rounded hover:border-blue-400 hover:text-blue-600'
-  btn.textContent = '＋ Add'
+  btn.textContent = '＋'
   btn.title = 'Add an agent to this room'
 
   btn.onclick = (e) => {

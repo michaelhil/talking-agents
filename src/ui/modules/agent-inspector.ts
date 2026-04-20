@@ -104,6 +104,61 @@ const createEditableField = (
   return { container, textarea }
 }
 
+// --- Tags field: chips + comma-separated input + Save button ---
+const renderTagsField = (container: HTMLElement, agentEnc: string, initialTags: ReadonlyArray<string>): void => {
+  const wrap = document.createElement('div')
+  wrap.className = 'mb-3'
+
+  const header = document.createElement('div')
+  header.className = 'flex items-center justify-between mb-1'
+  const label = document.createElement('span')
+  label.className = 'text-xs font-semibold text-gray-400 uppercase tracking-wide'
+  label.textContent = 'Tags'
+  header.appendChild(label)
+
+  const saveBtn = document.createElement('button')
+  saveBtn.className = 'text-xs px-3 py-1 bg-gray-300 text-white rounded cursor-not-allowed'
+  saveBtn.textContent = 'Update'
+  header.appendChild(saveBtn)
+
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'w-full border rounded p-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-300'
+  input.placeholder = 'comma-separated (e.g. reviewer, safety)'
+  const joined = initialTags.join(', ')
+  input.value = joined
+  let saved = joined
+
+  const updateStyle = (): void => {
+    const dirty = input.value !== saved
+    saveBtn.className = dirty
+      ? 'text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer'
+      : 'text-xs px-3 py-1 bg-gray-300 text-white rounded cursor-not-allowed'
+  }
+  input.oninput = updateStyle
+
+  const parseTags = (raw: string): string[] =>
+    raw.split(',').map(s => s.trim()).filter(s => s.length > 0)
+
+  saveBtn.onclick = async () => {
+    if (input.value === saved) return
+    const tags = parseTags(input.value)
+    await safeFetchJson(`/api/agents/${agentEnc}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags }),
+    })
+    saved = tags.join(', ')
+    input.value = saved
+    updateStyle()
+    wrap.style.position = 'relative'
+    showToast(wrap, 'Tags updated')
+  }
+
+  wrap.appendChild(header)
+  wrap.appendChild(input)
+  container.appendChild(wrap)
+}
+
 // --- Main render function ---
 
 export const renderAgentInspector = (container: HTMLElement, agentName: string): void => {
@@ -227,6 +282,10 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
       )
       container.appendChild(descContainer)
     }
+
+    // Tags (both AI and human) — comma-separated; powers `[[tag:X]]` addressing.
+    const tagsArr = Array.isArray(agentRes.tags) ? agentRes.tags as string[] : []
+    renderTagsField(container, enc, tagsArr)
 
     // --- Memory section (AI only) ---
     if (isAI) {

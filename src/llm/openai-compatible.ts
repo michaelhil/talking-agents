@@ -320,7 +320,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       ? choice.message.tool_calls.map(tc => ({
           function: {
             name: tc.function.name,
-            arguments: parseArgs(tc.function.arguments),
+            arguments: parseArgs(tc.function.arguments, config.name, tc.function.name),
           },
         }))
       : undefined
@@ -429,7 +429,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
     const emitFinal = (): StreamChunk => {
       const toolCalls: NativeToolCall[] | undefined = toolAccum.length
         ? toolAccum.map(t => ({
-            function: { name: t.name, arguments: parseArgs(t.argsBuffer) },
+            function: { name: t.name, arguments: parseArgs(t.argsBuffer, config.name, t.name) },
           }))
         : undefined
       const chunk: StreamChunk = {
@@ -532,13 +532,19 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
 }
 
 // OpenAI tool_call.function.arguments is a JSON string. Ollama passes an object.
-// samsinn's NativeToolCall expects an object.
-const parseArgs = (raw: string): Record<string, unknown> => {
+// samsinn's NativeToolCall expects an object. Malformed args are surfaced as
+// a warning (provider + tool + raw snippet) so silent-zero-arg tool calls
+// don't vanish into the void; the caller still gets `{}` to keep the tool
+// loop going.
+const parseArgs = (raw: string, provider?: string, toolName?: string): Record<string, unknown> => {
   if (!raw) return {}
   try {
     const parsed = JSON.parse(raw)
-    return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {}
-  } catch {
+    if (typeof parsed === 'object' && parsed !== null) return parsed as Record<string, unknown>
+    console.warn(`[${provider ?? 'cloud'}] tool-call args for ${toolName ?? '<unknown>'} parsed to non-object; using {}. raw=${raw.slice(0, 200)}`)
+    return {}
+  } catch (err) {
+    console.warn(`[${provider ?? 'cloud'}] tool-call args for ${toolName ?? '<unknown>'} malformed JSON; using {}. raw=${raw.slice(0, 200)} err=${err instanceof Error ? err.message : String(err)}`)
     return {}
   }
 }

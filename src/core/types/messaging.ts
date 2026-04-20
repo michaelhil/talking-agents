@@ -86,11 +86,11 @@ export type DeliverFn = (agentId: string, message: Message) => void
 // === Delivery Modes — room has exactly one active mode ===
 // [[AgentName]] addressing and muting work as universal overrides in all modes.
 
-export type DeliveryMode = 'broadcast' | 'flow'
+export type DeliveryMode = 'broadcast' | 'flow' | 'manual'
 
 // Modes that can be set directly via the delivery-mode endpoint.
 // 'flow' is excluded — it is entered only via startFlow().
-export const SETTABLE_DELIVERY_MODES = ['broadcast'] as const satisfies ReadonlyArray<Exclude<DeliveryMode, 'flow'>>
+export const SETTABLE_DELIVERY_MODES = ['broadcast', 'manual'] as const satisfies ReadonlyArray<Exclude<DeliveryMode, 'flow'>>
 export type SettableDeliveryMode = typeof SETTABLE_DELIVERY_MODES[number]
 
 // === Delivery-side utility types ===

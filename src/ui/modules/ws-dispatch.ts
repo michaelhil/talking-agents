@@ -231,6 +231,16 @@ const handlers: Handlers = {
     }
   },
 
+  activation_result(msg) {
+    if (!msg.ok) {
+      showToast(document.body, `${msg.agentName}: ${msg.reason ?? 'activation failed'}`, { position: 'fixed' })
+      return
+    }
+    if (msg.queued) {
+      showToast(document.body, `${msg.agentName} busy — activation queued`, { position: 'fixed' })
+    }
+  },
+
   // --- Agent state ---
 
   agent_state(msg) {
