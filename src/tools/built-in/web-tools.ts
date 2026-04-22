@@ -131,11 +131,12 @@ const buildTavilySearchTool = (apiKey: string): Tool => ({
         }),
       })
       if (!res.ok) {
+        const body = await res.text().catch(() => '')
         if (res.status === 401 || res.status === 403) {
-          return { success: false, error: `Search API key rejected (HTTP ${res.status}). Check TAVILY_API_KEY.` }
+          return { success: false, error: `Search API key rejected (HTTP ${res.status}). Check TAVILY_API_KEY. Body: ${body.slice(0, 200)}` }
         }
         if (res.status === 429) return { success: false, error: 'Search API rate limit exceeded (Tavily free tier is 1000/month). Try again later or upgrade.' }
-        return { success: false, error: `Search API returned HTTP ${res.status}` }
+        return { success: false, error: `Search API returned HTTP ${res.status}: ${body.slice(0, 200)}` }
       }
       const json = await res.json() as {
         results?: Array<{ title: string; url: string; content?: string; score?: number; published_date?: string }>

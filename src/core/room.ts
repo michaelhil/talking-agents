@@ -418,7 +418,12 @@ export const createRoom = (
       return true
     },
     clearMessages: (): void => {
+      // Wipe everything that's a function of message history. Without this,
+      // a "clear" leaves stale tombstones + summary that misrepresent an
+      // empty room.
       messages.length = 0
+      compressedIds.clear()
+      latestSummary = undefined
     },
 
     get deliveryMode() { return mode },

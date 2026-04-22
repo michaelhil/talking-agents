@@ -4,6 +4,7 @@ import { SETTABLE_DELIVERY_MODES } from '../../core/types/messaging.ts'
 import type { SettableDeliveryMode } from '../../core/types/messaging.ts'
 import type { SummaryConfig } from '../../core/types/summary.ts'
 import type { RouteEntry } from './types.ts'
+import { asAIAgent } from '../../agents/shared.ts'
 
 export const roomRoutes: RouteEntry[] = [
   {
@@ -62,6 +63,13 @@ export const roomRoutes: RouteEntry[] = [
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
       const count = room.getMessageCount()
       room.clearMessages()
+      // Also wipe per-agent memory of this room so AI participants don't
+      // retain phantom history of cleared messages.
+      for (const agentId of room.getParticipantIds()) {
+        const agent = system.team.getAgent(agentId)
+        const ai = agent ? asAIAgent(agent) : undefined
+        ai?.clearHistory?.(room.profile.id)
+      }
       return json({ cleared: true, count })
     },
   },

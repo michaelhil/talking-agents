@@ -3,6 +3,7 @@ import type { SettableDeliveryMode } from '../../core/types/messaging.ts'
 import type { WSInbound } from '../../core/types/ws-protocol.ts'
 import { resolveMacroArtifact, isMacroError } from '../../core/macro-artifact.ts'
 import { requireRoom, requireAgent, sendError, type CommandContext } from './types.ts'
+import { asAIAgent } from '../../agents/shared.ts'
 
 export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Promise<boolean> => {
   const { ws, session, system, broadcast } = ctx
@@ -74,6 +75,13 @@ export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Pr
       const room = requireRoom(ws, system, msg.roomName)
       if (!room) return true
       room.clearMessages()
+      // Also wipe per-agent memory of this room so AI participants don't
+      // retain phantom history of messages the user just cleared.
+      for (const agentId of room.getParticipantIds()) {
+        const agent = system.team.getAgent(agentId)
+        const ai = agent ? asAIAgent(agent) : undefined
+        ai?.clearHistory?.(room.profile.id)
+      }
       broadcast({ type: 'messages_cleared', roomName: room.profile.name })
       return true
     }

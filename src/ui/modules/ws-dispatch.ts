@@ -242,9 +242,11 @@ const handlers: Handlers = {
   messages_cleared(msg) {
     const roomId = $roomIdByName.get()[msg.roomName]
     if (roomId) {
-      const all = { ...$roomMessages.get() }
-      delete all[roomId]
-      $roomMessages.set(all)
+      // Use setKey so the renderer's listener receives a `changedKey` and
+      // diffs the empty array against the DOM. A bare set() leaves
+      // changedKey undefined, which the renderer treats as "irrelevant
+      // change" and skips DOM removal — leaving phantom messages on screen.
+      $roomMessages.setKey(roomId, [])
     }
   },
 
