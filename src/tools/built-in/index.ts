@@ -7,3 +7,4 @@ export { createGetTimeTool, createPostToRoomTool, createGetRoomHistoryTool } fro
 export { createWebTools } from './web-tools.ts'
 export { createWriteDocumentSectionTool, parseStreamedBlocks } from './document-tools.ts'
 export { createWriteSkillTool, createWriteToolTool, createTestToolTool, createListSkillsTool } from './codegen-tools.ts'
+export { createPackTools, type PackToolsDeps } from './pack-tools.ts'

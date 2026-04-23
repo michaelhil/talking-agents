@@ -49,6 +49,7 @@ import {
   createUpdateArtifactTool, createRemoveArtifactTool, createCastVoteTool,
   createWebTools, createWriteDocumentSectionTool,
   createWriteSkillTool, createWriteToolTool, createTestToolTool, createListSkillsTool,
+  createPackTools,
 } from './tools/built-in/index.ts'
 import { createTaskListArtifactType } from './core/artifact-types/task-list.ts'
 import { pollArtifactType } from './core/artifact-types/poll.ts'
@@ -85,6 +86,7 @@ export interface System {
   readonly refreshAllAgentTools: () => Promise<void>
   readonly skillStore: SkillStore
   readonly skillsDir: string
+  readonly packsDir: string
   readonly knowledgeDir: string
   readonly providersStorePath: string
   // OllamaUrls editor — no-op when Ollama isn't configured.
@@ -401,6 +403,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
 
   // Skill system — file-based behavioral templates with bundled tools
   const skillsDir = join(homedir(), '.samsinn', 'skills')
+  const packsDir = join(homedir(), '.samsinn', 'packs')
   const skillStore = createSkillStore()
 
   const getSkillsForRoom = (roomName: string): string => {
@@ -427,6 +430,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   toolRegistry.register(createWriteToolTool(toolRegistry, skillStore, refreshAllAgentTools))
   toolRegistry.register(createTestToolTool(toolRegistry))
   toolRegistry.register(createListSkillsTool(skillStore))
+
+  // Pack admin tools — install/update/uninstall/list GitHub-sourced packs.
+  toolRegistry.registerAll(createPackTools({
+    packsDir, toolRegistry, skillStore, refreshAllAgentTools,
+  }))
 
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
     spawnAIAgent(config, llm, house, team, routeMessage, toolRegistry, {
@@ -457,6 +465,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     house, team, routeMessage,
     llm, ollama, providerConfig, providerKeys, gateways,
     toolRegistry, refreshAllAgentTools, skillStore, skillsDir,
+    packsDir,
     knowledgeDir: join(homedir(), '.samsinn', 'knowledge'),
     providersStorePath: join(homedir(), '.samsinn', 'providers.json'),
     ollamaUrls,

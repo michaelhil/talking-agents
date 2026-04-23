@@ -15,6 +15,7 @@ import { loadSnapshot, restoreFromSnapshot, createAutoSaver } from './core/snaps
 import { resolve } from 'node:path'
 import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
+import { loadAllPacks } from './packs/loader.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { parseProviderConfig, summariseProviderConfig } from './llm/providers-config.ts'
 import { buildProvidersFromConfig, warmProviderModels } from './llm/providers-setup.ts'
@@ -52,6 +53,7 @@ export const bootstrap = async (): Promise<void> => {
   await loadExternalTools(system.toolRegistry)
   await loadSkills(resolve(process.cwd(), 'skills'), system.skillStore, system.toolRegistry)
   await loadSkills(system.skillsDir, system.skillStore, system.toolRegistry)
+  await loadAllPacks(system.packsDir, system.toolRegistry, system.skillStore)
 
   // Restore from snapshot if available
   const snapshotPath = resolve(import.meta.dir, '../data/snapshot.json')
