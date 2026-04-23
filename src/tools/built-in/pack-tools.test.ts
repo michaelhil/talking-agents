@@ -2,7 +2,7 @@
 // Uses a real local git repo as the source and file:// as the transport,
 // so nothing leaves the machine.
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, it, expect, afterEach } from 'bun:test'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

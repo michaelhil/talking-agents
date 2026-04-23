@@ -1002,6 +1002,7 @@ agentsHeader.onclick = () => {
 
 // Tools + skills sidebar wiring lives in sidebar.ts.
 void import('./sidebar.ts').then(m => m.initSidebar())
+void import('./packs-panel.ts').then(m => m.initPacksPanel())
 
 btnCollapseSidebar.onclick = () => $sidebarCollapsed.set(!$sidebarCollapsed.get())
 

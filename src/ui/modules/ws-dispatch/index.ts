@@ -486,6 +486,13 @@ const handlers: Handlers = {
     window.dispatchEvent(new CustomEvent('providers-changed'))
   },
 
+  packs_changed(_msg) {
+    // A pack was installed / updated / uninstalled. The packs panel listens
+    // for this CustomEvent and re-fetches /api/packs. Tool/skill sections
+    // refresh lazily on next open (their `loaded` flag is reset here).
+    window.dispatchEvent(new CustomEvent('packs-changed'))
+  },
+
   // --- Summary + compression ---
 
   summary_config_changed(_msg) {

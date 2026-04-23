@@ -93,6 +93,8 @@ export type WSOutbound =
   // Fired after the providers admin endpoint applies a live key change. UI
   // listeners refresh their model-list dropdowns without a reload.
   | { readonly type: 'providers_changed'; readonly providers: ReadonlyArray<string> }
+  // Fired after a pack is installed / updated / uninstalled. UI panels refresh.
+  | { readonly type: 'packs_changed' }
   // Summary + compression
   | { readonly type: 'summary_config_changed'; readonly roomName: string; readonly config: SummaryConfig }
   | { readonly type: 'summary_run_started'; readonly roomName: string; readonly target: SummaryTarget }

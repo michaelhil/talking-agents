@@ -261,6 +261,15 @@
         <div id="skills-list" class="overflow-y-auto max-h-48 hidden"></div>
       </div>
 
+      <!-- Packs section (collapsed by default) -->
+      <div class="sidebar-content border-b">
+        <div id="packs-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-surface-muted">
+          <span id="packs-toggle" class="text-xs font-medium text-text-subtle uppercase whitespace-nowrap">▸ Packs</span>
+          <button id="btn-install-pack" data-packs-action class="text-xs text-text-subtle hover:text-text font-bold" title="Install pack from GitHub">+</button>
+        </div>
+        <div id="packs-list" class="overflow-y-auto max-h-48 hidden"></div>
+      </div>
+
       <!-- Sidebar footer — app name + version + repo link. Pushed to bottom by mt-auto. -->
       <div class="sidebar-content mt-auto p-2 flex items-center gap-1 text-xs whitespace-nowrap" style="border-top: 1px solid var(--border); color: var(--text-subtle);">
         <span class="font-semibold" style="color: var(--text);">samsinn</span>
