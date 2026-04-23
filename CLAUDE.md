@@ -13,6 +13,16 @@ The owner finds branching/worktree workflows more friction than they're worth fo
 - If you find yourself about to create a branch "for safety", don't — commit smaller, more atomic units on master instead and push often.
 - Exceptions require explicit request from the owner ("open a PR for X"). Default is: straight to master.
 
+## Rejected refactors (do not re-propose)
+
+These have been evaluated and rejected as motion-without-progress. Do NOT include them in audit reports, stress-tests, or improvement plans unless you can demonstrate a *significant* new benefit that wasn't present when they were rejected (e.g. a bug traced to the pattern, a second-consumer use case, a measurable performance or correctness gain).
+
+- **Replacing `lateBinding` in `main.ts` with an event bus.** The 22 typed callback slots in `createSystem` (lines ~157–178) are intentional. They are parallel, independent, compile-time typed, and localized. A generic `createEventBus<HouseEventMap>()` migration was evaluated and produces +33 net LOC, zero user-observable benefit, and duplicated type information (System methods AND the event map). If you're tempted by "one source of truth for pub/sub" or "future `system.on('x', cb)` API", that's YAGNI — revisit only when a second consumer pattern actually emerges.
+
+- **Extracting `createSystem` into 4 "boot phase" sub-functions.** Also evaluated — it just spreads the 22 `lateBinding` slots across more files without eliminating them. If `main.ts` size is the problem, prefer targeted extractions of self-contained subsystems (as was done for `ollama-urls.ts`), not whole-factory splits.
+
+When in doubt: the `lateBinding` pattern is working. Ugly ≠ broken. Move on.
+
 ## Commands
 
 - `bun run start` — run the server (HTTP + WebSocket + UI at :3000)
