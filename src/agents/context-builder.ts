@@ -359,7 +359,7 @@ export const buildSystemSections = (
   out.push({
     key: 'ctx_newHint',
     label: 'NEW_HINT',
-    text: 'Messages marked [NEW] have arrived since you last responded.',
+    text: 'Messages marked [NEW] have arrived since you last responded.\nTo include a diagram, wrap Mermaid source in a ```mermaid fenced code block — the UI renders it inline as an SVG. Rules: use `flowchart` (not `graph`); no trailing semicolons; every node is `ID[Label]` or `ID(Label)` or `ID{Label}` — never a bare quoted string; if a label contains `/`, `#`, `<`, or `>`, quote it inside the brackets like `P["Process / Store"]`, not as `"Process / Store"` on its own.',
     enabled: true,
     optional: false,
   })
