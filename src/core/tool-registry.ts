@@ -35,6 +35,16 @@ export const createToolRegistry = (): ToolRegistry => {
     },
     registerWithSource,
     unregister: (name: string): boolean => entries.delete(name),
+    unregisterByPack: (pack: string): ReadonlyArray<string> => {
+      const removed: string[] = []
+      for (const [key, entry] of entries) {
+        if (entry.source.kind === 'pack-bundled' && entry.source.pack === pack) {
+          entries.delete(key)
+          removed.push(key)
+        }
+      }
+      return removed
+    },
     get: (name: string): Tool | undefined => entries.get(name)?.tool,
     getEntry: (name: string): ToolRegistryEntry | undefined => entries.get(name),
     has: (name: string): boolean => entries.has(name),

@@ -40,14 +40,21 @@ export const isTool = (value: unknown): value is Tool => {
 }
 
 export interface LoadSource {
-  readonly kind: 'external' | 'skill-bundled'
-  readonly skill?: string  // owning skill name when kind is skill-bundled
+  readonly kind: 'external' | 'skill-bundled' | 'pack-bundled'
+  readonly skill?: string          // owning skill name when kind is skill-bundled
+  readonly pack?: string           // owning pack namespace when kind is pack-bundled
+  readonly namespacePrefix?: string // registry key becomes `${prefix}_${toolName}` when set
 }
 
 // Load all .ts tool files from a single directory into the registry.
 // Returns silently if the directory does not exist.
 // Source metadata is attached to each registered tool so the detail endpoint
 // and hot-reload path can locate the originating file.
+//
+// When `source.namespacePrefix` is set (pack-bundled), the registered key is
+// `${prefix}_${candidate.name}` and the original name is preserved on
+// `source.displayName`. The tool's own `name` field is left untouched — the
+// registry key is the only thing that changes.
 export const loadToolDirectory = async (
   dir: string,
   registry: ToolRegistry,
@@ -103,19 +110,33 @@ export const loadToolDirectory = async (
         continue
       }
 
-      if (registry.has(candidate.name)) {
-        const desc = `${file}: tool "${candidate.name}" already registered — skipping`
+      const displayName = candidate.name
+      const registryKey = source.namespacePrefix
+        ? `${source.namespacePrefix}_${displayName}`
+        : displayName
+
+      if (registry.has(registryKey)) {
+        const desc = `${file}: tool "${registryKey}" already registered — skipping`
         skipped.push(desc)
         console.warn(`[tools] ${desc}`)
         continue
       }
 
-      registry.registerWithSource(candidate as Tool, {
+      // When namespaced, rewrite the tool's name so the LLM-facing tool_call
+      // identifier matches the registry key. Tool authors write the
+      // unprefixed name; the loader applies the namespace at registration.
+      const registered: Tool = source.namespacePrefix
+        ? { ...candidate, name: registryKey }
+        : (candidate as Tool)
+
+      registry.registerWithSource(registered, {
         kind: source.kind,
         path: filePath,
         ...(source.skill ? { skill: source.skill } : {}),
+        ...(source.pack ? { pack: source.pack } : {}),
+        ...(source.namespacePrefix ? { displayName } : {}),
       })
-      loaded.push(candidate.name)
+      loaded.push(registryKey)
     }
   }))
 

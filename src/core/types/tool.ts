@@ -45,12 +45,18 @@ export interface Tool {
 //   'built-in'      — compiled into the binary; no filesystem path, no source serving
 //   'external'      — loaded from ./tools, ~/.samsinn/tools, or $SAMSINN_TOOLS_DIR
 //   'skill-bundled' — loaded from <skillsDir>/<skill>/tools/ (also via write_tool)
-export type ToolSourceKind = 'built-in' | 'external' | 'skill-bundled'
+//   'pack-bundled'  — loaded from ~/.samsinn/packs/<pack>/tools/; registry key
+//                     is namespaced as `<pack>_<displayName>` to prevent
+//                     cross-pack collisions while keeping the LLM-facing name
+//                     valid under the OpenAI/Anthropic tool-name regex.
+export type ToolSourceKind = 'built-in' | 'external' | 'skill-bundled' | 'pack-bundled'
 
 export interface ToolSourceMeta {
   readonly kind: ToolSourceKind
-  readonly path?: string   // absolute filesystem path (omitted for built-ins)
-  readonly skill?: string  // owning skill name (skill-bundled only)
+  readonly path?: string         // absolute filesystem path (omitted for built-ins)
+  readonly skill?: string        // owning skill name (skill-bundled only)
+  readonly pack?: string         // owning pack namespace (pack-bundled only)
+  readonly displayName?: string  // unprefixed name (pack-bundled only — registry key is `<pack>_<displayName>`)
 }
 
 export interface ToolRegistryEntry {
@@ -63,6 +69,7 @@ export interface ToolRegistry {
   readonly registerAll: (tools: ReadonlyArray<Tool>) => void
   readonly registerWithSource: (tool: Tool, source: ToolSourceMeta) => void
   readonly unregister: (name: string) => boolean
+  readonly unregisterByPack: (pack: string) => ReadonlyArray<string>
   readonly get: (name: string) => Tool | undefined
   readonly getEntry: (name: string) => ToolRegistryEntry | undefined
   readonly has: (name: string) => boolean

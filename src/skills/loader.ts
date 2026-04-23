@@ -23,12 +23,14 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export interface Skill {
-  readonly name: string
+  readonly name: string                 // registry key — `<pack>/<raw>` for pack skills, else raw
   readonly description: string
   readonly body: string
   readonly scope: ReadonlyArray<string>
   readonly tools: ReadonlyArray<string>
   readonly dirPath: string
+  readonly pack?: string                // owning pack namespace (pack-scoped skills only)
+  readonly displayName?: string         // unprefixed frontmatter name (pack-scoped only)
 }
 
 export interface SkillStore {
@@ -37,6 +39,8 @@ export interface SkillStore {
   readonly forScope: (roomName: string) => ReadonlyArray<Skill>
   readonly register: (skill: Skill) => void
   readonly remove: (name: string) => boolean
+  // Bulk removal keyed by pack namespace — used on pack uninstall.
+  readonly removeByPack: (pack: string) => ReadonlyArray<string>
 }
 
 export const createSkillStore = (): SkillStore => {
@@ -55,6 +59,16 @@ export const createSkillStore = (): SkillStore => {
       skills.set(skill.name, skill)
     },
     remove: (name) => skills.delete(name),
+    removeByPack: (pack) => {
+      const removed: string[] = []
+      for (const [key, skill] of skills) {
+        if (skill.pack === pack) {
+          skills.delete(key)
+          removed.push(key)
+        }
+      }
+      return removed
+    },
   }
 }
 
@@ -107,10 +121,20 @@ export interface SkillLoadResult {
   readonly errors: ReadonlyArray<string>
 }
 
+// When `namespacePrefix` is set, each skill's registry key becomes
+// `${prefix}/${frontmatter.name}` and any bundled tools under tools/ are
+// registered as pack-bundled with the same prefix. The raw frontmatter name
+// is still validated against `VALID_NAME` — the prefix is applied after.
+export interface LoadSkillsOptions {
+  readonly namespacePrefix?: string
+  readonly pack?: string  // forwarded to bundled-tool source meta and Skill.pack
+}
+
 export const loadSkills = async (
   baseDir: string,
   store: SkillStore,
   toolRegistry: ToolRegistry,
+  options: LoadSkillsOptions = {},
 ): Promise<SkillLoadResult> => {
   const loaded: string[] = []
   const skipped: string[] = []
@@ -155,30 +179,44 @@ export const loadSkills = async (
       continue
     }
 
-    // Load bundled tools from tools/ subdir
+    const rawName = frontmatter.name
+    const registryKey = options.namespacePrefix
+      ? `${options.namespacePrefix}/${rawName}`
+      : rawName
+
+    // Load bundled tools from tools/ subdir. Pack-scoped skills get
+    // pack-bundled tools with the pack's namespace prefix; unscoped skills
+    // keep the existing skill-bundled pathway.
     const toolsDir = join(dirPath, 'tools')
     let bundledTools: ReadonlyArray<string> = []
     try {
-      const toolResult = await loadToolDirectory(toolsDir, toolRegistry, {
-        kind: 'skill-bundled',
-        skill: frontmatter.name,
-      })
+      const toolResult = options.pack
+        ? await loadToolDirectory(toolsDir, toolRegistry, {
+            kind: 'pack-bundled',
+            pack: options.pack,
+            namespacePrefix: options.pack,
+          })
+        : await loadToolDirectory(toolsDir, toolRegistry, {
+            kind: 'skill-bundled',
+            skill: rawName,
+          })
       bundledTools = toolResult.loaded
       if (toolResult.loaded.length > 0) {
-        console.log(`[skills] ${frontmatter.name}: loaded ${toolResult.loaded.length} bundled tools`)
+        console.log(`[skills] ${registryKey}: loaded ${toolResult.loaded.length} bundled tools`)
       }
       if (toolResult.errors.length > 0) {
-        for (const err of toolResult.errors) errors.push(`${frontmatter.name}/tools: ${err}`)
+        for (const err of toolResult.errors) errors.push(`${registryKey}/tools: ${err}`)
       }
     } catch { /* no tools/ dir — that's fine */ }
 
     const skill: Skill = {
-      name: frontmatter.name,
+      name: registryKey,
       description: frontmatter.description,
       body,
       scope: frontmatter.scope ?? [],
       tools: bundledTools,
       dirPath,
+      ...(options.pack ? { pack: options.pack, displayName: rawName } : {}),
     }
 
     store.register(skill)
