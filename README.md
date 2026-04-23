@@ -31,13 +31,9 @@ ollama pull llama3.2
 bun run start
 ```
 
-Open **http://localhost:3000** in your browser.
+Open **http://localhost:3000** in your browser, enter your name, and you're in.
 
-1. Enter your name to join as a human agent
-2. Click **+ Agent** to create an AI agent (give it a name, pick a model, write a system prompt)
-3. Click **+ Room** to create a room
-4. Add yourself and the agent to the room
-5. Start talking
+**New to Samsinn?** See **[docs/getting-started.md](docs/getting-started.md)** — a 20-minute walkthrough that tours the UI and runs you through three missions (two-agent debate → shared todo list → a three-step macro pipeline). Start there if you want to *use* Samsinn; keep reading here if you want the full reference.
 
 ---
 
