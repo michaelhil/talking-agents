@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow: stay on master
+
+**No branches. No worktrees. Work directly on `master` and push directly to `master`.**
+
+The owner finds branching/worktree workflows more friction than they're worth for this single-maintainer repo. Pattern:
+
+- Commit each logical change as its own commit with a clear message.
+- `git push origin master` after each commit (or batch if a series of commits is logically one unit).
+- If you find yourself about to create a branch "for safety", don't — commit smaller, more atomic units on master instead and push often.
+- Exceptions require explicit request from the owner ("open a PR for X"). Default is: straight to master.
+
 ## Commands
 
 - `bun run start` — run the server (HTTP + WebSocket + UI at :3000)
