@@ -41,12 +41,33 @@ export interface Tool {
   readonly execute: (params: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>
 }
 
+// Where a registered tool came from. Used by the detail endpoint and hot-reload.
+//   'built-in'      — compiled into the binary; no filesystem path, no source serving
+//   'external'      — loaded from ./tools, ~/.samsinn/tools, or $SAMSINN_TOOLS_DIR
+//   'skill-bundled' — loaded from <skillsDir>/<skill>/tools/ (also via write_tool)
+export type ToolSourceKind = 'built-in' | 'external' | 'skill-bundled'
+
+export interface ToolSourceMeta {
+  readonly kind: ToolSourceKind
+  readonly path?: string   // absolute filesystem path (omitted for built-ins)
+  readonly skill?: string  // owning skill name (skill-bundled only)
+}
+
+export interface ToolRegistryEntry {
+  readonly tool: Tool
+  readonly source: ToolSourceMeta
+}
+
 export interface ToolRegistry {
   readonly register: (tool: Tool) => void
   readonly registerAll: (tools: ReadonlyArray<Tool>) => void
+  readonly registerWithSource: (tool: Tool, source: ToolSourceMeta) => void
+  readonly unregister: (name: string) => boolean
   readonly get: (name: string) => Tool | undefined
+  readonly getEntry: (name: string) => ToolRegistryEntry | undefined
   readonly has: (name: string) => boolean
   readonly list: () => ReadonlyArray<Tool>
+  readonly listEntries: () => ReadonlyArray<ToolRegistryEntry>
 }
 
 export type ToolExecutor = (calls: ReadonlyArray<ToolCall>, roomId?: string) => Promise<ReadonlyArray<ToolResult>>

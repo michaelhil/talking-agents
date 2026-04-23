@@ -2,7 +2,7 @@
 // Persona & Model Editor Modals — Edit agent persona and model.
 // ============================================================================
 
-import { createModal, createButtonRow, createTextarea } from './modal.ts'
+import { createModal, createButtonRow, createTextarea } from './detail-modal.ts'
 import { populateModelSelect } from './ui-utils.ts'
 
 export const openPromptEditor = (
@@ -15,12 +15,11 @@ export const openPromptEditor = (
       if (!data) return
       const modal = createModal({ title: `Persona — ${agentName}` })
       const textarea = createTextarea(data.persona ?? '')
-      const buttons = createButtonRow(
+      modal.scrollBody.appendChild(textarea)
+      modal.footer.appendChild(createButtonRow(
         modal.close,
         () => { send({ type: 'update_agent', name: agentName, persona: textarea.value }); modal.close() },
-      )
-      modal.body.appendChild(textarea)
-      modal.body.appendChild(buttons)
+      ))
       document.body.appendChild(modal.overlay)
       textarea.focus()
     })
@@ -33,11 +32,11 @@ export const openModelEditor = (
   const modal = createModal({ title: `Model — ${agentName}` })
 
   const select = document.createElement('select')
-  select.className = 'w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-300'
+  select.className = 'w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 bg-surface border-border text-text'
   select.innerHTML = '<option value="">Loading models…</option>'
-  modal.body.appendChild(select)
+  modal.scrollBody.appendChild(select)
 
-  const buttons = createButtonRow(
+  modal.footer.appendChild(createButtonRow(
     modal.close,
     () => {
       if (select.value) {
@@ -46,8 +45,7 @@ export const openModelEditor = (
       modal.close()
     },
     'Change Model',
-  )
-  modal.body.appendChild(buttons)
+  ))
   document.body.appendChild(modal.overlay)
 
   fetch(`/api/agents/${encodeURIComponent(agentName)}`)

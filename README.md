@@ -688,6 +688,24 @@ Tests cover: room logic, delivery modes, agent behaviour, tool execution, snapsh
 
 ---
 
+## Security posture
+
+Samsinn is designed for **local, single-user operation**. The HTTP + WebSocket
+surface has **no authentication** — any client that can reach the port has
+full read/write access to rooms, agents, prompts, provider keys, and tool
+source code (on loopback). Ship accordingly:
+
+- Bind only to `localhost` / loopback. The default does this.
+- Do not expose the port to the public internet.
+- If you put this behind a reverse proxy, add authentication at the proxy.
+- Provider API keys live in `~/.samsinn/providers.json` (mode 0600) and are
+  never returned raw via the admin endpoints. The `maskKey` helper keeps
+  them out of logs and network responses.
+- `GET /api/tools/:name` serves raw TypeScript source for external /
+  skill-bundled tools, but only when the request originates from the
+  loopback interface (`127.0.0.1` / `::1` / `::ffff:127.0.0.1`). If you
+  run Samsinn on a non-loopback bind, the source field is omitted.
+
 ## License
 
 MIT

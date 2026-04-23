@@ -1,7 +1,7 @@
 // System-wide message bookmarks. Thin wrappers over House; mutations trigger
 // the OnBookmarksChanged callback which the server wires to auto-save.
 
-import { json, errorResponse, parseBody } from '../http-routes.ts'
+import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 
 const readContent = (body: Record<string, unknown>): string | null => {

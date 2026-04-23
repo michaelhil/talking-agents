@@ -1,4 +1,4 @@
-import { json, errorResponse, parseBody } from '../http-routes.ts'
+import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 
 export const artifactRoutes: RouteEntry[] = [

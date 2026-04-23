@@ -33,17 +33,17 @@ const renderMemoryMessage = (
   roomId: string,
 ): HTMLElement => {
   const row = document.createElement('div')
-  row.className = 'px-3 py-1.5 text-xs border-b border-gray-50 flex items-start gap-2 group hover:bg-gray-50'
+  row.className = 'px-3 py-1.5 text-xs border-b border-border flex items-start gap-2 group hover:bg-surface-muted'
 
   const text = document.createElement('div')
   text.className = 'flex-1 min-w-0'
   const sender = msg.senderName ?? 'unknown'
   const preview = msg.content.length > 120 ? msg.content.slice(0, 120) + '…' : msg.content
-  text.innerHTML = `<span class="font-medium text-gray-600">[${escapeHtml(sender)}]</span> <span class="text-gray-500">${escapeHtml(preview)}</span>`
+  text.innerHTML = `<span class="font-medium text-text">[${escapeHtml(sender)}]</span> <span class="text-text-subtle">${escapeHtml(preview)}</span>`
   row.appendChild(text)
 
   const delBtn = document.createElement('button')
-  delBtn.className = 'text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0 text-xs'
+  delBtn.className = 'text-danger hover:text-danger opacity-0 group-hover:opacity-100 flex-shrink-0 text-xs'
   delBtn.textContent = '×'
   delBtn.title = 'Delete from agent memory'
   delBtn.onclick = async (e) => {
@@ -65,16 +65,16 @@ const createEditableField = (
   const row = document.createElement('div')
   row.className = 'flex items-center justify-between mb-1'
   const labelEl = document.createElement('span')
-  labelEl.className = 'text-xs font-semibold text-gray-400 uppercase tracking-wide'
+  labelEl.className = 'text-xs font-semibold text-text-muted uppercase tracking-wide'
   labelEl.textContent = label
   row.appendChild(labelEl)
 
   const saveBtn = document.createElement('button')
-  saveBtn.className = 'text-xs px-3 py-1 bg-gray-300 text-white rounded cursor-not-allowed'
+  saveBtn.className = 'text-xs px-3 py-1 bg-border-strong text-white rounded cursor-not-allowed'
   saveBtn.textContent = 'Update'
 
   const textarea = document.createElement('textarea')
-  textarea.className = 'w-full border rounded p-2 text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-300 mb-3'
+  textarea.className = 'w-full border rounded p-2 text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-accent-ring mb-3'
   textarea.style.height = '5rem'
   textarea.value = value
   let savedValue = value
@@ -82,8 +82,8 @@ const createEditableField = (
   const updateStyle = () => {
     const dirty = textarea.value !== savedValue
     saveBtn.className = dirty
-      ? 'text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer'
-      : 'text-xs px-3 py-1 bg-gray-300 text-white rounded cursor-not-allowed'
+      ? 'text-xs px-3 py-1 bg-accent text-white rounded hover:bg-accent-hover cursor-pointer'
+      : 'text-xs px-3 py-1 bg-border-strong text-white rounded cursor-not-allowed'
   }
   textarea.oninput = updateStyle
 
@@ -112,18 +112,18 @@ const renderTagsField = (container: HTMLElement, agentEnc: string, initialTags: 
   const header = document.createElement('div')
   header.className = 'flex items-center justify-between mb-1'
   const label = document.createElement('span')
-  label.className = 'text-xs font-semibold text-gray-400 uppercase tracking-wide'
+  label.className = 'text-xs font-semibold text-text-muted uppercase tracking-wide'
   label.textContent = 'Tags'
   header.appendChild(label)
 
   const saveBtn = document.createElement('button')
-  saveBtn.className = 'text-xs px-3 py-1 bg-gray-300 text-white rounded cursor-not-allowed'
+  saveBtn.className = 'text-xs px-3 py-1 bg-border-strong text-white rounded cursor-not-allowed'
   saveBtn.textContent = 'Update'
   header.appendChild(saveBtn)
 
   const input = document.createElement('input')
   input.type = 'text'
-  input.className = 'w-full border rounded p-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-300'
+  input.className = 'w-full border rounded p-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-accent-ring'
   input.placeholder = 'comma-separated (e.g. reviewer, safety)'
   const joined = initialTags.join(', ')
   input.value = joined
@@ -132,8 +132,8 @@ const renderTagsField = (container: HTMLElement, agentEnc: string, initialTags: 
   const updateStyle = (): void => {
     const dirty = input.value !== saved
     saveBtn.className = dirty
-      ? 'text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer'
-      : 'text-xs px-3 py-1 bg-gray-300 text-white rounded cursor-not-allowed'
+      ? 'text-xs px-3 py-1 bg-accent text-white rounded hover:bg-accent-hover cursor-pointer'
+      : 'text-xs px-3 py-1 bg-border-strong text-white rounded cursor-not-allowed'
   }
   input.oninput = updateStyle
 
@@ -163,12 +163,12 @@ const renderTagsField = (container: HTMLElement, agentEnc: string, initialTags: 
 
 export const renderAgentInspector = (container: HTMLElement, agentName: string): void => {
   const enc = encodeURIComponent(agentName)
-  container.innerHTML = '<div class="text-sm text-gray-400">Loading…</div>'
+  container.innerHTML = '<div class="text-sm text-text-muted">Loading…</div>'
 
   const render = async (): Promise<void> => {
     const agentRes = await safeFetchJson<Record<string, unknown>>(`/api/agents/${enc}`)
     if (!agentRes) {
-      container.innerHTML = '<div class="text-sm text-red-500">Failed to load agent data</div>'
+      container.innerHTML = '<div class="text-sm text-danger">Failed to load agent data</div>'
       return
     }
     container.innerHTML = ''
@@ -181,7 +181,7 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
 
     const dot = document.createElement('span')
     const isGenerating = agentRes.state === 'generating'
-    dot.className = `inline-block w-2.5 h-2.5 rounded-full shrink-0 ${isGenerating ? 'bg-yellow-400 typing-indicator' : 'bg-green-400'}`
+    dot.className = `inline-block w-2.5 h-2.5 rounded-full shrink-0 ${isGenerating ? 'bg-thinking typing-indicator' : 'bg-success'}`
     header.appendChild(dot)
 
     const nameEl = document.createElement('span')
@@ -192,7 +192,7 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
     if (isAI) {
       // Model selector
       const modelSelect = document.createElement('select')
-      modelSelect.className = 'text-sm text-gray-500 font-normal ml-2 border-none bg-transparent cursor-pointer hover:text-blue-500 focus:outline-none'
+      modelSelect.className = 'text-sm text-text-subtle font-normal ml-2 border-none bg-transparent cursor-pointer hover:text-accent focus:outline-none'
 
       // Load models via the structured catalog; pre-select the agent's
       // current model (shown as "(not available)" if the provider is gone).
@@ -237,7 +237,7 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
       // context panel (prompt-toggles.ts). Header keeps dot · name · model only.
     } else {
       const kindLabel = document.createElement('span')
-      kindLabel.className = 'text-sm text-gray-400 font-normal ml-2'
+      kindLabel.className = 'text-sm text-text-muted font-normal ml-2'
       kindLabel.textContent = 'human'
       header.appendChild(kindLabel)
     }
@@ -294,7 +294,7 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
         const memoryRow = document.createElement('div')
         memoryRow.className = 'flex items-center justify-between mb-2 mt-2'
         const memoryLeft = document.createElement('span')
-        memoryLeft.className = 'text-xs text-gray-400'
+        memoryLeft.className = 'text-xs text-text-muted'
         const totalMsgs = stats.rooms.reduce((sum, r) => sum + r.messageCount, 0)
         let memoryInfo = `MEMORY · ${totalMsgs} msgs · ${stats.rooms.length} rooms`
         if (stats.knownAgents.length > 0) memoryInfo += ` · knows: ${stats.knownAgents.join(', ')}`
@@ -303,7 +303,7 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
 
         if (totalMsgs > 0) {
           const clearAllBtn = document.createElement('button')
-          clearAllBtn.className = 'text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50'
+          clearAllBtn.className = 'text-xs text-danger hover:text-danger-hover px-2 py-1 rounded hover:bg-surface-muted'
           clearAllBtn.textContent = 'Clear All'
           clearAllBtn.onclick = async () => {
             await safeFetchJson(`/api/agents/${enc}/memory`, { method: 'DELETE' })
@@ -316,19 +316,19 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
         // Room list
         for (const room of stats.rooms) {
           const roomDiv = document.createElement('div')
-          roomDiv.className = 'border border-gray-100 rounded mb-2'
+          roomDiv.className = 'border border-border rounded mb-2'
 
           const roomHeader = document.createElement('div')
-          roomHeader.className = 'flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-50'
+          roomHeader.className = 'flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-surface-muted'
           const roomLabel = document.createElement('span')
-          roomLabel.className = 'text-sm font-medium text-gray-700'
+          roomLabel.className = 'text-sm font-medium text-text'
           const ago = room.lastActiveAt ? formatTimeAgo(room.lastActiveAt) : 'never'
           roomLabel.textContent = `▸ ${room.roomName} (${room.messageCount} msgs, ${ago})`
           roomHeader.appendChild(roomLabel)
 
           if (room.messageCount > 0) {
             const clearBtn = document.createElement('button')
-            clearBtn.className = 'text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50'
+            clearBtn.className = 'text-xs text-danger hover:text-danger-hover px-2 py-1 rounded hover:bg-surface-muted'
             clearBtn.textContent = 'Clear'
             clearBtn.onclick = async (e) => {
               e.stopPropagation()
@@ -351,7 +351,7 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
             }
             expanded = true
             roomLabel.textContent = `▾ ${room.roomName} (${room.messageCount} msgs, ${ago})`
-            messagesContainer.className = 'border-t border-gray-100 max-h-64 overflow-y-auto'
+            messagesContainer.className = 'border-t border-border max-h-64 overflow-y-auto'
             messagesContainer.innerHTML = ''
 
             type MessageItem = { id: string; senderName?: string; content: string; timestamp: number }
@@ -361,7 +361,7 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
             const toShow = messages.slice(-10)
             if (messages.length > 10) {
               const loadMore = document.createElement('div')
-              loadMore.className = 'px-3 py-1 text-xs text-blue-500 cursor-pointer hover:bg-blue-50'
+              loadMore.className = 'px-3 py-1 text-xs text-accent cursor-pointer hover:bg-surface-muted'
               loadMore.textContent = `Load ${messages.length - 10} more…`
               loadMore.onclick = () => {
                 loadMore.remove()
@@ -381,7 +381,7 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
 
         if (stats.rooms.length === 0) {
           const empty = document.createElement('div')
-          empty.className = 'text-sm text-gray-400 italic'
+          empty.className = 'text-sm text-text-muted italic'
           empty.textContent = 'No room history'
           container.appendChild(empty)
         }

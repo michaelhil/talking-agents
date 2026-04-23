@@ -1,4 +1,4 @@
-import { json, errorResponse, parseBody } from '../http-routes.ts'
+import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 import type { System } from '../../main.ts'
 import type { LLMGateway } from '../../llm/gateway.ts'

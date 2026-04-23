@@ -60,24 +60,24 @@ const renderList = (
   popover.innerHTML = ''
 
   const header = document.createElement('div')
-  header.className = 'px-3 py-2 border-b text-[11px] text-gray-500 flex items-center justify-between sticky top-0 bg-white'
+  header.className = 'px-3 py-2 border-b text-[11px] text-text-subtle flex items-center justify-between sticky top-0 bg-surface'
   header.innerHTML = `
-    <span><strong class="text-gray-800">${providerName}</strong> — ${data.models.length} model${data.models.length === 1 ? '' : 's'} · ${data.elapsedMs}ms</span>
-    <button class="models-popover-close text-gray-400 hover:text-gray-700">✕</button>
+    <span><strong class="text-text-strong">${providerName}</strong> — ${data.models.length} model${data.models.length === 1 ? '' : 's'} · ${data.elapsedMs}ms</span>
+    <button class="models-popover-close text-text-muted hover:text-text">✕</button>
   `
   popover.appendChild(header)
   header.querySelector<HTMLButtonElement>('.models-popover-close')?.addEventListener('click', closePopover)
 
   if (!data.ok && data.error) {
     const err = document.createElement('div')
-    err.className = 'px-3 py-2 text-[11px] text-red-600 bg-red-50 border-b'
+    err.className = 'px-3 py-2 text-[11px] text-danger bg-surface-muted border-b'
     err.textContent = `Could not refresh: ${data.error}`
     popover.appendChild(err)
   }
 
   if (data.models.length === 0) {
     const empty = document.createElement('div')
-    empty.className = 'px-3 py-4 text-[11px] text-gray-400 italic text-center'
+    empty.className = 'px-3 py-4 text-[11px] text-text-muted italic text-center'
     empty.textContent = 'No models reported — add a key or wait a moment.'
     popover.appendChild(empty)
     return
@@ -88,11 +88,11 @@ const renderList = (
 
   for (const m of data.models) {
     const row = document.createElement('div')
-    row.className = 'flex items-center gap-2 px-3 py-1 hover:bg-gray-50 text-[11px] border-b border-gray-100'
+    row.className = 'flex items-center gap-2 px-3 py-1 hover:bg-surface-muted text-[11px] border-b border-border'
 
     const isPinned = pinnedSet.has(m.id)
     const pinBtn = document.createElement('button')
-    pinBtn.className = `shrink-0 w-5 text-center ${isPinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`
+    pinBtn.className = `shrink-0 w-5 text-center ${isPinned ? 'text-warning' : 'text-border-strong hover:text-warning'}`
     pinBtn.textContent = isPinned ? '★' : '☆'
     pinBtn.title = isPinned ? 'Unpin' : 'Pin (show first in model dropdown)'
     pinBtn.onclick = (e) => {
@@ -102,26 +102,26 @@ const renderList = (
     row.appendChild(pinBtn)
 
     const id = document.createElement('span')
-    id.className = 'font-mono flex-1 min-w-0 truncate text-gray-800'
+    id.className = 'font-mono flex-1 min-w-0 truncate text-text-strong'
     id.textContent = m.id
     id.title = m.id
     row.appendChild(id)
 
     if (m.curated) {
       const badge = document.createElement('span')
-      badge.className = 'shrink-0 text-[9px] px-1 bg-blue-100 text-blue-700 rounded'
+      badge.className = 'shrink-0 text-[9px] px-1 bg-surface-strong text-accent rounded'
       badge.textContent = 'curated'
       row.appendChild(badge)
     }
 
     const ctx = document.createElement('span')
-    ctx.className = 'shrink-0 w-10 text-right text-gray-500'
+    ctx.className = 'shrink-0 w-10 text-right text-text-subtle'
     ctx.textContent = formatContext(m.contextMax)
     ctx.title = m.contextMax > 0 ? `${m.contextMax.toLocaleString()} tokens context` : 'context window unknown'
     row.appendChild(ctx)
 
     const testBtn = document.createElement('button')
-    testBtn.className = 'shrink-0 text-[10px] px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white rounded'
+    testBtn.className = 'shrink-0 text-[10px] px-1.5 py-0.5 bg-success hover:bg-success-hover text-white rounded'
     testBtn.textContent = 'Test'
     testBtn.title = `Test ${m.id} with a 1-token call`
     testBtn.onclick = async (e) => {
@@ -173,8 +173,8 @@ export const openModelsPopover = async (
   // fixed coords but still respect the dialog's top-layer if we append
   // inside the dialog). Append inside the dialog that owns the anchor so it
   // inherits the top layer.
-  popover.className = 'fixed z-50 bg-white border rounded shadow-lg w-[380px] text-[11px]'
-  popover.innerHTML = '<div class="px-3 py-4 text-gray-400 text-[11px] text-center italic">Loading…</div>'
+  popover.className = 'fixed z-50 bg-surface border rounded shadow-lg w-[380px] text-[11px]'
+  popover.innerHTML = '<div class="px-3 py-4 text-text-muted text-[11px] text-center italic">Loading…</div>'
 
   // Position under the anchor (viewport coords for fixed).
   const rect = anchor.getBoundingClientRect()
@@ -213,7 +213,7 @@ export const openModelsPopover = async (
   } catch (err) {
     popover.innerHTML = ''
     const msg = document.createElement('div')
-    msg.className = 'px-3 py-2 text-[11px] text-red-600'
+    msg.className = 'px-3 py-2 text-[11px] text-danger'
     msg.textContent = `Failed to load: ${err instanceof Error ? err.message : String(err)}`
     popover.appendChild(msg)
     return

@@ -8,7 +8,7 @@
 // edits preserve list position). Red × deletes. Newest entries are on top.
 // ============================================================================
 
-import { createModal } from './modal.ts'
+import { createModal } from './detail-modal.ts'
 import { showToast } from './ui-utils.ts'
 import type { WSOutbound } from '../../core/types/ws-protocol.ts'
 
@@ -60,21 +60,21 @@ const buildRow = (
   let currentContent = bm.content
 
   const row = document.createElement('div')
-  row.className = 'flex items-center gap-2 px-2 py-1.5 border-b border-gray-100 hover:bg-gray-50 cursor-pointer'
+  row.className = 'flex items-center gap-2 px-2 py-1.5 border-b border-border hover:bg-surface-muted cursor-pointer'
   row.setAttribute('data-bookmark-id', bm.id)
 
   const textEl = document.createElement('div')
-  textEl.className = 'flex-1 min-w-0 text-sm text-gray-700 truncate'
+  textEl.className = 'flex-1 min-w-0 text-sm text-text truncate'
   textEl.textContent = currentContent
   textEl.title = currentContent
 
   const editBtn = document.createElement('button')
-  editBtn.className = 'text-gray-400 hover:text-blue-500 text-sm px-1'
+  editBtn.className = 'text-text-muted hover:text-accent text-sm px-1'
   editBtn.textContent = '✎'
   editBtn.title = 'Edit'
 
   const delBtn = document.createElement('button')
-  delBtn.className = 'text-gray-400 hover:text-red-500 text-sm px-1'
+  delBtn.className = 'text-text-muted hover:text-danger text-sm px-1'
   delBtn.textContent = '×'
   delBtn.title = 'Delete'
 
@@ -96,7 +96,7 @@ const buildRow = (
     e.stopPropagation()
     // Swap textEl for an auto-growing textarea seeded with the latest content.
     const ta = document.createElement('textarea')
-    ta.className = 'flex-1 min-w-0 text-sm text-gray-700 border rounded p-1 resize-none focus:outline-none focus:ring-2 focus:ring-blue-300'
+    ta.className = 'flex-1 min-w-0 text-sm text-text border rounded p-1 resize-none focus:outline-none focus:ring-2 focus:ring-accent-ring'
     ta.value = currentContent
     ta.rows = 1
     row.classList.remove('cursor-pointer')
@@ -148,7 +148,7 @@ export const openBookmarksPanel = async (deps: BookmarksPanelDeps): Promise<void
   list.className = 'border rounded max-h-96 overflow-y-auto'
 
   const empty = document.createElement('div')
-  empty.className = 'text-sm text-gray-400 text-center py-6'
+  empty.className = 'text-sm text-text-muted text-center py-6'
   empty.textContent = 'No bookmarks yet.'
 
   const bookmarks = await fetchBookmarks()
@@ -186,6 +186,6 @@ export const openBookmarksPanel = async (deps: BookmarksPanelDeps): Promise<void
   }
 
   render(bookmarks.slice())
-  modal.body.appendChild(list)
+  modal.scrollBody.appendChild(list)
   document.body.appendChild(modal.overlay)
 }

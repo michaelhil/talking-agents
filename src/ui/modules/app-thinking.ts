@@ -14,7 +14,7 @@ import { derivePhase, phaseLabel, THINKING_MARKER } from './thinking-phase.ts'
 import type { MapStore, ReadableAtom } from '../lib/nanostores.ts'
 import type { AgentContext, AgentEntry } from './stores.ts'
 
-export interface ThinkingDeps {
+interface ThinkingDeps {
   readonly messagesDiv: HTMLElement
   readonly send: (data: unknown) => void
   readonly firstChunkSeen: Set<string>
@@ -27,7 +27,7 @@ export interface ThinkingDeps {
   readonly showContextModal: (context: AgentContext, warnings?: string[]) => void
 }
 
-export interface ThinkingController {
+interface ThinkingController {
   readonly ensureThinkingIndicator: (agentId: string, agentName: string) => void
   readonly clearThinkingIndicator: (agentId: string) => void
   readonly syncThinkingIndicators: () => void

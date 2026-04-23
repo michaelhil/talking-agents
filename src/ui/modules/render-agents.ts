@@ -14,16 +14,16 @@ const renderAgentRow = (
   onDelete: (agentName: string) => void,
 ): HTMLElement => {
   const div = document.createElement('div')
-  const tint = isSelected ? 'bg-blue-100' : isInSelectedRoom ? 'bg-blue-50' : ''
+  const tint = isSelected ? 'bg-surface-strong' : isInSelectedRoom ? 'bg-surface-muted' : ''
   div.className = `px-3 py-1 flex items-center gap-1.5 group relative ${tint}`
 
   const dot = document.createElement('span')
-  const dotColor = isGenerating ? 'bg-yellow-400 typing-indicator' : 'bg-green-400'
+  const dotColor = isGenerating ? 'bg-thinking typing-indicator' : 'bg-success'
   dot.className = `inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`
   div.appendChild(dot)
 
   const name = document.createElement('span')
-  name.className = `text-xs truncate cursor-pointer ${isSelf ? 'font-bold' : 'font-medium'} ${isSelected ? 'text-blue-700' : 'text-gray-700'}`
+  name.className = `text-xs truncate cursor-pointer ${isSelf ? 'font-bold' : 'font-medium'} ${isSelected ? 'text-accent' : 'text-text'}`
   name.textContent = agent.name
   name.onclick = (e) => { e.stopPropagation(); onInspect(agent.name) }
   div.appendChild(name)

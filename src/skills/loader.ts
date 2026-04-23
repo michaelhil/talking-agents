@@ -159,7 +159,10 @@ export const loadSkills = async (
     const toolsDir = join(dirPath, 'tools')
     let bundledTools: ReadonlyArray<string> = []
     try {
-      const toolResult = await loadToolDirectory(toolsDir, toolRegistry)
+      const toolResult = await loadToolDirectory(toolsDir, toolRegistry, {
+        kind: 'skill-bundled',
+        skill: frontmatter.name,
+      })
       bundledTools = toolResult.loaded
       if (toolResult.loaded.length > 0) {
         console.log(`[skills] ${frontmatter.name}: loaded ${toolResult.loaded.length} bundled tools`)

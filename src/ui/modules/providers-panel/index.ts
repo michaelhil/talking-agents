@@ -67,7 +67,7 @@ export const renderProvidersPanel = (list: ProvidersResponse): void => {
   if (notice) notice.classList.toggle('hidden', !list.orderLockedByEnv)
 
   if (list.providers.length === 0) {
-    container.innerHTML = '<div class="text-gray-400 italic">No providers configured.</div>'
+    container.innerHTML = '<div class="text-text-muted italic">No providers configured.</div>'
     return
   }
 
@@ -206,7 +206,7 @@ export const renderProvidersPanel = (list: ProvidersResponse): void => {
   // Store warnings
   if (list.storeWarnings.length > 0) {
     const warn = document.createElement('div')
-    warn.className = 'text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1'
+    warn.className = 'text-[11px] text-warning bg-warning-bg border border-warning-border rounded px-2 py-1 mt-1'
     warn.textContent = list.storeWarnings.join(' · ')
     container.appendChild(warn)
   }

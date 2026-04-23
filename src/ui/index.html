@@ -4,10 +4,108 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>samsinn</title>
-  <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+  <script>
+    // Resolve theme before first paint — avoids flash of wrong theme.
+    (function(){
+      try {
+        var saved = localStorage.getItem('samsinn.theme');
+        var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var dark = saved ? saved === 'dark' : prefersDark;
+        if (dark) document.documentElement.classList.add('dark');
+      } catch(_) {}
+    })();
+  </script>
   <style>
+    /* Declare cascade-layer order BEFORE any layer is populated, so the
+       position of each layer in the cascade is fixed regardless of which
+       stylesheet (inline or dist.css) registers a layer first. Later
+       layers win. Matches Tailwind v4's default order + our components. */
+    @layer theme, base, components, utilities;
+  </style>
+  <style>
+    /* === Design tokens: one source of truth for colors. ================ */
+    /* Tailwind classes like bg-surface consume these. Inline CSS
+       rules further below also use them. Only duplicate a rule under
+       :root.dark when light and dark need different *shapes*, not just
+       different colors. */
+    :root {
+      --surface: #ffffff;
+      --surface-muted: #f9fafb;       /* gray-50 */
+      --surface-strong: #f3f4f6;      /* gray-100 — input bg, code inline */
+      --surface-inverse: #1f2937;     /* gray-800 — code blocks, tooltips */
+      --text: #374151;                /* gray-700 */
+      --text-strong: #111827;         /* gray-900 */
+      --text-muted: #9ca3af;          /* gray-400 */
+      --text-subtle: #6b7280;         /* gray-500 — blockquote, muted copy */
+      --border: #e5e7eb;              /* gray-200 */
+      --border-strong: #d1d5db;       /* gray-300 */
+      --accent: #3b82f6;              /* blue-500 */
+      --accent-hover: #2563eb;        /* blue-600 */
+      --accent-ring: rgba(59,130,246,0.3);
+      --danger: #ef4444;              /* red-500 */
+      --danger-hover: #dc2626;        /* red-600 */
+      --success: #22c55e;             /* green-500 */
+      --msg-self: #eff6ff;            /* blue-50 */
+      --msg-agent: #f0fdf4;           /* green-50 */
+      --macro-accent: #6b21a8;        /* purple-800 */
+      --macro-accent-hover: #581c87;  /* purple-900 */
+      --macro-accent-soft: #c084fc;   /* purple-400 — muted hover variant */
+      --macro-accent-bg: #faf5ff;     /* purple-50 */
+      --macro-accent-border: #e9d5ff; /* purple-200 */
+      --warning: #d97706;             /* amber-600 — text + icon */
+      --warning-bg: #fffbeb;          /* amber-50 — subtle background */
+      --warning-border: #fde68a;      /* amber-200 */
+      --thinking: #facc15;            /* yellow-400 — active/thinking indicator */
+      --success-hover: #16a34a;       /* green-600 — button hover */
+      --success-soft-bg: #f0fdf4;     /* green-50 — hover/soft bg */
+      --shadow-overlay: rgba(0,0,0,0.4);
+    }
+    :root.dark {
+      --surface: #111827;             /* gray-900 */
+      --surface-muted: #1f2937;       /* gray-800 */
+      --surface-strong: #374151;      /* gray-700 */
+      --surface-inverse: #0b1220;     /* darker slate for contrast */
+      --text: #e5e7eb;                /* gray-200 */
+      --text-strong: #f9fafb;         /* gray-50 */
+      --text-muted: #9ca3af;          /* gray-400 — same in both */
+      --text-subtle: #d1d5db;         /* gray-300 */
+      --border: #374151;              /* gray-700 */
+      --border-strong: #4b5563;       /* gray-600 */
+      --accent: #60a5fa;              /* blue-400 — lifted for dark bg */
+      --accent-hover: #3b82f6;        /* blue-500 */
+      --accent-ring: rgba(96,165,250,0.4);
+      --danger: #f87171;              /* red-400 */
+      --danger-hover: #ef4444;        /* red-500 */
+      --success: #4ade80;             /* green-400 */
+      --msg-self: #172554;            /* blue-950 subtle */
+      --msg-agent: #14532d;           /* green-900 subtle */
+      --macro-accent: #d8b4fe;        /* purple-300 */
+      --macro-accent-hover: #e9d5ff;  /* purple-200 */
+      --macro-accent-soft: #a78bfa;   /* purple-400 */
+      --macro-accent-bg: #3b0764;     /* purple-950 */
+      --macro-accent-border: #6b21a8; /* purple-800 */
+      --warning: #fbbf24;             /* amber-400 — readable on dark */
+      --warning-bg: #78350f;          /* amber-900 */
+      --warning-border: #b45309;      /* amber-700 */
+      --thinking: #fbbf24;            /* amber-400 — same readable tone */
+      --success-hover: #22c55e;       /* green-500 */
+      --success-soft-bg: #14532d;     /* green-900 */
+      --shadow-overlay: rgba(0,0,0,0.6);
+    }
+    /* Base body color flips automatically via token. */
+    body { background: var(--surface-muted); color: var(--text); }
+    /* Theme toggle: show sun in light, moon in dark. */
+    :root.dark .theme-icon-sun { display: none; }
+    :root.dark .theme-icon-moon { display: inline !important; }
+  </style>
+  <style>
+    /* Wrapped in @layer components so Tailwind utilities (.hidden, .flex,
+       .bg-*, …) beat these rules at equal specificity. Without the layer
+       wrapper, unlayered rules here would outrank everything Tailwind
+       emits into @layer utilities. */
+    @layer components {
     /* Prose styles for rendered Markdown inside messages */
     .msg-prose h1 { font-size: 1.25em; font-weight: 700; margin: 0.5em 0 0.25em; }
     .msg-prose h2 { font-size: 1.15em; font-weight: 600; margin: 0.5em 0 0.25em; }
@@ -17,73 +115,82 @@
     .msg-prose ul { list-style-type: disc; }
     .msg-prose ol { list-style-type: decimal; }
     .msg-prose li { margin: 0.1em 0; }
-    .msg-prose code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
-    .msg-prose pre { background: #1f2937; color: #e5e7eb; padding: 0.75em; border-radius: 6px; overflow-x: auto; margin: 0.4em 0; }
+    .msg-prose code { background: var(--surface-strong); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+    .msg-prose pre { background: var(--surface-inverse); color: var(--text-strong); padding: 0.75em; border-radius: 6px; overflow-x: auto; margin: 0.4em 0; }
+    :root:not(.dark) .msg-prose pre { color: #e5e7eb; } /* stays readable over dark bg */
     .msg-prose pre code { background: none; padding: 0; color: inherit; }
-    .msg-prose blockquote { border-left: 3px solid #d1d5db; padding-left: 0.75em; margin: 0.4em 0; color: #6b7280; }
-    .msg-prose a { color: #3b82f6; text-decoration: underline; }
+    .msg-prose blockquote { border-left: 3px solid var(--border-strong); padding-left: 0.75em; margin: 0.4em 0; color: var(--text-subtle); }
+    .msg-prose a { color: var(--accent); text-decoration: underline; }
     .msg-prose table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.9em; }
-    .msg-prose th, .msg-prose td { border: 1px solid #d1d5db; padding: 0.25em 0.5em; }
-    .msg-prose th { background: #f3f4f6; font-weight: 600; }
+    .msg-prose th, .msg-prose td { border: 1px solid var(--border-strong); padding: 0.25em 0.5em; }
+    .msg-prose th { background: var(--surface-strong); font-weight: 600; }
     .msg-prose strong { font-weight: 600; }
     .msg-prose em { font-style: italic; }
+    } /* end @layer components */
   </style>
   <style>
-    .msg-system { color: #6b7280; font-style: italic; }
-    .msg-pass { color: #9ca3af; font-style: italic; font-size: 0.75rem; }
-    .prompt-icon { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: transparent; color: #6b7280; font-size: 12px; }
-    .prompt-icon:hover { color: #3b82f6; }
-    .prompt-tooltip { display: none; position: absolute; z-index: 40; background: #1f2937; color: white; padding: 6px 10px; border-radius: 6px; font-size: 11px; max-width: 280px; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+    @layer components {
+    .msg-system { color: var(--text-subtle); font-style: italic; }
+    .msg-pass { color: var(--text-muted); font-style: italic; font-size: 0.75rem; }
+    .prompt-icon { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: transparent; color: var(--text-subtle); font-size: 12px; }
+    .prompt-icon:hover { color: var(--accent); }
+    .prompt-tooltip { display: none; position: absolute; z-index: 40; background: var(--surface-inverse); color: #f9fafb; padding: 6px 10px; border-radius: 6px; font-size: 11px; max-width: 280px; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
     .prompt-icon:hover + .prompt-tooltip { display: block; }
-    .msg-self { background: #eff6ff; }
-    .msg-agent { background: #f0fdf4; }
+    .msg-self { background: var(--msg-self); }
+    .msg-agent { background: var(--msg-agent); }
     .typing-indicator { animation: pulse 1.5s infinite; }
     .msg-fading { opacity: 0; transition: opacity 500ms ease-out; }
     @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
     #messages { scroll-behavior: smooth; }
-    .mute-btn { cursor: pointer; font-size: 11px; padding: 1px 5px; border-radius: 3px; border: 1px solid #d1d5db; }
-    .mute-btn:hover { background: #fee2e2; border-color: #fca5a5; }
-    .mute-btn.muted { background: #fecaca; color: #991b1b; border-color: #fca5a5; }
+    .mute-btn { cursor: pointer; font-size: 11px; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--border-strong); }
+    .mute-btn:hover { background: color-mix(in srgb, var(--danger) 20%, transparent); border-color: var(--danger); }
+    .mute-btn.muted { background: color-mix(in srgb, var(--danger) 30%, transparent); color: var(--danger-hover); border-color: var(--danger); }
     .agent-muted { opacity: 0.5; }
     .sidebar-collapsed { width: 32px !important; min-width: 32px !important; max-width: 32px !important; overflow: hidden; }
     .sidebar-collapsed .sidebar-content { display: none; }
     .workspace-handle { cursor: row-resize; }
-    .workspace-handle:active { background: #dbeafe; }
+    .workspace-handle:active { background: color-mix(in srgb, var(--accent) 25%, transparent); }
     /* Pause status dot (header + sidebar) */
-    .room-status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 999px; background: #22c55e; cursor: pointer; border: none; padding: 0; flex-shrink: 0; }
-    .room-status-dot[aria-pressed="true"] { background: #9ca3af; }
-    .room-status-dot:hover { box-shadow: 0 0 0 3px rgba(34,197,94,0.15); }
-    .room-status-dot[aria-pressed="true"]:hover { box-shadow: 0 0 0 3px rgba(156,163,175,0.20); }
+    .room-status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 999px; background: var(--success); cursor: pointer; border: none; padding: 0; flex-shrink: 0; }
+    .room-status-dot[aria-pressed="true"] { background: var(--text-muted); }
+    .room-status-dot:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 15%, transparent); }
+    .room-status-dot[aria-pressed="true"]:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-muted) 20%, transparent); }
     .sidebar-room-row { display: flex; align-items: center; gap: 6px; }
     .sidebar-dot { width: 8px; height: 8px; }
     /* Mode icon pair */
-    .mode-switcher { display: inline-flex; align-items: center; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; background: white; }
-    .mode-btn { padding: 2px 6px; font-size: 13px; cursor: pointer; background: transparent; border: none; position: relative; line-height: 1.2; }
-    .mode-btn + .mode-btn { border-left: 1px solid #e5e7eb; }
-    .mode-btn[aria-pressed="true"]::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: 0; height: 2px; background: #3b82f6; border-radius: 2px 2px 0 0; }
-    .mode-btn:hover:not(:disabled) { background: #f3f4f6; }
+    .mode-switcher { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface); }
+    .mode-btn { padding: 2px 6px; font-size: 13px; cursor: pointer; background: transparent; border: none; position: relative; line-height: 1.2; color: var(--text); }
+    .mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+    .mode-btn[aria-pressed="true"]::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: 0; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; }
+    .mode-btn:hover:not(:disabled) { background: var(--surface-strong); }
     .mode-btn:disabled { opacity: 0.35; cursor: not-allowed; }
     /* Macro running chip */
-    .macro-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; background: #faf5ff; color: #6b21a8; border: 1px solid #e9d5ff; border-radius: 999px; padding: 2px 8px; }
-    .macro-chip button { background: transparent; border: none; cursor: pointer; color: #6b21a8; padding: 0 2px; font-size: 12px; }
-    .macro-chip button:hover { color: #dc2626; }
+    .macro-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; background: var(--macro-accent-bg); color: var(--macro-accent); border: 1px solid var(--macro-accent-border); border-radius: 999px; padding: 2px 8px; }
+    .macro-chip button { background: transparent; border: none; cursor: pointer; color: var(--macro-accent); padding: 0 2px; font-size: 12px; }
+    .macro-chip button:hover { color: var(--danger-hover); }
     /* Next button */
-    .btn-next { font-size: 11px; padding: 2px 8px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    .btn-next:hover { background: #2563eb; }
+    .btn-next { font-size: 11px; padding: 2px 8px; background: var(--accent); color: #ffffff; border: none; border-radius: 4px; cursor: pointer; }
+    .btn-next:hover { background: var(--accent-hover); }
     .btn-next:disabled { opacity: 0.5; cursor: not-allowed; }
     /* Toast container */
     #toast-container { position: fixed; bottom: 16px; right: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
-    #toast-container .toast { background: #1f2937; color: white; padding: 8px 12px; border-radius: 6px; font-size: 12px; max-width: 320px; pointer-events: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: toast-in 0.2s ease-out; }
+    #toast-container .toast { background: var(--surface-inverse); color: #f9fafb; padding: 8px 12px; border-radius: 6px; font-size: 12px; max-width: 320px; pointer-events: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: toast-in 0.2s ease-out; }
     @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     /* Macro picker popover */
-    .macro-popover { position: absolute; background: white; border: 1px solid #e5e7eb; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 4px; min-width: 220px; max-width: 320px; z-index: 30; }
-    .macro-popover .macro-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-size: 12px; border-radius: 4px; }
-    .macro-popover .macro-item:hover { background: #f3f4f6; }
+    .macro-popover { position: absolute; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 4px; min-width: 220px; max-width: 320px; z-index: 30; }
+    .macro-popover .macro-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-size: 12px; border-radius: 4px; color: var(--text); }
+    .macro-popover .macro-item:hover { background: var(--surface-strong); }
     .macro-popover .macro-item button { font-size: 11px; }
-    .macro-popover-empty { padding: 8px; font-size: 12px; color: #6b7280; }
+    .macro-popover-empty { padding: 8px; font-size: 12px; color: var(--text-subtle); }
+    } /* end @layer components */
   </style>
+  <!-- Tailwind last so utilities (.hidden, .flex, etc.) reliably beat raw
+       class rules above at equal specificity. Token palette is still set
+       by the :root blocks above — those are pure CSS vars, not affected
+       by load order. -->
+  <link rel="stylesheet" href="/dist.css">
 </head>
-<body class="bg-gray-50 h-screen flex flex-col">
+<body class="h-screen flex flex-col">
 
   <!-- Toast container (bottom-right) -->
   <div id="toast-container"></div>
@@ -92,55 +199,69 @@
 
   <main class="flex flex-1 overflow-hidden">
     <!-- Sidebar (left, only sidebar) -->
-    <aside id="sidebar" class="shrink-0 bg-white border-r flex flex-col transition-all" style="width: fit-content; min-width: 120px; max-width: 200px">
-      <!-- Sidebar header -->
-      <div class="p-2 border-b flex items-center justify-between gap-1">
-        <span class="sidebar-content text-sm font-semibold text-gray-700 whitespace-nowrap">samsinn</span>
+    <aside id="sidebar" class="shrink-0 flex flex-col transition-all" style="width: fit-content; min-width: 120px; max-width: 200px; background: var(--surface); border-right: 1px solid var(--border);">
+      <!-- Sidebar header — system icons only (title moved to footer) -->
+      <div class="p-2 border-b flex items-center justify-between gap-1" style="border-color: var(--border);">
         <div class="flex items-center gap-1">
-          <button id="btn-system-prompt" class="text-gray-400 hover:text-blue-500 w-5 h-5 flex items-center justify-center" title="System Prompt">
+          <button id="btn-system-prompt" class="w-5 h-5 flex items-center justify-center" style="color: var(--text-muted);" title="System Prompt">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           </button>
-          <button id="btn-ollama-dashboard" class="text-gray-400 hover:text-blue-500 w-5 h-5 flex items-center justify-center" title="Providers">
+          <button id="btn-ollama-dashboard" class="w-5 h-5 flex items-center justify-center" style="color: var(--text-muted);" title="Providers">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
           </button>
+          <button id="btn-theme-toggle" class="w-5 h-5 flex items-center justify-center" style="color: var(--text-muted);" title="Toggle theme">
+            <!-- Sun in light mode, moon in dark mode — CSS swaps via :root.dark rule -->
+            <svg class="theme-icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+            <svg class="theme-icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
           <span id="ollama-status-dot" style="display:none"></span>
-          <button id="btn-collapse-sidebar" class="text-gray-400 hover:text-gray-600 w-6 h-6 flex items-center justify-center text-xs" title="Toggle sidebar">◀</button>
         </div>
+        <button id="btn-collapse-sidebar" class="w-6 h-6 flex items-center justify-center text-xs" style="color: var(--text-muted);" title="Toggle sidebar">◀</button>
       </div>
 
       <!-- Rooms section -->
       <div class="sidebar-content border-b">
-        <div id="rooms-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-gray-50">
-          <span id="rooms-toggle" class="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">▾ Rooms</span>
-          <button id="btn-create-room" class="text-xs text-gray-500 hover:text-gray-700 font-bold" title="Create Room">+</button>
+        <div id="rooms-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-surface-muted">
+          <span id="rooms-toggle" class="text-xs font-medium text-text-subtle uppercase whitespace-nowrap">▾ Rooms</span>
+          <button id="btn-create-room" class="text-xs text-text-subtle hover:text-text font-bold" title="Create Room">+</button>
         </div>
         <div id="room-list" class="overflow-y-auto max-h-48"></div>
       </div>
 
       <!-- Agents section -->
       <div class="sidebar-content border-b">
-        <div id="agents-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-gray-50">
-          <span id="agents-toggle" class="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">▾ Agents</span>
-          <button id="btn-create-agent" class="text-xs text-gray-500 hover:text-gray-700 font-bold" title="Create Agent">+</button>
+        <div id="agents-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-surface-muted">
+          <span id="agents-toggle" class="text-xs font-medium text-text-subtle uppercase whitespace-nowrap">▾ Agents</span>
+          <button id="btn-create-agent" class="text-xs text-text-subtle hover:text-text font-bold" title="Create Agent">+</button>
         </div>
         <div id="agent-list" class="overflow-y-auto max-h-72"></div>
       </div>
 
       <!-- Tools section (collapsed by default) -->
       <div class="sidebar-content border-b">
-        <div id="tools-header" class="px-3 py-1.5 cursor-pointer hover:bg-gray-50">
-          <span id="tools-toggle" class="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">▸ Tools</span>
+        <div id="tools-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-surface-muted">
+          <span id="tools-toggle" class="text-xs font-medium text-text-subtle uppercase whitespace-nowrap">▸ Tools</span>
+          <button id="btn-rescan-tools" data-tools-action class="text-xs text-text-subtle hover:text-text" title="Rescan external tool directories">↻</button>
         </div>
         <div id="tools-list" class="overflow-y-auto max-h-48 hidden"></div>
       </div>
 
       <!-- Skills section (collapsed by default) -->
       <div class="sidebar-content border-b">
-        <div id="skills-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-gray-50">
-          <span id="skills-toggle" class="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">▸ Skills</span>
-          <button id="btn-create-skill" class="text-xs text-gray-500 hover:text-gray-700 font-bold" title="Create Skill">+</button>
+        <div id="skills-header" class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-surface-muted">
+          <span id="skills-toggle" class="text-xs font-medium text-text-subtle uppercase whitespace-nowrap">▸ Skills</span>
+          <button id="btn-create-skill" class="text-xs text-text-subtle hover:text-text font-bold" title="Create Skill">+</button>
         </div>
         <div id="skills-list" class="overflow-y-auto max-h-48 hidden"></div>
+      </div>
+
+      <!-- Sidebar footer — app name + version + repo link. Pushed to bottom by mt-auto. -->
+      <div class="sidebar-content mt-auto p-2 flex items-center gap-1 text-xs whitespace-nowrap" style="border-top: 1px solid var(--border); color: var(--text-subtle);">
+        <span class="font-semibold" style="color: var(--text);">samsinn</span>
+        <span id="app-version" style="color: var(--text-muted);">v…</span>
+        <a id="app-repo-link" href="#" target="_blank" rel="noopener noreferrer" class="ml-auto flex items-center justify-center" style="color: var(--text-muted); display: none;" title="Open repository">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
       </div>
 
     </aside>
@@ -148,15 +269,15 @@
     <!-- Center section -->
     <section class="flex-1 flex flex-col min-w-0">
       <!-- Empty state -->
-      <div id="no-room-state" class="flex-1 flex items-center justify-center text-gray-400 text-sm">
+      <div id="no-room-state" class="flex-1 flex items-center justify-center text-text-muted text-sm">
         Create a room to get started
       </div>
 
       <!-- Room header -->
-      <div id="room-header" class="px-3 py-1.5 border-b bg-white flex items-center justify-between hidden">
+      <div id="room-header" class="px-3 py-1.5 border-b bg-surface flex items-center justify-between hidden">
         <div class="flex items-center gap-2 min-w-0">
           <button id="room-status-dot" class="room-status-dot" title="Active — click to pause" aria-pressed="false" aria-label="Toggle pause"></button>
-          <span id="room-name" class="text-sm font-medium text-gray-800 truncate"></span>
+          <span id="room-name" class="text-sm font-medium text-text-strong truncate"></span>
           <!-- Running macro chip (hidden unless a run is active) -->
           <span id="macro-chip" class="macro-chip hidden">
             <span>▶</span>
@@ -190,43 +311,43 @@
 
       <!-- Room info bar (mode info — collapses when empty) -->
       <div id="room-info-bar" class="px-3 flex items-center gap-3 hidden">
-        <div id="room-mode-info" class="text-xs text-gray-400"></div>
+        <div id="room-mode-info" class="text-xs text-text-muted"></div>
       </div>
 
       <!-- Room members (chip row + add button, shown only when a room is selected) -->
-      <div id="room-members" class="px-3 py-1.5 border-b bg-white flex flex-wrap gap-1 items-center hidden"></div>
+      <div id="room-members" class="px-3 py-1.5 border-b bg-surface flex flex-wrap gap-1 items-center hidden"></div>
 
       <!-- Agent inspector area (inline, replaces chat when viewing an agent) -->
       <div id="agent-area" class="flex-1 overflow-y-auto p-4 hidden"></div>
 
       <!-- Chat area (messages + pinned + input) -->
       <div id="chat-area" class="flex-1 flex flex-col min-h-0 overflow-hidden hidden">
-        <div id="pinned-messages" class="border-b bg-amber-50 max-h-32 overflow-y-auto hidden"></div>
+        <div id="pinned-messages" class="border-b bg-warning-bg max-h-32 overflow-y-auto hidden"></div>
         <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
-        <form id="chat-form" class="p-3 border-t bg-white flex gap-2">
+        <form id="chat-form" class="p-3 border-t bg-surface flex gap-2">
           <input id="chat-input" type="text" placeholder="Type a message..."
-                 class="flex-1 px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                 class="flex-1 px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-accent-ring"
                  autocomplete="off" disabled>
-          <button type="submit" id="btn-send" class="px-4 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50" disabled>Send</button>
+          <button type="submit" id="btn-send" class="px-4 py-2 bg-accent text-white text-sm rounded hover:bg-accent-hover disabled:opacity-50" disabled>Send</button>
         </form>
       </div>
 
       <!-- Workspace bar (clickable toggle) -->
-      <div id="workspace-bar" class="h-7 bg-gray-100 border-t flex items-center justify-center cursor-pointer hover:bg-gray-200 select-none hidden">
-        <span id="workspace-label" class="text-xs text-gray-500 font-medium">▲ Workspace</span>
+      <div id="workspace-bar" class="h-7 bg-surface-strong border-t flex items-center justify-center cursor-pointer hover:bg-border select-none hidden">
+        <span id="workspace-label" class="text-xs text-text-subtle font-medium">▲ Workspace</span>
       </div>
       <!-- Workspace pane (resizable) -->
       <div id="workspace-pane" class="border-t overflow-y-auto hidden">
         <div id="workspace-content" class="p-3 space-y-2"></div>
         <div id="workspace-add-row" class="px-3 pb-2 flex gap-2 hidden">
-          <select id="artifact-type-select" class="text-xs border rounded px-1 py-1 bg-white">
+          <select id="artifact-type-select" class="text-xs border rounded px-1 py-1 bg-surface">
             <option value="task_list">Task List</option>
             <option value="document">Document</option>
             <option value="poll">Poll</option>
             <option value="mermaid">Mermaid</option>
           </select>
-          <input id="artifact-input" type="text" placeholder="Title..." class="flex-1 text-xs border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300">
-          <button id="btn-artifact-submit" type="button" class="text-xs text-blue-500 hover:text-blue-700 font-medium">Add</button>
+          <input id="artifact-input" type="text" placeholder="Title..." class="flex-1 text-xs border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent-ring">
+          <button id="btn-artifact-submit" type="button" class="text-xs text-accent hover:text-accent font-medium">Add</button>
         </div>
       </div>
     </section>
@@ -235,12 +356,12 @@
   <!-- Create Room Modal -->
   <dialog id="room-modal" class="rounded-lg shadow-xl p-0 w-96">
     <form id="room-form" class="p-4 space-y-3">
-      <h3 class="font-medium text-gray-800">Create Room</h3>
+      <h3 class="font-medium text-text-strong">Create Room</h3>
       <input name="name" placeholder="Room name" required class="w-full px-3 py-2 border rounded text-sm">
       <textarea name="roomPrompt" placeholder="Room prompt (optional)" rows="3" class="w-full px-3 py-2 border rounded text-sm resize-none"></textarea>
       <div class="flex justify-end gap-2">
-        <button type="button" onclick="this.closest('dialog').close()" class="px-3 py-1 text-sm text-gray-600">Cancel</button>
-        <button type="submit" class="px-3 py-1 text-sm bg-blue-500 text-white rounded">Create</button>
+        <button type="button" onclick="this.closest('dialog').close()" class="px-3 py-1 text-sm text-text">Cancel</button>
+        <button type="submit" class="px-3 py-1 text-sm bg-accent text-white rounded">Create</button>
       </div>
     </form>
   </dialog>
@@ -248,20 +369,20 @@
   <!-- Create Agent Modal -->
   <dialog id="agent-modal" class="rounded-lg shadow-xl p-0 w-96">
     <form id="agent-form" class="p-4 space-y-3">
-      <h3 class="font-medium text-gray-800">Create AI Agent</h3>
+      <h3 class="font-medium text-text-strong">Create AI Agent</h3>
       <input name="name" placeholder="Agent name" required class="w-full px-3 py-2 border rounded text-sm">
-      <select name="model" required class="w-full px-3 py-2 border rounded text-sm bg-white">
+      <select name="model" required class="w-full px-3 py-2 border rounded text-sm bg-surface">
         <option value="">Loading models...</option>
       </select>
-      <label class="flex items-center gap-1.5 text-xs text-gray-500">
+      <label class="flex items-center gap-1.5 text-xs text-text-subtle">
         <input type="checkbox" id="model-show-all" class="rounded">
         Show all models (not just recommended)
       </label>
       <textarea name="persona" placeholder="Agent persona..." required rows="4" class="w-full px-3 py-2 border rounded text-sm"></textarea>
       <input name="tags" placeholder="Tags (comma-separated, optional)" class="w-full px-3 py-2 border rounded text-sm">
       <div class="flex justify-end gap-2">
-        <button type="button" onclick="this.closest('dialog').close()" class="px-3 py-1 text-sm text-gray-600">Cancel</button>
-        <button type="submit" class="px-3 py-1 text-sm bg-green-500 text-white rounded">Create</button>
+        <button type="button" onclick="this.closest('dialog').close()" class="px-3 py-1 text-sm text-text">Cancel</button>
+        <button type="submit" class="px-3 py-1 text-sm bg-success text-white rounded">Create</button>
       </div>
     </form>
   </dialog>
@@ -269,9 +390,9 @@
   <!-- Name prompt modal -->
   <dialog id="name-modal" class="rounded-lg shadow-xl p-0 w-80">
     <form id="name-form" class="p-4 space-y-3">
-      <p class="text-sm text-gray-600">Enter your name to join:</p>
+      <p class="text-sm text-text">Enter your name to join:</p>
       <input name="name" placeholder="Your name" required autofocus class="w-full px-3 py-2 border rounded text-sm">
-      <button type="submit" class="w-full px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600">Join</button>
+      <button type="submit" class="w-full px-3 py-2 bg-accent text-white text-sm rounded hover:bg-accent-hover">Join</button>
     </form>
   </dialog>
 
@@ -279,12 +400,12 @@
   <dialog id="ollama-dashboard" class="rounded-lg shadow-xl p-0 w-[820px] max-w-[95vw] max-h-[85vh]">
     <div class="p-4 space-y-3 overflow-y-auto max-h-[85vh]">
       <div class="flex items-center justify-between">
-        <h3 class="font-medium text-gray-800">Providers</h3>
-        <button id="ollama-dashboard-close" class="text-gray-400 hover:text-gray-600 text-lg">&times;</button>
+        <h3 class="font-medium text-text-strong">Providers</h3>
+        <button id="ollama-dashboard-close" class="text-text-muted hover:text-text text-lg">&times;</button>
       </div>
 
       <!-- Order-locked-by-env notice (hidden unless PROVIDER_ORDER env is set) -->
-      <div id="order-locked-notice" class="hidden text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+      <div id="order-locked-notice" class="hidden text-[11px] text-warning bg-warning-bg border border-warning-border rounded px-2 py-1">
         Order locked by PROVIDER_ORDER env var — arrow reorder disabled.
       </div>
 
@@ -294,63 +415,63 @@
       <!-- Ollama settings — moved into the Ollama provider row at render time -->
       <div id="ollama-settings" class="hidden space-y-2 mt-2 text-xs">
         <div class="flex items-center gap-2">
-          <span class="text-gray-500 uppercase font-medium">Connection</span>
-          <span id="od-status-dot" class="inline-block w-2.5 h-2.5 rounded-full bg-gray-400"></span>
-          <span id="od-status-text" class="text-gray-600">Unknown</span>
-          <button id="od-reset-circuit" class="hidden text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded hover:bg-red-200">Reset</button>
-          <span id="od-latency" class="text-gray-400 ml-auto">-</span>
+          <span class="text-text-subtle uppercase font-medium">Connection</span>
+          <span id="od-status-dot" class="inline-block w-2.5 h-2.5 rounded-full bg-text-muted"></span>
+          <span id="od-status-text" class="text-text">Unknown</span>
+          <button id="od-reset-circuit" class="hidden text-xs px-2 py-0.5 bg-surface-strong text-danger rounded hover:bg-surface-muted">Reset</button>
+          <span id="od-latency" class="text-text-muted ml-auto">-</span>
         </div>
         <div class="flex items-center gap-2">
-          <select id="ollama-url-select" class="flex-1 border rounded px-2 py-1 bg-white"></select>
+          <select id="ollama-url-select" class="flex-1 border rounded px-2 py-1 bg-surface"></select>
         </div>
         <div class="flex gap-1">
           <input id="ollama-url-input" type="text" placeholder="http://host:port" class="flex-1 border rounded px-2 py-1">
-          <button id="btn-ollama-url-add" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">Add</button>
-          <button id="btn-ollama-url-delete" class="px-2 py-1 bg-red-100 text-red-500 rounded hover:bg-red-200">Del</button>
+          <button id="btn-ollama-url-add" class="px-2 py-1 bg-accent text-white rounded hover:bg-accent-hover">Add</button>
+          <button id="btn-ollama-url-delete" class="px-2 py-1 bg-surface-strong text-danger rounded hover:bg-surface-muted">Del</button>
         </div>
 
         <div class="pt-2 border-t">
-          <div class="text-gray-500 uppercase font-medium mb-1">Loaded Models</div>
-          <div id="od-models" class="text-gray-600">Loading...</div>
+          <div class="text-text-subtle uppercase font-medium mb-1">Loaded Models</div>
+          <div id="od-models" class="text-text">Loading...</div>
         </div>
 
         <div class="pt-2 border-t">
-          <div class="text-gray-500 uppercase font-medium mb-1">Performance (5 min)</div>
+          <div class="text-text-subtle uppercase font-medium mb-1">Performance (5 min)</div>
           <div class="grid grid-cols-3 gap-2 text-center">
-            <div><div id="od-tps" class="text-base font-semibold text-gray-800">-</div><div class="text-gray-400">tok/s</div></div>
-            <div><div id="od-p50" class="text-base font-semibold text-gray-800">-</div><div class="text-gray-400">p50 lat</div></div>
-            <div><div id="od-errors" class="text-base font-semibold text-gray-800">-</div><div class="text-gray-400">err rate</div></div>
+            <div><div id="od-tps" class="text-base font-semibold text-text-strong">-</div><div class="text-text-muted">tok/s</div></div>
+            <div><div id="od-p50" class="text-base font-semibold text-text-strong">-</div><div class="text-text-muted">p50 lat</div></div>
+            <div><div id="od-errors" class="text-base font-semibold text-text-strong">-</div><div class="text-text-muted">err rate</div></div>
           </div>
         </div>
 
         <div class="pt-2 border-t">
-          <div class="text-gray-500 uppercase font-medium mb-1">Gateway</div>
+          <div class="text-text-subtle uppercase font-medium mb-1">Gateway</div>
           <div class="grid grid-cols-4 gap-2 text-center">
-            <div><div id="od-queue" class="text-base font-semibold text-gray-800">0</div><div class="text-gray-400">queue</div></div>
-            <div><div id="od-concurrent" class="text-base font-semibold text-gray-800">0</div><div class="text-gray-400">active</div></div>
-            <div><div id="od-circuit" class="text-base font-semibold text-gray-800">-</div><div class="text-gray-400">circuit</div></div>
-            <div><div id="od-requests" class="text-base font-semibold text-gray-800">0</div><div class="text-gray-400">requests</div></div>
+            <div><div id="od-queue" class="text-base font-semibold text-text-strong">0</div><div class="text-text-muted">queue</div></div>
+            <div><div id="od-concurrent" class="text-base font-semibold text-text-strong">0</div><div class="text-text-muted">active</div></div>
+            <div><div id="od-circuit" class="text-base font-semibold text-text-strong">-</div><div class="text-text-muted">circuit</div></div>
+            <div><div id="od-requests" class="text-base font-semibold text-text-strong">0</div><div class="text-text-muted">requests</div></div>
           </div>
         </div>
 
         <details class="pt-2 border-t">
-          <summary class="text-gray-500 uppercase font-medium cursor-pointer">Config</summary>
+          <summary class="text-text-subtle uppercase font-medium cursor-pointer">Config</summary>
           <div class="pt-2 space-y-2">
             <div class="grid grid-cols-2 gap-2">
-              <label class="text-gray-500">Max Concurrent
+              <label class="text-text-subtle">Max Concurrent
                 <input id="od-cfg-concurrent" type="number" min="1" max="10" class="w-full px-2 py-1 border rounded mt-0.5">
               </label>
-              <label class="text-gray-500">Queue Depth
+              <label class="text-text-subtle">Queue Depth
                 <input id="od-cfg-queue" type="number" min="1" max="20" class="w-full px-2 py-1 border rounded mt-0.5">
               </label>
-              <label class="text-gray-500">Queue Timeout (ms)
+              <label class="text-text-subtle">Queue Timeout (ms)
                 <input id="od-cfg-timeout" type="number" min="5000" max="120000" step="1000" class="w-full px-2 py-1 border rounded mt-0.5">
               </label>
-              <label class="text-gray-500">Keep Alive
+              <label class="text-text-subtle">Keep Alive
                 <input id="od-cfg-keepalive" type="text" class="w-full px-2 py-1 border rounded mt-0.5">
               </label>
             </div>
-            <button id="od-cfg-save" class="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600">Save Config</button>
+            <button id="od-cfg-save" class="px-3 py-1 bg-macro-accent text-white rounded hover:bg-macro-accent-hover">Save Config</button>
           </div>
         </details>
       </div>
@@ -361,7 +482,7 @@
   <dialog id="summary-settings-modal" class="rounded-lg shadow-xl p-0 w-[520px] max-w-[95vw]">
     <form id="summary-settings-form" method="dialog" class="p-4 space-y-3">
       <h2 class="text-lg font-semibold">Summary & Compression</h2>
-      <div class="text-xs text-gray-500">Per-room settings for <span id="summary-settings-roomname" class="font-mono"></span></div>
+      <div class="text-xs text-text-subtle">Per-room settings for <span id="summary-settings-roomname" class="font-mono"></span></div>
 
       <div>
         <label class="text-xs font-semibold">Model</label>
@@ -398,8 +519,8 @@
       </fieldset>
 
       <div class="flex justify-end gap-2 pt-2">
-        <button type="button" id="summary-cfg-cancel" class="px-3 py-1 text-sm text-gray-600">Cancel</button>
-        <button type="submit" class="px-3 py-1 bg-purple-500 text-white rounded text-sm">Save</button>
+        <button type="button" id="summary-cfg-cancel" class="px-3 py-1 text-sm text-text">Cancel</button>
+        <button type="submit" class="px-3 py-1 bg-macro-accent text-white rounded text-sm">Save</button>
       </div>
     </form>
   </dialog>
@@ -409,23 +530,23 @@
     <div class="p-4 space-y-3 flex flex-col max-h-[85vh]">
       <div class="flex items-center justify-between">
         <h2 class="text-lg font-semibold">Inspect — <span id="summary-inspect-roomname" class="font-mono"></span></h2>
-        <button type="button" id="summary-inspect-close" class="px-2 py-1 text-sm text-gray-600">Close</button>
+        <button type="button" id="summary-inspect-close" class="px-2 py-1 text-sm text-text">Close</button>
       </div>
 
       <div class="flex gap-2 text-xs">
-        <button id="summary-inspect-regen-summary" class="px-2 py-1 bg-gray-100 rounded border">Regenerate summary</button>
-        <button id="summary-inspect-regen-compression" class="px-2 py-1 bg-gray-100 rounded border">Regenerate compression</button>
-        <button id="summary-inspect-regen-both" class="px-2 py-1 bg-gray-100 rounded border">Regenerate both</button>
+        <button id="summary-inspect-regen-summary" class="px-2 py-1 bg-surface-strong rounded border">Regenerate summary</button>
+        <button id="summary-inspect-regen-compression" class="px-2 py-1 bg-surface-strong rounded border">Regenerate compression</button>
+        <button id="summary-inspect-regen-both" class="px-2 py-1 bg-surface-strong rounded border">Regenerate both</button>
       </div>
 
       <div class="grid grid-cols-2 gap-3 flex-1 overflow-hidden">
         <div class="flex flex-col min-h-0">
-          <div class="text-xs font-semibold mb-1">Summary <span id="summary-inspect-summary-status" class="text-gray-500 font-normal"></span></div>
-          <pre id="summary-inspect-summary-text" class="flex-1 overflow-y-auto bg-gray-50 border rounded p-2 text-xs whitespace-pre-wrap"></pre>
+          <div class="text-xs font-semibold mb-1">Summary <span id="summary-inspect-summary-status" class="text-text-subtle font-normal"></span></div>
+          <pre id="summary-inspect-summary-text" class="flex-1 overflow-y-auto bg-surface-muted border rounded p-2 text-xs whitespace-pre-wrap"></pre>
         </div>
         <div class="flex flex-col min-h-0">
-          <div class="text-xs font-semibold mb-1">Compression <span id="summary-inspect-compression-status" class="text-gray-500 font-normal"></span></div>
-          <pre id="summary-inspect-compression-text" class="flex-1 overflow-y-auto bg-gray-50 border rounded p-2 text-xs whitespace-pre-wrap"></pre>
+          <div class="text-xs font-semibold mb-1">Compression <span id="summary-inspect-compression-status" class="text-text-subtle font-normal"></span></div>
+          <pre id="summary-inspect-compression-text" class="flex-1 overflow-y-auto bg-surface-muted border rounded p-2 text-xs whitespace-pre-wrap"></pre>
         </div>
       </div>
     </div>

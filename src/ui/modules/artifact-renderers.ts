@@ -22,7 +22,7 @@ const createArtifactHeader = (
   header.appendChild(titleEl)
   for (const el of (extra ?? [])) header.appendChild(el)
   const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 ml-1 flex-shrink-0'
+  removeBtn.className = 'text-xs text-danger hover:text-danger opacity-0 group-hover:opacity-100 ml-1 flex-shrink-0'
   removeBtn.textContent = '✕'
   removeBtn.onclick = onRemove
   header.appendChild(removeBtn)
@@ -41,11 +41,11 @@ export const renderTaskListArtifact = (
   wrap.className = 'group space-y-0.5'
 
   const progress = document.createElement('span')
-  progress.className = 'text-xs text-gray-400'
+  progress.className = 'text-xs text-text-muted'
   progress.textContent = tasks.length > 0 ? `${completed}/${tasks.length}` : '0 tasks'
 
   wrap.appendChild(createArtifactHeader(
-    artifact.title, 'font-medium text-gray-700',
+    artifact.title, 'font-medium text-text',
     () => onAction({ kind: 'remove', artifactId: artifact.id }),
     [progress],
   ))
@@ -59,13 +59,13 @@ export const renderTaskListArtifact = (
     cb.className = 'rounded flex-shrink-0'
     cb.onchange = () => onAction({ kind: 'complete_task', artifactId: artifact.id, taskId: task.id, completed: cb.checked })
     const label = document.createElement('span')
-    label.className = `flex-1 ${task.status === 'completed' ? 'line-through text-gray-400' : task.status === 'blocked' ? 'text-red-400' : 'text-gray-700'}`
+    label.className = `flex-1 ${task.status === 'completed' ? 'line-through text-text-muted' : task.status === 'blocked' ? 'text-danger' : 'text-text'}`
     label.textContent = task.content
     row.appendChild(cb)
     row.appendChild(label)
     if (task.assignee) {
       const badge = document.createElement('span')
-      badge.className = 'text-xs bg-blue-50 text-blue-500 px-1 rounded flex-shrink-0'
+      badge.className = 'text-xs bg-surface-muted text-accent px-1 rounded flex-shrink-0'
       badge.textContent = task.assignee
       row.appendChild(badge)
     }
@@ -78,7 +78,7 @@ export const renderTaskListArtifact = (
     const input = document.createElement('input')
     input.type = 'text'
     input.placeholder = 'Add task…'
-    input.className = 'flex-1 text-xs border-b border-transparent hover:border-gray-200 focus:border-blue-300 bg-transparent py-0.5 focus:outline-none'
+    input.className = 'flex-1 text-xs border-b border-transparent hover:border-border focus:border-accent bg-transparent py-0.5 focus:outline-none'
     input.onkeydown = (e) => {
       if (e.key === 'Enter') {
         e.stopPropagation()
@@ -92,7 +92,7 @@ export const renderTaskListArtifact = (
     wrap.appendChild(addRow)
   } else {
     const res = document.createElement('div')
-    res.className = 'text-xs text-green-600 pl-2 italic'
+    res.className = 'text-xs text-success pl-2 italic'
     res.textContent = `✓ ${artifact.resolution}`
     wrap.appendChild(res)
   }
@@ -111,13 +111,13 @@ export const renderPollArtifact = (
   wrap.className = 'group space-y-1'
 
   wrap.appendChild(createArtifactHeader(
-    artifact.title, 'font-medium text-gray-700',
+    artifact.title, 'font-medium text-text',
     () => onAction({ kind: 'remove', artifactId: artifact.id }),
   ))
 
   if (body.question) {
     const q = document.createElement('div')
-    q.className = 'text-xs text-gray-500 pl-2 italic'
+    q.className = 'text-xs text-text-subtle pl-2 italic'
     q.textContent = body.question
     wrap.appendChild(q)
   }
@@ -127,15 +127,15 @@ export const renderPollArtifact = (
     row.className = 'flex items-center gap-1.5 pl-2 text-xs'
     const hasVoted = opt.votes.includes(myAgentId)
     const voteBtn = document.createElement('button')
-    voteBtn.className = `px-1.5 py-0.5 rounded text-xs flex-shrink-0 ${hasVoted ? 'bg-blue-100 text-blue-600 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`
+    voteBtn.className = `px-1.5 py-0.5 rounded text-xs flex-shrink-0 ${hasVoted ? 'bg-surface-strong text-accent font-medium' : 'bg-surface-strong text-text-subtle hover:bg-border'}`
     voteBtn.textContent = hasVoted ? '✓' : 'Vote'
     voteBtn.disabled = artifact.resolvedAt !== undefined
     voteBtn.onclick = () => onAction({ kind: 'cast_vote', artifactId: artifact.id, optionId: opt.id })
     const optLabel = document.createElement('span')
-    optLabel.className = 'flex-1 text-gray-700'
+    optLabel.className = 'flex-1 text-text'
     optLabel.textContent = opt.text
     const count = document.createElement('span')
-    count.className = 'text-gray-400 flex-shrink-0'
+    count.className = 'text-text-muted flex-shrink-0'
     count.textContent = `${opt.votes.length}`
     row.appendChild(voteBtn)
     row.appendChild(optLabel)
@@ -145,7 +145,7 @@ export const renderPollArtifact = (
 
   if (artifact.resolution) {
     const res = document.createElement('div')
-    res.className = 'text-xs text-green-600 pl-2 italic'
+    res.className = 'text-xs text-success pl-2 italic'
     res.textContent = `✓ ${artifact.resolution}`
     wrap.appendChild(res)
   }
@@ -164,17 +164,17 @@ export const renderMacroArtifact = (
   const row = document.createElement('div')
   row.className = 'flex items-center gap-1 text-xs'
   const titleEl = document.createElement('span')
-  titleEl.className = 'font-medium text-purple-700 flex-1'
+  titleEl.className = 'font-medium text-macro-accent flex-1'
   titleEl.textContent = artifact.title
   const steps = (body.steps ?? []).map(s => s.agentName).join(' → ')
   const stepsEl = document.createElement('span')
-  stepsEl.className = 'text-gray-400 truncate max-w-[120px]'
+  stepsEl.className = 'text-text-muted truncate max-w-[120px]'
   stepsEl.title = steps
   stepsEl.textContent = steps
   const loopEl = body.loop ? document.createElement('span') : null
-  if (loopEl) { loopEl.className = 'text-purple-400 flex-shrink-0'; loopEl.textContent = '↻' }
+  if (loopEl) { loopEl.className = 'text-macro-accent-soft flex-shrink-0'; loopEl.textContent = '↻' }
   const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
+  removeBtn.className = 'text-xs text-danger hover:text-danger opacity-0 group-hover:opacity-100 flex-shrink-0'
   removeBtn.textContent = '✕'
   removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
   row.appendChild(titleEl)
@@ -200,10 +200,10 @@ export const renderDocumentArtifact = (
   wrap.className = 'group'
 
   const countEl = document.createElement('span')
-  countEl.className = 'text-gray-400 flex-shrink-0'
+  countEl.className = 'text-text-muted flex-shrink-0'
   countEl.textContent = `${allBlocks.length} block${allBlocks.length === 1 ? '' : 's'}`
   const editBtn = document.createElement('button')
-  editBtn.className = 'text-xs text-blue-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 flex-shrink-0'
+  editBtn.className = 'text-xs text-accent hover:text-accent-hover opacity-0 group-hover:opacity-100 flex-shrink-0'
   editBtn.textContent = 'edit'
   editBtn.onclick = () => onAction({ kind: 'edit_document', artifactId: artifact.id, title: artifact.title, blocks: allBlocks })
 
@@ -217,27 +217,27 @@ export const renderDocumentArtifact = (
 
   if (allBlocks.length > MAX_VISIBLE_BLOCKS) {
     const moreEl = document.createElement('div')
-    moreEl.className = 'text-xs text-gray-400 italic mb-1'
+    moreEl.className = 'text-xs text-text-muted italic mb-1'
     moreEl.textContent = `… ${allBlocks.length - MAX_VISIBLE_BLOCKS} earlier blocks`
     wrap.appendChild(moreEl)
   }
 
   for (const block of blocks) {
     const blockEl = document.createElement('div')
-    blockEl.className = 'text-xs text-gray-700 leading-snug mb-0.5'
+    blockEl.className = 'text-xs text-text leading-snug mb-0.5'
     switch (block.type) {
-      case 'heading1': blockEl.className = 'text-sm font-bold text-gray-900 mb-0.5'; blockEl.textContent = block.content; break
-      case 'heading2': blockEl.className = 'text-xs font-semibold text-gray-800 mb-0.5'; blockEl.textContent = block.content; break
-      case 'heading3': blockEl.className = 'text-xs font-medium text-gray-700 mb-0.5'; blockEl.textContent = block.content; break
+      case 'heading1': blockEl.className = 'text-sm font-bold text-text-strong mb-0.5'; blockEl.textContent = block.content; break
+      case 'heading2': blockEl.className = 'text-xs font-semibold text-text-strong mb-0.5'; blockEl.textContent = block.content; break
+      case 'heading3': blockEl.className = 'text-xs font-medium text-text mb-0.5'; blockEl.textContent = block.content; break
       case 'code': {
         const pre = document.createElement('pre')
-        pre.className = 'text-xs bg-gray-50 rounded p-1 mb-0.5 overflow-x-auto whitespace-pre-wrap break-words'
+        pre.className = 'text-xs bg-surface-muted rounded p-1 mb-0.5 overflow-x-auto whitespace-pre-wrap break-words'
         pre.textContent = block.content
         wrap.appendChild(pre)
         continue
       }
-      case 'quote': blockEl.className = 'text-xs text-gray-600 border-l-2 border-gray-300 pl-2 italic mb-0.5'; blockEl.textContent = block.content; break
-      case 'list': blockEl.className = 'text-xs text-gray-700 mb-0.5'; blockEl.textContent = `• ${block.content}`; break
+      case 'quote': blockEl.className = 'text-xs text-text border-l-2 border-border-strong pl-2 italic mb-0.5'; blockEl.textContent = block.content; break
+      case 'list': blockEl.className = 'text-xs text-text mb-0.5'; blockEl.textContent = `• ${block.content}`; break
       default: blockEl.textContent = block.content
     }
     wrap.appendChild(blockEl)
@@ -245,7 +245,7 @@ export const renderDocumentArtifact = (
 
   if (allBlocks.length === 0) {
     const empty = document.createElement('div')
-    empty.className = 'text-xs text-gray-400 italic'
+    empty.className = 'text-xs text-text-muted italic'
     empty.textContent = '(empty document)'
     wrap.appendChild(empty)
   }
@@ -269,12 +269,12 @@ export const renderMermaidArtifact = (
   title.textContent = artifact.title
   header.appendChild(title)
   const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 ml-auto'
+  removeBtn.className = 'text-xs text-danger hover:text-danger-hover opacity-0 group-hover:opacity-100 ml-auto'
   removeBtn.textContent = '✕'
   removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
   header.appendChild(removeBtn)
   const container = document.createElement('div')
-  container.className = 'overflow-x-auto bg-white rounded border p-2'
+  container.className = 'overflow-x-auto bg-surface rounded border p-2'
   const source = (artifact.body as { source?: string })?.source ?? ''
   void renderMermaidSource(container, source)
   div.appendChild(header)
@@ -291,13 +291,13 @@ export const renderGenericArtifact = (
   const wrap = document.createElement('div')
   wrap.className = 'group flex items-center gap-1 text-xs'
   const titleEl = document.createElement('span')
-  titleEl.className = 'flex-1 text-gray-700'
+  titleEl.className = 'flex-1 text-text'
   titleEl.textContent = artifact.title
   const typeEl = document.createElement('span')
-  typeEl.className = 'text-gray-400 flex-shrink-0'
+  typeEl.className = 'text-text-muted flex-shrink-0'
   typeEl.textContent = `[${artifact.type}]`
   const removeBtn = document.createElement('button')
-  removeBtn.className = 'text-xs text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0'
+  removeBtn.className = 'text-xs text-danger hover:text-danger opacity-0 group-hover:opacity-100 flex-shrink-0'
   removeBtn.textContent = '✕'
   removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
   wrap.appendChild(titleEl)

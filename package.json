@@ -6,9 +6,12 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/main.ts",
-    "dev": "bun --watch src/main.ts",
-    "dev:remote": "OLLAMA_URL=http://192.168.0.222:11434 bun --watch src/main.ts",
+    "dev": "bun run scripts/dev.ts",
+    "dev:remote": "OLLAMA_URL=http://192.168.0.222:11434 bun run scripts/dev.ts",
     "start:remote": "OLLAMA_URL=http://192.168.0.222:11434 bun run src/main.ts",
+    "build:css": "bunx @tailwindcss/cli -i src/ui/input.css -o src/ui/dist.css --minify",
+    "dev:server": "bun --watch src/main.ts",
+    "dev:css": "bunx @tailwindcss/cli -i src/ui/input.css -o src/ui/dist.css --watch",
     "check": "tsc --noEmit",
     "test": "bun test",
     "test:unit": "bun test --filter '!Ollama'",
@@ -16,8 +19,14 @@
   },
   "keywords": ["agents", "multi-agent", "llm", "ollama", "communication", "rooms", "bun", "typescript"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/michaelhil/samsinn"
+  },
   "devDependencies": {
-    "@types/bun": "1.3.11"
+    "@tailwindcss/cli": "^4",
+    "@types/bun": "1.3.11",
+    "tailwindcss": "^4"
   },
   "peerDependencies": {
     "typescript": "^5"

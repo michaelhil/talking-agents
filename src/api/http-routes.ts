@@ -19,37 +19,18 @@ import { ollamaRoutes } from './routes/ollama.ts'
 import { providersRoutes } from './routes/providers.ts'
 import { systemRoutes } from './routes/system.ts'
 import { bookmarkRoutes } from './routes/bookmarks.ts'
+import { toolRoutes } from './routes/tools.ts'
 import type { RouteContext } from './routes/types.ts'
 
-// === Shared Helpers (exported for use by route modules) ===
-
-export const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  })
-
-export const errorResponse = (message: string, status = 400) =>
-  json({ error: message }, status)
-
-export const parseBody = async (req: Request): Promise<Record<string, unknown>> => {
-  try {
-    return (await req.json()) as Record<string, unknown>
-  } catch {
-    return {}
-  }
-}
-
-export const extractParam = (pathname: string, pattern: string): string | null => {
-  const regex = new RegExp(`^${pattern.replace(':name', '([^/]+)')}$`)
-  const match = pathname.match(regex)
-  return match?.[1] ? decodeURIComponent(match[1]) : null
-}
+// Route helpers live in ./routes/helpers.ts to keep http-routes.ts cycle-free.
 
 // === Route Table ===
 // Order matters: more-specific patterns (e.g. /rooms/:name/todos/:id) before general ones.
 
 const allRoutes = [
+  // Tool routes come before houseRoutes so /api/tools/:name + /api/tools/rescan
+  // are matched before any catch-all patterns elsewhere.
+  ...toolRoutes,
   ...houseRoutes,
   ...ollamaRoutes,
   ...providersRoutes,
@@ -71,8 +52,9 @@ export const handleAPI = async (
   broadcast: (msg: WSOutbound) => void,
   subscribeAgentState: (agentId: string, agentName: string) => void,
   unsubscribeAgentState?: (agentId: string) => void,
+  remoteAddress?: string,
 ): Promise<Response | null> => {
-  const ctx: RouteContext = { system, broadcast, subscribeAgentState, unsubscribeAgentState }
+  const ctx: RouteContext = { system, broadcast, subscribeAgentState, unsubscribeAgentState, remoteAddress }
 
   for (const route of allRoutes) {
     if (route.method !== req.method) continue

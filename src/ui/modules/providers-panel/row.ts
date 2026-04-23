@@ -33,11 +33,11 @@ const PROVIDER_URLS: Record<string, string> = {
 }
 
 const dotColourClass = (status: Status): string => {
-  if (status === 'ok') return 'bg-green-500'
-  if (status === 'cooldown') return 'bg-amber-400'
-  if (status === 'down') return 'bg-red-500'
+  if (status === 'ok') return 'bg-success'
+  if (status === 'cooldown') return 'bg-warning'
+  if (status === 'down') return 'bg-danger'
   // disabled + no_key both render as gray; disabled gets the slash overlay.
-  return 'bg-gray-300'
+  return 'bg-border-strong'
 }
 
 const statusTooltip = (status: Status): string => {
@@ -56,7 +56,7 @@ const statusButton = (status: Status): string => {
     ? `<span class="absolute inset-0 flex items-center justify-center pointer-events-none"
              aria-hidden="true"
              style="transform: rotate(-45deg)">
-         <span class="block h-[2px] w-3.5 bg-red-500 rounded"></span>
+         <span class="block h-[2px] w-3.5 bg-danger rounded"></span>
        </span>`
     : ''
   return `<button class="prov-dot-btn relative w-4 h-4 flex items-center justify-center shrink-0 cursor-pointer" title="${statusTooltip(status)}">
@@ -74,7 +74,7 @@ export interface RowContext {
 export const renderRow = (ctx: RowContext): HTMLElement => {
   const { entry, position, orderLocked } = ctx
   const row = document.createElement('div')
-  row.className = 'border rounded px-2 py-1 bg-gray-50 flex items-center gap-2'
+  row.className = 'border rounded px-2 py-1 bg-surface-muted flex items-center gap-2'
   row.dataset.provider = entry.name
 
   const locked = entry.source === 'env'
@@ -89,9 +89,9 @@ export const renderRow = (ctx: RowContext): HTMLElement => {
   const nameCol = `
     <div class="w-24 shrink-0 flex items-center gap-1">
       <a href="${url}" target="_blank" rel="noopener noreferrer"
-         class="font-medium text-gray-800 hover:text-blue-600 hover:underline truncate"
+         class="font-medium text-text-strong hover:text-accent-hover hover:underline truncate"
          title="Open ${entry.name} dashboard in a new tab">${entry.name}</a>
-      <button class="prov-models-btn text-gray-400 hover:text-gray-700 shrink-0"
+      <button class="prov-models-btn text-text-muted hover:text-text shrink-0"
               title="Show available models">≡</button>
     </div>
   `
@@ -111,11 +111,11 @@ export const renderRow = (ctx: RowContext): HTMLElement => {
            class="w-24 shrink-0 px-2 py-0.5 border rounded font-mono text-[11px]"
            ${locked ? 'disabled title="Key comes from environment variable"' : ''}>
   ` : `
-    <button class="ollama-settings-btn w-24 shrink-0 text-[11px] px-2 py-0.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded">⚙ Settings</button>
+    <button class="ollama-settings-btn w-24 shrink-0 text-[11px] px-2 py-0.5 bg-border hover:bg-border-strong text-text rounded">⚙ Settings</button>
   `
 
   const maxField = `
-    <label class="text-gray-500 flex items-center gap-0.5 shrink-0">max
+    <label class="text-text-subtle flex items-center gap-0.5 shrink-0">max
       <input id="${mcFieldId}" type="number" min="1" max="100"
              value="${entry.maxConcurrent ?? ''}"
              data-original="${entry.maxConcurrent ?? ''}"
@@ -125,14 +125,14 @@ export const renderRow = (ctx: RowContext): HTMLElement => {
 
   // Test button — cloud providers test their key; Ollama pings its URL.
   const actionButtons = `
-    <button class="prov-test text-[11px] px-2 py-0.5 bg-green-600 hover:bg-green-700 text-white rounded shrink-0">Test</button>
+    <button class="prov-test text-[11px] px-2 py-0.5 bg-success hover:bg-success-hover text-white rounded shrink-0">Test</button>
   `
 
   const arrows = `
     <div class="flex items-center gap-1.5 shrink-0 ml-auto">
-      <button class="prov-up text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
+      <button class="prov-up text-text-muted hover:text-text disabled:opacity-20 disabled:cursor-not-allowed"
               ${position.isFirst || orderLocked ? 'disabled' : ''} title="Move up">▲</button>
-      <button class="prov-down text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
+      <button class="prov-down text-text-muted hover:text-text disabled:opacity-20 disabled:cursor-not-allowed"
               ${position.isLast || orderLocked ? 'disabled' : ''} title="Move down">▼</button>
     </div>
   `

@@ -136,15 +136,15 @@ const renderChip = (
   inspectAgent: (agentId: string) => void,
 ): HTMLElement => {
   const chip = document.createElement('span')
-  const bg = isMuted ? 'bg-gray-100 text-gray-500' : 'bg-blue-50 text-blue-700'
+  const bg = isMuted ? 'bg-surface-strong text-text-subtle' : 'bg-surface-muted text-accent'
   chip.className = `inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${bg} group/chip`
 
   const dot = document.createElement('button')
   const dotColor = isMuted
-    ? 'bg-gray-400'
+    ? 'bg-text-muted'
     : isGenerating
-      ? 'bg-yellow-400 typing-indicator'
-      : 'bg-green-400'
+      ? 'bg-thinking typing-indicator'
+      : 'bg-success'
   dot.className = `inline-block w-2 h-2 rounded-full shrink-0 cursor-pointer ${dotColor}`
   dot.title = isMuted ? `Unmute ${agent.name}` : `Mute ${agent.name}`
   dot.onclick = (e) => {
@@ -171,7 +171,7 @@ const renderChip = (
   if (isManualMode && agent.kind === 'ai' && !isMuted) {
     const activateBtn = document.createElement('button')
     const disabled = isGenerating
-    activateBtn.className = `text-xs px-1 ${disabled ? 'text-gray-300 cursor-not-allowed' : 'text-emerald-500 hover:text-emerald-700'}`
+    activateBtn.className = `text-xs px-1 ${disabled ? 'text-border-strong cursor-not-allowed' : 'text-emerald-500 hover:text-emerald-700'}`
     activateBtn.textContent = '▶'
     activateBtn.title = disabled ? `${agent.name} is generating` : `Activate ${agent.name} for one turn`
     activateBtn.disabled = disabled
@@ -201,7 +201,7 @@ const renderAddButton = (opts: RenderOpts, roomName: string): HTMLElement => {
   wrap.className = 'relative inline-block'
 
   const btn = document.createElement('button')
-  btn.className = 'px-2 py-0.5 text-xs border border-dashed border-gray-300 text-gray-500 rounded hover:border-blue-400 hover:text-blue-600'
+  btn.className = 'px-2 py-0.5 text-xs border border-dashed border-border-strong text-text-subtle rounded hover:border-blue-400 hover:text-accent-hover'
   btn.textContent = '＋'
   btn.title = 'Add an agent to this room'
 
@@ -219,7 +219,7 @@ const renderAddButton = (opts: RenderOpts, roomName: string): HTMLElement => {
 const buildPicker = (opts: RenderOpts, roomName: string): HTMLElement => {
   const picker = document.createElement('div')
   picker.id = 'room-member-picker'
-  picker.className = 'absolute z-30 mt-1 bg-white border rounded shadow-lg py-1 text-xs min-w-[180px]'
+  picker.className = 'absolute z-30 mt-1 bg-surface border rounded shadow-lg py-1 text-xs min-w-[180px]'
 
   const closePicker = () => picker.remove()
   const offClick = (e: MouseEvent) => {
@@ -232,7 +232,7 @@ const buildPicker = (opts: RenderOpts, roomName: string): HTMLElement => {
 
   // "Create new" entry
   const createRow = document.createElement('div')
-  createRow.className = 'px-3 py-1 cursor-pointer hover:bg-green-50 text-green-700 font-medium'
+  createRow.className = 'px-3 py-1 cursor-pointer hover:bg-success-soft-bg text-success font-medium'
   createRow.textContent = '＋ Create new agent…'
   createRow.onclick = () => {
     autoAddRoomOnNextCreate = roomName
@@ -252,13 +252,13 @@ const buildPicker = (opts: RenderOpts, roomName: string): HTMLElement => {
 
   if (eligible.length === 0) {
     const empty = document.createElement('div')
-    empty.className = 'px-3 py-1 text-gray-400 italic'
+    empty.className = 'px-3 py-1 text-text-muted italic'
     empty.textContent = 'All existing agents are in this room'
     picker.appendChild(empty)
   } else {
     for (const agent of eligible) {
       const row = document.createElement('div')
-      row.className = 'px-3 py-1 cursor-pointer hover:bg-blue-50 flex items-center gap-1.5'
+      row.className = 'px-3 py-1 cursor-pointer hover:bg-surface-muted flex items-center gap-1.5'
       const emoji = document.createElement('span')
       emoji.textContent = agent.kind === 'ai' ? '🤖' : '🧠'
       const name = document.createElement('span')

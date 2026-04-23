@@ -148,7 +148,11 @@ export const createWriteToolTool = (
       return { success: false, error: `Module does not export a valid Tool (needs name, description, parameters, execute). File deleted.\n\nGenerated code:\n${code}` }
     }
 
-    registry.register(tool as Tool)
+    registry.registerWithSource(tool as Tool, {
+      kind: 'skill-bundled',
+      path: filePath,
+      skill: skillName,
+    })
 
     // Update skill's tool list if this is a new tool
     if (!skill.tools.includes(name)) {

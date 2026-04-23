@@ -2,7 +2,7 @@
 // Document Editor Modal — Create and edit document artifact blocks.
 // ============================================================================
 
-import { createModal } from './modal.ts'
+import { createModal } from './detail-modal.ts'
 
 interface Block {
   id: string
@@ -19,8 +19,6 @@ export const openDocumentEditor = (
   send: (data: unknown) => void,
 ): void => {
   const modal = createModal({ title: `Edit: ${title}`, width: 'max-w-2xl' })
-  const card = modal.body
-  card.className += ' max-h-[80vh] flex flex-col'
 
   const blockList = document.createElement('div')
   blockList.className = 'flex-1 overflow-y-auto space-y-2 mb-3'
@@ -32,11 +30,11 @@ export const openDocumentEditor = (
     blockList.innerHTML = ''
     editBlocks.forEach((block, i) => {
       const row = document.createElement('div')
-      row.className = 'flex gap-2 items-start bg-gray-50 rounded p-2'
+      row.className = 'flex gap-2 items-start bg-surface-muted rounded p-2'
 
       // Block type selector
       const typeSelect = document.createElement('select')
-      typeSelect.className = 'text-xs border rounded px-1 py-0.5 bg-white shrink-0'
+      typeSelect.className = 'text-xs border rounded px-1 py-0.5 bg-surface shrink-0'
       for (const t of BLOCK_TYPES) {
         const opt = document.createElement('option')
         opt.value = t
@@ -48,7 +46,7 @@ export const openDocumentEditor = (
 
       // Content textarea
       const textarea = document.createElement('textarea')
-      textarea.className = 'flex-1 text-xs border rounded px-2 py-1 resize-y focus:outline-none focus:ring-1 focus:ring-blue-300'
+      textarea.className = 'flex-1 text-xs border rounded px-2 py-1 resize-y focus:outline-none focus:ring-1 focus:ring-accent-ring'
       textarea.style.minHeight = '2rem'
       textarea.value = block.content
       textarea.oninput = () => { block.content = textarea.value }
@@ -58,21 +56,21 @@ export const openDocumentEditor = (
       controls.className = 'flex flex-col gap-0.5 shrink-0'
 
       const upBtn = document.createElement('button')
-      upBtn.className = 'text-xs text-gray-400 hover:text-gray-700'
+      upBtn.className = 'text-xs text-text-muted hover:text-text'
       upBtn.textContent = '▲'
       upBtn.onclick = () => {
         if (i > 0) { [editBlocks[i - 1]!, editBlocks[i]!] = [editBlocks[i]!, editBlocks[i - 1]!]; renderBlocks() }
       }
 
       const downBtn = document.createElement('button')
-      downBtn.className = 'text-xs text-gray-400 hover:text-gray-700'
+      downBtn.className = 'text-xs text-text-muted hover:text-text'
       downBtn.textContent = '▼'
       downBtn.onclick = () => {
         if (i < editBlocks.length - 1) { [editBlocks[i]!, editBlocks[i + 1]!] = [editBlocks[i + 1]!, editBlocks[i]!]; renderBlocks() }
       }
 
       const delBtn = document.createElement('button')
-      delBtn.className = 'text-xs text-red-400 hover:text-red-600'
+      delBtn.className = 'text-xs text-danger hover:text-danger-hover'
       delBtn.textContent = '×'
       delBtn.onclick = () => { editBlocks.splice(i, 1); renderBlocks() }
 
@@ -87,12 +85,12 @@ export const openDocumentEditor = (
     })
 
     if (editBlocks.length === 0) {
-      blockList.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">No blocks. Click "Add Block" to start.</div>'
+      blockList.innerHTML = '<div class="text-xs text-text-muted text-center py-4">No blocks. Click "Add Block" to start.</div>'
     }
   }
 
   const addBtn = document.createElement('button')
-  addBtn.className = 'text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 mb-3'
+  addBtn.className = 'text-xs bg-surface-strong text-accent px-3 py-1 rounded hover:bg-surface-muted mb-3'
   addBtn.textContent = '+ Add Block'
   addBtn.onclick = () => {
     editBlocks.push({ id: crypto.randomUUID(), type: 'paragraph', content: '' })
@@ -101,7 +99,7 @@ export const openDocumentEditor = (
   }
 
   const saveBtn = document.createElement('button')
-  saveBtn.className = 'text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600'
+  saveBtn.className = 'text-xs px-3 py-1 bg-accent text-white rounded hover:bg-accent-hover'
   saveBtn.textContent = 'Save'
   saveBtn.onclick = () => {
     // Compare with original blocks and send appropriate operations
@@ -130,12 +128,12 @@ export const openDocumentEditor = (
   }
 
   const btnRow = document.createElement('div')
-  btnRow.className = 'flex justify-end'
+  btnRow.className = 'flex justify-end w-full'
   btnRow.appendChild(saveBtn)
 
-  card.appendChild(blockList)
-  card.appendChild(addBtn)
-  card.appendChild(btnRow)
+  modal.scrollBody.appendChild(blockList)
+  modal.scrollBody.appendChild(addBtn)
+  modal.footer.appendChild(btnRow)
   document.body.appendChild(modal.overlay)
 
   renderBlocks()

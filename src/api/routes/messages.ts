@@ -1,4 +1,4 @@
-import { json, errorResponse, parseBody } from '../http-routes.ts'
+import { json, errorResponse, parseBody } from './helpers.ts'
 import type { MessageTarget } from '../../core/types/messaging.ts'
 import type { RouteEntry } from './types.ts'
 

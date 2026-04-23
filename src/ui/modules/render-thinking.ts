@@ -15,18 +15,18 @@ export const renderThinkingIndicator = (
   header.className = 'flex items-center gap-2 mb-1'
 
   const dot = document.createElement('span')
-  dot.className = 'inline-block w-2 h-2 rounded-full bg-yellow-400 typing-indicator shrink-0'
+  dot.className = 'inline-block w-2 h-2 rounded-full bg-thinking typing-indicator shrink-0'
   header.appendChild(dot)
 
   const label = document.createElement('span')
-  label.className = 'font-medium text-gray-800 text-xs'
+  label.className = 'font-medium text-text-strong text-xs'
   label.setAttribute('data-thinking-label', agentName)
   let seconds = 0
   label.textContent = `${agentName}: Building context...`
   header.appendChild(label)
 
   const timerEl = document.createElement('span')
-  timerEl.className = 'text-xs text-gray-400'
+  timerEl.className = 'text-xs text-text-muted'
   header.appendChild(timerEl)
 
   const spacer = document.createElement('span')
@@ -34,7 +34,7 @@ export const renderThinkingIndicator = (
   header.appendChild(spacer)
 
   const stopBtn = document.createElement('button')
-  stopBtn.className = 'text-red-400 hover:text-red-600 text-xs font-medium'
+  stopBtn.className = 'text-danger hover:text-danger-hover text-xs font-medium'
   stopBtn.textContent = '■ stop'
   stopBtn.onclick = (e) => { e.stopPropagation(); onStop(agentName) }
   header.appendChild(stopBtn)
@@ -42,12 +42,12 @@ export const renderThinkingIndicator = (
   div.appendChild(header)
 
   const toolStatus = document.createElement('div')
-  toolStatus.className = 'text-xs text-gray-400'
+  toolStatus.className = 'text-xs text-text-muted'
   toolStatus.setAttribute('data-thinking-tools', agentName)
   div.appendChild(toolStatus)
 
   const preview = document.createElement('div')
-  preview.className = 'text-gray-700 whitespace-pre-wrap break-words'
+  preview.className = 'text-text whitespace-pre-wrap break-words'
   preview.setAttribute('data-thinking-preview', agentName)
   div.appendChild(preview)
 
@@ -75,15 +75,15 @@ export const updateThinkingPreviewStyle = (container: HTMLElement, agentName: st
   const el = container.querySelector(`[data-thinking-preview="${agentName}"]`) as HTMLElement | null
   if (!el) return
   el.className = isThinking
-    ? 'text-gray-400 italic whitespace-pre-wrap break-words'
-    : 'text-gray-700 whitespace-pre-wrap break-words'
+    ? 'text-text-muted italic whitespace-pre-wrap break-words'
+    : 'text-text whitespace-pre-wrap break-words'
 }
 
 export const showContextIcon = (container: HTMLElement, agentName: string, onClick: () => void): void => {
   const indicator = container.querySelector(`[data-thinking-agent="${agentName}"]`)
   if (!indicator || indicator.querySelector('[data-context-btn]')) return
   const btn = document.createElement('button')
-  btn.className = 'text-gray-400 hover:text-blue-500 text-xs'
+  btn.className = 'text-text-muted hover:text-accent text-xs'
   btn.textContent = '\ud83d\udccb'
   btn.title = 'View prompt context'
   btn.setAttribute('data-context-btn', '')
@@ -114,7 +114,7 @@ export const addThinkingWarning = (container: HTMLElement, agentName: string, me
   const indicator = container.querySelector(`[data-thinking-agent="${agentName}"]`)
   if (!indicator) return
   const warn = document.createElement('div')
-  warn.className = 'text-xs text-amber-600 bg-amber-50 rounded px-2 py-0.5 mt-1'
+  warn.className = 'text-xs text-warning bg-warning-bg rounded px-2 py-0.5 mt-1'
   warn.textContent = `⚠ ${message}`
   const preview = indicator.querySelector(`[data-thinking-preview="${agentName}"]`)
   if (preview) indicator.insertBefore(warn, preview)

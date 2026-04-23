@@ -55,7 +55,7 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     div.className = 'msg-pass text-xs py-1 px-2'
     div.textContent = `${senderName} ${msg.content}`
   } else if (isMute) {
-    div.className = 'msg-system text-xs py-1 px-2 text-gray-400'
+    div.className = 'msg-system text-xs py-1 px-2 text-text-muted'
     div.textContent = msg.content
   } else if (isSystem || isRoomSummary) {
     div.className = 'msg-system text-xs py-1 px-2'
@@ -67,12 +67,12 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     header.className = 'flex items-center gap-2 mb-1'
 
     const nameEl = document.createElement('span')
-    nameEl.className = 'font-medium text-gray-800 text-xs'
+    nameEl.className = 'font-medium text-text-strong text-xs'
     const sender = getAgent(msg.senderId)
     nameEl.textContent = sender?.name ?? msg.senderId
 
     const timeEl = document.createElement('span')
-    timeEl.className = 'text-xs text-gray-400'
+    timeEl.className = 'text-xs text-text-muted'
     // 24-hour HH:MM:SS — locale-invariant, no AM/PM.
     timeEl.textContent = new Date(msg.timestamp).toLocaleTimeString('en-GB', { hour12: false })
 
@@ -81,7 +81,7 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
 
     if (msg.model) {
       const modelEl = document.createElement('span')
-      modelEl.className = 'text-xs text-gray-400 font-mono'
+      modelEl.className = 'text-xs text-text-muted font-mono'
       modelEl.textContent = msg.model
       modelEl.title = msg.provider ? `Model (via ${msg.provider})` : 'Model used for this message'
       header.appendChild(modelEl)
@@ -89,7 +89,7 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
 
     if (msg.generationMs) {
       const genEl = document.createElement('span')
-      genEl.className = 'text-xs text-blue-400'
+      genEl.className = 'text-xs text-accent'
       genEl.textContent = `${(msg.generationMs / 1000).toFixed(1)}s`
       header.appendChild(genEl)
     }
@@ -102,10 +102,10 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
       const ctx = msg.contextMax ?? 0
       const usage = msg.promptTokens
       const pct = ctx > 0 ? (usage / ctx) * 100 : 0
-      let tone = 'text-gray-400'
+      let tone = 'text-text-muted'
       if (ctx > 0) {
-        if (pct >= 90) tone = 'text-red-500'
-        else if (pct >= 75) tone = 'text-amber-500'
+        if (pct >= 90) tone = 'text-danger'
+        else if (pct >= 75) tone = 'text-warning'
         else tone = 'text-emerald-500'
       }
       ctxEl.className = `text-xs ${tone}`
@@ -127,7 +127,7 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
 
       if (onViewContext && msg.generationMs) {
         const ctxBtn = document.createElement('button')
-        ctxBtn.className = 'text-gray-300 hover:text-blue-500 text-xs opacity-0 group-hover:opacity-100'
+        ctxBtn.className = 'text-border-strong hover:text-accent text-xs opacity-0 group-hover:opacity-100'
         ctxBtn.textContent = '\ud83d\udccb'
         ctxBtn.title = 'View prompt context'
         ctxBtn.onclick = (e) => { e.stopPropagation(); onViewContext(msg.id) }
@@ -145,7 +145,7 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
 
       if (onPin) {
         const pinBtn = document.createElement('button')
-        pinBtn.className = 'text-gray-300 hover:text-amber-500 text-xs opacity-0 group-hover:opacity-100'
+        pinBtn.className = 'text-border-strong hover:text-warning text-xs opacity-0 group-hover:opacity-100'
         pinBtn.textContent = '📌'
         pinBtn.title = 'Pin message'
         pinBtn.onclick = (e) => { e.stopPropagation(); onPin(msg.id, sender?.name ?? msg.senderId, msg.content) }
@@ -154,7 +154,7 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
 
       if (onDelete) {
         const delBtn = document.createElement('button')
-        delBtn.className = 'text-gray-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100'
+        delBtn.className = 'text-border-strong hover:text-danger text-xs opacity-0 group-hover:opacity-100'
         delBtn.textContent = '×'
         delBtn.title = 'Delete message'
         delBtn.onclick = (e) => { e.stopPropagation(); onDelete(msg.id) }
@@ -163,7 +163,7 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     }
 
     const content = document.createElement('div')
-    content.className = 'text-gray-700'
+    content.className = 'text-text'
     renderMarkdownContent(content, msg.content)
 
     div.appendChild(header)

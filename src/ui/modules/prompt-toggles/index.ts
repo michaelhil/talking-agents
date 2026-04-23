@@ -18,18 +18,18 @@
 
 import { safeFetchJson } from '../ui-utils.ts'
 import { $selectedRoomId } from '../stores.ts'
+import { buildPromptsGroup } from './prompts-group.ts'
+import { buildContextGroup } from './context-group.ts'
+import { buildToolsGroup } from './tools-group.ts'
+import { buildModelGroup } from './model-group.ts'
 import {
-  buildPromptsGroup,
-  buildContextGroup,
-  buildToolsGroup,
-  buildModelGroup,
   sectionByKey,
   PROMPT_KEYS,
   CONTEXT_KEYS,
   type AgentData,
   type ContextPreview,
   type GroupDeps,
-} from './groups.ts'
+} from './shared.ts'
 
 export interface PromptTogglesDeps {
   readonly agentName: string
@@ -46,11 +46,11 @@ export const renderPromptToggles = (container: HTMLElement, deps: PromptTogglesD
   const toolsFoldOpen = { current: false }
 
   const panel = document.createElement('div')
-  panel.className = 'border border-gray-100 rounded mb-3 px-3 py-2'
+  panel.className = 'border border-border rounded mb-3 px-3 py-2'
   container.appendChild(panel)
 
   const summaryBar = document.createElement('div')
-  summaryBar.className = 'text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2'
+  summaryBar.className = 'text-xs font-semibold text-text-subtle uppercase tracking-wide mb-2'
   summaryBar.textContent = 'Context — loading…'
   panel.appendChild(summaryBar)
 

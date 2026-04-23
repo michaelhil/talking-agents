@@ -1,0 +1,55 @@
+/* Tailwind v4 entry — scans src/ui for used utility classes and emits the
+   matching CSS. Our palette lives as CSS custom properties on :root /
+   :root.dark (defined inline in index.html); the @theme inline block below
+   binds Tailwind color utilities to those vars, so `bg-surface` compiles
+   to `background-color: var(--surface)` and automatically flips with the
+   .dark class on <html>. */
+
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Explicit source roots so classes in these files get included. */
+@source "./index.html";
+@source "./modules/**/*.ts";
+
+@theme inline {
+  --color-surface:            var(--surface);
+  --color-surface-muted:      var(--surface-muted);
+  --color-surface-strong:     var(--surface-strong);
+  --color-surface-inverse:    var(--surface-inverse);
+
+  --color-text:               var(--text);
+  --color-text-strong:        var(--text-strong);
+  --color-text-muted:         var(--text-muted);
+  --color-text-subtle:        var(--text-subtle);
+
+  --color-border:             var(--border);
+  --color-border-strong:      var(--border-strong);
+
+  --color-accent:             var(--accent);
+  --color-accent-hover:       var(--accent-hover);
+  --color-accent-ring:        var(--accent-ring);
+
+  --color-danger:             var(--danger);
+  --color-danger-hover:       var(--danger-hover);
+
+  --color-success:            var(--success);
+  --color-success-hover:      var(--success-hover);
+  --color-success-soft-bg:    var(--success-soft-bg);
+
+  --color-warning:            var(--warning);
+  --color-warning-bg:         var(--warning-bg);
+  --color-warning-border:     var(--warning-border);
+
+  --color-thinking:           var(--thinking);
+
+  --color-msg-self:           var(--msg-self);
+  --color-msg-agent:          var(--msg-agent);
+
+  --color-macro-accent:       var(--macro-accent);
+  --color-macro-accent-hover: var(--macro-accent-hover);
+  --color-macro-accent-soft:  var(--macro-accent-soft);
+  --color-macro-accent-bg:    var(--macro-accent-bg);
+  --color-macro-accent-border:var(--macro-accent-border);
+}
+

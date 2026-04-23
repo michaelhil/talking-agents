@@ -5,7 +5,6 @@
 // ============================================================================
 
 import { $agentIdByName, $roomIdByName, $agents, $rooms } from './stores.ts'
-import type { RoomProfile } from './stores.ts'
 
 // === Toast notifications ===
 
@@ -28,10 +27,10 @@ export const showToast = (
   const toast = document.createElement('div')
 
   if (position === 'fixed') {
-    toast.className = `fixed top-4 right-4 ${type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white text-xs px-4 py-2 rounded shadow-lg z-50 transition-opacity duration-700 max-w-md cursor-pointer`
+    toast.className = `fixed top-4 right-4 ${type === 'success' ? 'bg-success' : 'bg-danger-hover'} text-white text-xs px-4 py-2 rounded shadow-lg z-50 transition-opacity duration-700 max-w-md cursor-pointer`
     document.body.appendChild(toast)
   } else {
-    toast.className = `absolute left-1/2 -translate-x-1/2 ${type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white text-xs px-3 py-1 rounded shadow transition-opacity duration-700 cursor-pointer`
+    toast.className = `absolute left-1/2 -translate-x-1/2 ${type === 'success' ? 'bg-success' : 'bg-danger-hover'} text-white text-xs px-3 py-1 rounded shadow transition-opacity duration-700 cursor-pointer`
     toast.style.bottom = '4px'
     anchor.appendChild(toast)
   }
@@ -78,47 +77,9 @@ export const safeFetchJson = async <T>(url: string, init?: RequestInit): Promise
   }
 }
 
-// === Dirty-check tracker for editable fields ===
-
-export interface DirtyTracker {
-  readonly update: (current: string) => void
-  readonly reset: (newBaseline: string) => void
-  readonly isDirty: () => boolean
-}
-
-/**
- * Tracks whether a string value has changed from its baseline.
- * Calls onDirtyChange whenever the dirty state transitions.
- */
-export const createDirtyTracker = (
-  initial: string,
-  onDirtyChange: (dirty: boolean) => void,
-): DirtyTracker => {
-  let baseline = initial
-  let dirty = false
-
-  return {
-    update(current: string): void {
-      const nowDirty = current !== baseline
-      if (nowDirty !== dirty) {
-        dirty = nowDirty
-        onDirtyChange(dirty)
-      }
-    },
-    reset(newBaseline: string): void {
-      baseline = newBaseline
-      if (dirty) {
-        dirty = false
-        onDirtyChange(false)
-      }
-    },
-    isDirty: () => dirty,
-  }
-}
-
 // === Inline click-to-edit number field ===
 
-export interface InlineNumberEditorOpts {
+interface InlineNumberEditorOpts {
   readonly label: string
   readonly value: string               // current display value, or 'default'
   readonly tooltip: string              // hover title
@@ -134,14 +95,14 @@ export interface InlineNumberEditorOpts {
 export const createInlineNumberEditor = (opts: InlineNumberEditorOpts): HTMLElement => {
   const wrapper = document.createElement('span')
   wrapper.title = `${opts.tooltip} (click to edit)`
-  wrapper.className = 'cursor-pointer hover:text-blue-500 whitespace-nowrap'
+  wrapper.className = 'cursor-pointer hover:text-accent whitespace-nowrap'
   const labelSpan = document.createElement('span')
   labelSpan.textContent = `${opts.label}:`
   const valueSpan = document.createElement('span')
   valueSpan.textContent = opts.value
   const resetSpan = document.createElement('span')
   resetSpan.textContent = '↺'
-  resetSpan.className = 'text-gray-300 hover:text-red-400 ml-0.5'
+  resetSpan.className = 'text-border-strong hover:text-danger ml-0.5'
   resetSpan.title = 'Reset to default'
   resetSpan.style.display = opts.value === 'default' ? 'none' : 'inline'
   wrapper.appendChild(labelSpan)
@@ -163,7 +124,7 @@ export const createInlineNumberEditor = (opts: InlineNumberEditorOpts): HTMLElem
     e.stopPropagation()
     const input = document.createElement('input')
     input.type = 'number'
-    input.className = 'w-14 text-xs border rounded px-1 py-0 text-gray-600'
+    input.className = 'w-14 text-xs border rounded px-1 py-0 text-text'
     input.value = currentValue === 'default' ? '' : currentValue
     input.step = opts.step ?? '1'
     input.placeholder = 'default'
@@ -194,15 +155,9 @@ export const agentIdToName = (id: string): string | undefined =>
 export const roomIdToName = (id: string): string | undefined =>
   $rooms.get()[id]?.name
 
-/** Find a room entry by name. */
-export const getRoomByName = (name: string): RoomProfile | undefined => {
-  const id = roomNameToId(name)
-  return id ? $rooms.get()[id] : undefined
-}
-
 // === Model dropdown builder ===
 
-export interface ModelCatalogModel {
+interface ModelCatalogModel {
   id: string
   contextMax: number
   recommended: boolean
@@ -211,13 +166,13 @@ export interface ModelCatalogModel {
   label?: string
 }
 
-export interface ModelCatalogProvider {
+interface ModelCatalogProvider {
   name: string
   status: 'ok' | 'no_key' | 'cooldown' | 'down'
   models: ModelCatalogModel[]
 }
 
-export interface ModelCatalogResponse {
+interface ModelCatalogResponse {
   providers: ModelCatalogProvider[]
   defaultModel: string
 }
@@ -246,7 +201,7 @@ const statusLabel = (status: ModelCatalogProvider['status']): string => {
   return ' (down)'
 }
 
-export const fetchModelCatalog = async (): Promise<ModelCatalogResponse> => {
+const fetchModelCatalog = async (): Promise<ModelCatalogResponse> => {
   try {
     const res = await fetch('/api/models')
     if (!res.ok) return { providers: [], defaultModel: '' }
@@ -300,7 +255,7 @@ export const populateModelSelect = async (
       opt.textContent = ctx
         ? `${pinTag}${label} · ${ctx}${runTag}`
         : `${pinTag}${label}${runTag}`
-      if (prov.status === 'cooldown' || prov.status === 'down') opt.classList.add('text-gray-400')
+      if (prov.status === 'cooldown' || prov.status === 'down') opt.classList.add('text-text-muted')
       group.appendChild(opt)
       all.push(full)
     }

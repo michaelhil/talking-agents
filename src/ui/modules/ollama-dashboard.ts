@@ -19,9 +19,9 @@ export interface OllamaDashboardElements {
 // === Status dot colors ===
 
 const statusColors: Record<string, string> = {
-  healthy: 'bg-green-500',
-  degraded: 'bg-yellow-400',
-  down: 'bg-red-500',
+  healthy: 'bg-success',
+  degraded: 'bg-thinking',
+  down: 'bg-danger',
 }
 
 // === Health UI ===
@@ -31,13 +31,13 @@ export const updateOllamaHealthUI = (
   statusDot: HTMLElement,
 ): void => {
   const status = health.status as string ?? 'down'
-  statusDot.className = `inline-block w-2 h-2 rounded-full ${statusColors[status] ?? 'bg-gray-400'}`
+  statusDot.className = `inline-block w-2 h-2 rounded-full ${statusColors[status] ?? 'bg-text-muted'}`
 
   // Update dashboard if open
   const dotEl = document.getElementById('od-status-dot')
   const textEl = document.getElementById('od-status-text')
   const latencyEl = document.getElementById('od-latency')
-  if (dotEl) dotEl.className = `inline-block w-3 h-3 rounded-full ${statusColors[status] ?? 'bg-gray-400'}`
+  if (dotEl) dotEl.className = `inline-block w-3 h-3 rounded-full ${statusColors[status] ?? 'bg-text-muted'}`
   if (textEl) textEl.textContent = status.charAt(0).toUpperCase() + status.slice(1)
   if (latencyEl) latencyEl.textContent = `${health.latencyMs ?? 0}ms`
 
@@ -55,7 +55,7 @@ export const updateOllamaHealthUI = (
     } else {
       modelsEl.innerHTML = loaded.map(m => {
         const sizeMb = Math.round(m.sizeVram / 1e6)
-        return `<div class="flex items-center justify-between py-0.5"><span class="font-mono text-xs">${m.name}</span><span class="text-xs text-gray-400">${sizeMb}MB<button class="od-unload text-xs text-red-400 hover:text-red-600 ml-2" data-model="${m.name}">unload</button></span></div>`
+        return `<div class="flex items-center justify-between py-0.5"><span class="font-mono text-xs">${m.name}</span><span class="text-xs text-text-muted">${sizeMb}MB<button class="od-unload text-xs text-danger hover:text-danger-hover ml-2" data-model="${m.name}">unload</button></span></div>`
       }).join('')
       modelsEl.querySelectorAll('.od-unload').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -72,17 +72,17 @@ export const updateOllamaHealthUI = (
     let loadRow = modelsEl.querySelector('.od-load-row') as HTMLElement | null
     if (!loadRow) {
       loadRow = document.createElement('div')
-      loadRow.className = 'od-load-row flex items-center gap-1 mt-2 pt-2 border-t border-gray-100'
+      loadRow.className = 'od-load-row flex items-center gap-1 mt-2 pt-2 border-t border-border'
       modelsEl.appendChild(loadRow)
     }
     if (unloaded.length > 0) {
-      loadRow.innerHTML = `<select class="od-load-select flex-1 text-xs border rounded px-1 py-0.5">${unloaded.map(m => `<option value="${m}">${m}</option>`).join('')}</select><button class="od-load-btn text-xs px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600">Load</button>`
+      loadRow.innerHTML = `<select class="od-load-select flex-1 text-xs border rounded px-1 py-0.5">${unloaded.map(m => `<option value="${m}">${m}</option>`).join('')}</select><button class="od-load-btn text-xs px-2 py-0.5 bg-accent text-white rounded hover:bg-accent-hover">Load</button>`
       loadRow.querySelector('.od-load-btn')?.addEventListener('click', async () => {
         const sel = loadRow!.querySelector('.od-load-select') as HTMLSelectElement
         if (sel?.value) await fetch(`/api/ollama/models/${encodeURIComponent(sel.value)}/load`, { method: 'POST' })
       })
     } else {
-      loadRow.innerHTML = '<span class="text-xs text-gray-400">All models loaded</span>'
+      loadRow.innerHTML = '<span class="text-xs text-text-muted">All models loaded</span>'
     }
   }
 }
@@ -108,7 +108,7 @@ export const updateOllamaMetricsUI = (metrics: Record<string, unknown>): void =>
   if (circuitEl) {
     const state = metrics.circuitState as string ?? 'closed'
     circuitEl.textContent = state
-    circuitEl.className = `text-lg font-semibold ${state === 'closed' ? 'text-green-600' : state === 'open' ? 'text-red-600' : 'text-yellow-500'}`
+    circuitEl.className = `text-lg font-semibold ${state === 'closed' ? 'text-success' : state === 'open' ? 'text-danger' : 'text-warning'}`
   }
   if (requestsEl) requestsEl.textContent = `${metrics.requestCount ?? 0}`
 }

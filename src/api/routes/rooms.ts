@@ -1,4 +1,4 @@
-import { json, errorResponse, parseBody } from '../http-routes.ts'
+import { json, errorResponse, parseBody } from './helpers.ts'
 import { SYSTEM_SENDER_ID } from '../../core/types/constants.ts'
 import { SETTABLE_DELIVERY_MODES } from '../../core/types/messaging.ts'
 import type { SettableDeliveryMode } from '../../core/types/messaging.ts'

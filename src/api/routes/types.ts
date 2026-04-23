@@ -6,6 +6,7 @@ export interface RouteContext {
   readonly broadcast: (msg: WSOutbound) => void
   readonly subscribeAgentState: (agentId: string, agentName: string) => void
   readonly unsubscribeAgentState?: (agentId: string) => void
+  readonly remoteAddress?: string  // resolved client IP; used to gate source-serving endpoints
 }
 
 export interface RouteEntry {

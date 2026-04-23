@@ -32,13 +32,13 @@ export const renderRooms = (
     const unread = opts.unreadCounts[room.id] ?? 0
     const isThinking = opts.generatingRoomIds.has(room.id)
     const div = document.createElement('div')
-    div.className = `px-3 py-1 cursor-pointer text-xs flex items-center gap-1.5 group relative ${isSelected ? 'bg-blue-50 font-semibold text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`
+    div.className = `px-3 py-1 cursor-pointer text-xs flex items-center gap-1.5 group relative ${isSelected ? 'bg-surface-muted font-semibold text-accent' : 'text-text hover:bg-surface-muted'}`
 
     // Status dot doubles as pause toggle (if onTogglePaused provided).
     // Clicking the dot does NOT select the room — it only toggles pause.
     const dot = document.createElement(opts.onTogglePaused ? 'button' : 'span')
     const base = 'inline-block w-2 h-2 rounded-full shrink-0'
-    const dotColor = isPaused ? 'bg-gray-300' : isThinking ? 'bg-yellow-400 typing-indicator' : 'bg-green-400'
+    const dotColor = isPaused ? 'bg-border-strong' : isThinking ? 'bg-thinking typing-indicator' : 'bg-success'
     dot.className = `${base} ${dotColor}`
     if (opts.onTogglePaused) {
       const btn = dot as HTMLButtonElement
@@ -57,7 +57,7 @@ export const renderRooms = (
 
     if (opts.onDelete) {
       const del = document.createElement('button')
-      del.className = 'text-red-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 shrink-0'
+      del.className = 'text-danger hover:text-danger text-xs opacity-0 group-hover:opacity-100 shrink-0'
       del.textContent = '×'
       del.title = 'Delete room'
       del.onclick = (e) => { e.stopPropagation(); opts.onDelete!(room.id, room.name) }
@@ -78,7 +78,7 @@ export const renderArtifacts = (
   container.innerHTML = ''
   for (const artifact of artifacts) {
     const wrap = document.createElement('div')
-    wrap.className = 'py-1 border-b border-gray-100 last:border-0'
+    wrap.className = 'py-1 border-b border-border last:border-0'
     let inner: HTMLElement
     if (artifact.type === 'task_list') inner = renderTaskListArtifact(artifact, onAction)
     else if (artifact.type === 'poll') inner = renderPollArtifact(artifact, myAgentId, onAction)

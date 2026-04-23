@@ -26,9 +26,9 @@ import type {
   ArtifactAction,
 } from './render-types.ts'
 import { derivePhase, phaseLabel, THINKING_MARKER } from './thinking-phase.ts'
-import { openTextEditorModal, createModal, createButtonRow, createTextarea } from './modal.ts'
+import { openTextEditorModal } from './detail-modal.ts'
 import { createWorkspace } from './workspace.ts'
-import { wsDispatch, pendingCreateHooks } from './ws-dispatch.ts'
+import { wsDispatch, pendingCreateHooks } from './ws-dispatch/index.ts'
 import { batched } from '../lib/nanostores.ts'
 import { showToast, roomNameToId, roomIdToName, agentIdToName, populateModelSelect, getShowAllModels, setShowAllModels, safeFetchJson } from './ui-utils.ts'
 import {
@@ -73,10 +73,6 @@ import {
   $ollamaHealth,
   $ollamaMetrics,
   $sidebarCollapsed,
-  $toolsLoaded,
-  $skillsLoaded,
-  $toolCount,
-  $skillCount,
   $agentContexts,
   $agentWarnings,
   $messageContexts,
@@ -84,7 +80,6 @@ import {
   $roomListView,
   $agentListView,
   type AgentEntry,
-  type AgentContext,
 } from './stores.ts'
 
 // === DOM refs ===
@@ -105,8 +100,6 @@ const {
   nameModal, nameForm, roomModal, roomForm, agentModal, agentForm,
   sidebar, btnCollapseSidebar,
   agentsHeader, agentsToggle,
-  toolsHeader, toolsToggle, toolsList,
-  skillsHeader, skillsToggle, skillsList,
   artifactTypeSelect,
   ollamaStatusDot, ollamaDashboard, ollamaDashboardClose,
   ollamaUrlSelect, ollamaUrlInput, btnOllamaUrlAdd, btnOllamaUrlDelete,
@@ -146,11 +139,6 @@ const lazyMacroEditorEdit = async (
   const { openMacroEditorModal } = await import('./macro-editor.ts')
   const stepsWithPrompt = existingSteps.map(s => ({ agentId: s.agentId, agentName: s.agentName, stepPrompt: s.stepPrompt ?? '' }))
   openMacroEditorModal(agents, myAgentId, onSave, existingName, stepsWithPrompt, existingLoop, existingDescription)
-}
-
-const lazySkillEditor = async (name?: string) => {
-  const { openSkillEditor } = await import('./skill-editor.ts')
-  openSkillEditor(name, () => { $skillsLoaded.set(false); loadSkillsList() })
 }
 
 // === Action helpers ===
@@ -209,47 +197,8 @@ const handleArtifactAction = (action: ArtifactAction): void => {
   }
 }
 
-const showContextModal = (context: AgentContext, warnings?: string[]): void => {
-  const modal = createModal({ title: 'Prompt Context', width: 'max-w-3xl' })
-  const headerEl = document.createElement('div')
-  headerEl.className = 'text-xs text-gray-500 mb-3'
-  headerEl.textContent = `Model: ${context.model} | Temperature: ${context.temperature ?? 'default'} | Tools: ${context.toolCount}`
-  modal.body.appendChild(headerEl)
-  // Warnings
-  if (warnings && warnings.length > 0) {
-    const warnBox = document.createElement('div')
-    warnBox.className = 'text-xs text-amber-700 bg-amber-50 rounded p-2 mb-3 space-y-0.5'
-    for (const w of warnings) {
-      const line = document.createElement('div')
-      line.textContent = `\u26a0 ${w}`
-      warnBox.appendChild(line)
-    }
-    modal.body.appendChild(warnBox)
-  }
-  for (const msg of context.messages) {
-    const section = document.createElement('div')
-    section.className = 'mb-3'
-    const roleLabel = document.createElement('div')
-    roleLabel.className = 'text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1 border-b border-gray-100 pb-1'
-    roleLabel.textContent = msg.role
-    const content = document.createElement('pre')
-    content.className = 'text-xs text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 rounded p-2 max-h-64 overflow-y-auto'
-    content.textContent = msg.content
-    section.appendChild(roleLabel)
-    section.appendChild(content)
-    modal.body.appendChild(section)
-  }
-  document.body.appendChild(modal.overlay)
-}
-
-const handleViewContext = (msgId: string): void => {
-  const ctx = $messageContexts.get()[msgId]
-  if (ctx) {
-    showContextModal(ctx, $messageWarnings.get()[msgId])
-  } else {
-    showToast(document.body, 'Prompt context not captured for this message (e.g. older message or after page reload).', { position: 'fixed' })
-  }
-}
+// Prompt-context modal + per-message view-context handler live in context-modal.ts.
+import { showContextModal, handleViewContext } from './context-modal.ts'
 
 const submitArtifact = (): void => {
   const roomId = $selectedRoomId.get()
@@ -386,48 +335,12 @@ const ollamaEls: OllamaDashboardElements = {
 
 // === Skills/Tools list ===
 
-const loadSkillsList = async (): Promise<void> => {
-  $skillsLoaded.set(true)
-  const skills = await fetch('/api/skills').then(r => r.ok ? r.json() : []).catch(() => []) as Array<{ name: string; description: string; tools: string[] }>
-  $skillCount.set(skills.length)
-  updateSkillsLabel(!skillsList.classList.contains('hidden'))
-  skillsList.innerHTML = ''
-  for (const s of skills) {
-    const row = document.createElement('div')
-    row.className = 'px-3 py-1 cursor-pointer hover:bg-gray-50'
-    row.onclick = () => lazySkillEditor(s.name)
-    const name = document.createElement('div')
-    name.className = 'text-xs font-medium text-gray-700'
-    name.textContent = s.name
-    const desc = document.createElement('div')
-    desc.className = 'text-xs text-gray-400 truncate'
-    desc.textContent = s.description
-    row.appendChild(name); row.appendChild(desc)
-    skillsList.appendChild(row)
-  }
-  if (skills.length === 0) skillsList.innerHTML = '<div class="text-xs text-gray-400 px-3 py-1">No skills</div>'
-}
-
 let roomsSectionExpanded = true
 let agentsSectionExpanded = true
 
 const updateAgentsLabel = () => {
   agentsToggle.textContent = `${agentsSectionExpanded ? '▾' : '▸'} Agents (${Object.keys($agents.get()).length})`
 }
-
-const updateToolsLabel = (expanded: boolean) => {
-  const count = $toolCount.get()
-  toolsToggle.textContent = `${expanded ? '▾' : '▸'} Tools${count > 0 ? ` (${count})` : ''}`
-}
-
-const updateSkillsLabel = (expanded: boolean) => {
-  const count = $skillCount.get()
-  skillsToggle.textContent = `${expanded ? '▾' : '▸'} Skills${count > 0 ? ` (${count})` : ''}`
-}
-
-// Fetch counts eagerly
-void fetch('/api/tools').then(r => r.ok ? r.json() : []).then((t: unknown[]) => { $toolCount.set(t.length); updateToolsLabel(false) }).catch(() => {})
-void fetch('/api/skills').then(r => r.ok ? r.json() : []).then((s: unknown[]) => { $skillCount.set(s.length); updateSkillsLabel(false) }).catch(() => {})
 
 // ============================================================================
 // STORE SUBSCRIPTIONS — wire reactive state to DOM
@@ -704,7 +617,7 @@ $selectedRoomArtifacts.subscribe((artifacts) => {
     if (active.length > 0) {
       renderArtifacts(workspaceContent, active, $myAgentId.get() ?? '', handleArtifactAction)
     } else {
-      workspaceContent.innerHTML = '<p class="text-xs text-gray-400 italic py-0.5">No artifacts yet</p>'
+      workspaceContent.innerHTML = '<p class="text-xs text-text-muted italic py-0.5">No artifacts yet</p>'
     }
   }
   // Update mode selector (macro artifacts may have changed)
@@ -726,7 +639,7 @@ $selectedMacroIdByRoom.listen(() => refreshRoomControls())
 $turnInfo.listen((info) => {
   if (info?.agentName) {
     roomModeInfo.textContent = `Turn: ${info.agentName}${info.waitingForHuman ? ' (waiting for input)' : ''}`
-    roomModeInfo.className = 'text-xs text-blue-500 h-4 font-medium'
+    roomModeInfo.className = 'text-xs text-accent h-4 font-medium'
   }
 })
 
@@ -736,7 +649,7 @@ $macroStatus.listen((status) => {
   if (status.event === 'step') {
     const detail = status.detail
     roomModeInfo.textContent = `Macro step ${((detail?.stepIndex as number) ?? 0) + 1}: ${detail?.agentName ?? '...'}`
-    roomModeInfo.className = 'text-xs text-purple-500 h-4 font-medium'
+    roomModeInfo.className = 'text-xs text-macro-accent h-4 font-medium'
   }
 })
 
@@ -751,11 +664,11 @@ $pinnedMessages.subscribe((pinned) => {
   pinnedMessagesDiv.innerHTML = ''
   for (const [id, data] of entries) {
     const row = document.createElement('div')
-    row.className = 'px-3 py-1 text-xs flex items-center gap-2 border-b border-amber-100'
+    row.className = 'px-3 py-1 text-xs flex items-center gap-2 border-b border-warning-border'
     const preview = data.content.length > 100 ? data.content.slice(0, 100) + '…' : data.content
-    row.innerHTML = `<span class="text-amber-600">📌</span> <span class="font-medium">${data.senderName ?? 'unknown'}:</span> <span class="text-gray-600 flex-1 truncate">${preview}</span>`
+    row.innerHTML = `<span class="text-warning">📌</span> <span class="font-medium">${data.senderName ?? 'unknown'}:</span> <span class="text-text flex-1 truncate">${preview}</span>`
     const unpin = document.createElement('button')
-    unpin.className = 'text-amber-400 hover:text-amber-600 text-xs'
+    unpin.className = 'text-warning hover:text-warning text-xs'
     unpin.textContent = '✕'
     unpin.onclick = () => {
       const current = { ...$pinnedMessages.get() }
@@ -962,7 +875,7 @@ btnMacroList.onclick = (e) => {
     if (isSelected) label.style.fontWeight = '600'
 
     const selectBtn = document.createElement('button')
-    selectBtn.className = 'text-xs px-2 py-0.5 text-blue-600 hover:text-blue-800'
+    selectBtn.className = 'text-xs px-2 py-0.5 text-accent hover:text-accent-hover'
     selectBtn.textContent = isSelected ? '✓' : 'Select'
     selectBtn.title = isSelected ? 'Already selected' : `Select ${m.title}`
     selectBtn.disabled = isSelected
@@ -972,7 +885,7 @@ btnMacroList.onclick = (e) => {
     }
 
     const editBtn = document.createElement('button')
-    editBtn.className = 'text-xs px-2 py-0.5 text-gray-500 hover:text-gray-800'
+    editBtn.className = 'text-xs px-2 py-0.5 text-text-subtle hover:text-text-strong'
     editBtn.textContent = '✎'
     editBtn.title = `Edit ${m.title}`
     editBtn.onclick = () => {
@@ -1087,80 +1000,15 @@ agentsHeader.onclick = () => {
   updateAgentsLabel()
 }
 
-toolsHeader.onclick = async () => {
-  const nowHidden = toolsList.classList.toggle('hidden')
-  updateToolsLabel(!nowHidden)
-  if (!nowHidden && !$toolsLoaded.get()) {
-    $toolsLoaded.set(true)
-    const tools = await fetch('/api/tools').then(r => r.ok ? r.json() : []).catch(() => []) as Array<{ name: string; description: string }>
-    $toolCount.set(tools.length)
-    updateToolsLabel(true)
-    toolsList.innerHTML = ''
-    for (const t of tools) {
-      const row = document.createElement('div')
-      row.className = 'text-xs text-gray-600 py-0.5 px-3 hover:bg-gray-50 cursor-default truncate'
-      row.title = t.description; row.textContent = t.name
-      toolsList.appendChild(row)
-    }
-    if (tools.length === 0) toolsList.innerHTML = '<div class="text-xs text-gray-400 px-3 py-1">No tools</div>'
-  }
-}
-
-skillsHeader.onclick = async (e) => {
-  if ((e.target as HTMLElement).closest('button')) return
-  const nowHidden = skillsList.classList.toggle('hidden')
-  updateSkillsLabel(!nowHidden)
-  if (!nowHidden && !$skillsLoaded.get()) await loadSkillsList()
-}
-
-document.getElementById('btn-create-skill')!.onclick = (e) => { e.stopPropagation(); lazySkillEditor() }
+// Tools + skills sidebar wiring lives in sidebar.ts.
+void import('./sidebar.ts').then(m => m.initSidebar())
 
 btnCollapseSidebar.onclick = () => $sidebarCollapsed.set(!$sidebarCollapsed.get())
 
-// Prompt editing
+// System-prompt modal lives in system-prompt-modal.ts.
 const btnSystemPrompt = $('#btn-system-prompt') as HTMLButtonElement
 btnSystemPrompt.onclick = () => {
-  fetch('/api/house/prompts')
-    .then(r => r.ok ? r.json() : null)
-    .then((data: { housePrompt?: string; responseFormat?: string } | null) => {
-      if (!data) return
-      const modal = createModal({ title: '', width: 'max-w-2xl' })
-      const titleRow = modal.body.querySelector('div')
-      if (titleRow) {
-        const titleEl = titleRow.querySelector('h3')
-        if (titleEl) { titleEl.className = 'text-xs font-semibold text-gray-400 uppercase tracking-wide'; titleEl.textContent = 'System Prompt' }
-      }
-      const houseArea = createTextarea(data.housePrompt ?? '', 6)
-      modal.body.appendChild(houseArea)
-      const formatLabel = document.createElement('div')
-      formatLabel.className = 'text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1 mt-3'
-      formatLabel.textContent = 'Response Format'
-      modal.body.appendChild(formatLabel)
-      const formatArea = createTextarea(data.responseFormat ?? '', 6)
-      modal.body.appendChild(formatArea)
-      const btnRow = document.createElement('div')
-      btnRow.className = 'flex justify-end mt-3 relative'
-      const updateBtn = document.createElement('button')
-      updateBtn.className = 'text-xs px-3 py-1 bg-gray-300 text-white rounded cursor-not-allowed'
-      updateBtn.textContent = 'Update'
-      btnRow.appendChild(updateBtn)
-      modal.body.appendChild(btnRow)
-      let savedHouse = houseArea.value; let savedFormat = formatArea.value
-      const isDirty = () => houseArea.value !== savedHouse || formatArea.value !== savedFormat
-      const updateStyle = () => {
-        updateBtn.className = isDirty()
-          ? 'text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer'
-          : 'text-xs px-3 py-1 bg-gray-300 text-white rounded cursor-not-allowed'
-      }
-      houseArea.oninput = updateStyle; formatArea.oninput = updateStyle
-      updateBtn.onclick = async () => {
-        if (!isDirty()) return
-        await fetch('/api/house/prompts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ housePrompt: houseArea.value, responseFormat: formatArea.value }) }).catch(() => {})
-        savedHouse = houseArea.value; savedFormat = formatArea.value; updateStyle()
-        showToast(btnRow, 'Prompts updated')
-      }
-      document.body.appendChild(modal.overlay)
-    })
+  void import('./system-prompt-modal.ts').then(m => m.openSystemPromptModal())
 }
 
 const btnClearMessages = $('#btn-clear-messages') as HTMLButtonElement
@@ -1200,6 +1048,29 @@ btnRoomPrompt.onclick = () => {
     (data) => ((data.profile as Record<string, unknown>)?.roomPrompt as string) ?? '',
   )
 }
+
+// Theme toggle + app info (version + repo link in sidebar footer)
+void (async () => {
+  const { wireThemeToggle, onThemeChange } = await import('./theme.ts')
+  wireThemeToggle()
+  onThemeChange(async () => {
+    try {
+      const { reRenderAllMermaid } = await import('./render-mermaid.ts')
+      await reRenderAllMermaid()
+    } catch { /* mermaid may not be loaded yet */ }
+  })
+  try {
+    const info = await fetch('/api/system/info').then(r => r.ok ? r.json() : null) as { version: string; repoUrl: string } | null
+    if (!info) return
+    const vEl = document.getElementById('app-version')
+    if (vEl) vEl.textContent = `v${info.version}`
+    const linkEl = document.getElementById('app-repo-link') as HTMLAnchorElement | null
+    if (linkEl && info.repoUrl) {
+      linkEl.href = info.repoUrl
+      linkEl.style.display = 'flex'
+    }
+  } catch { /* non-fatal */ }
+})()
 
 // Providers dashboard — Ollama wiring + cloud providers panel
 wireOllamaDashboard(ollamaEls, send)

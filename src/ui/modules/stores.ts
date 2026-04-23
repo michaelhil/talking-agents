@@ -216,12 +216,7 @@ export const $sidebarCollapsed = atom(
     : false,
 )
 
-// === Lazy-loaded section counts ===
-
-export const $toolsLoaded = atom(false)
-export const $skillsLoaded = atom(false)
-export const $toolCount = atom(0)
-export const $skillCount = atom(0)
+// Tools/skills sidebar atoms moved to sidebar.ts (not shared).
 
 // === Batched view stores (combine multiple stores for render subscriptions) ===
 

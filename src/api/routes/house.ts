@@ -1,4 +1,4 @@
-import { json, errorResponse, parseBody } from '../http-routes.ts'
+import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 
 export const houseRoutes: RouteEntry[] = [
@@ -17,12 +17,6 @@ export const houseRoutes: RouteEntry[] = [
         agents: system.team.listAgents().length,
       })
     },
-  },
-  {
-    method: 'GET',
-    pattern: /^\/api\/tools$/,
-    handler: (_req, _match, { system }) =>
-      json(system.toolRegistry.list().map(t => ({ name: t.name, description: t.description }))),
   },
   {
     method: 'GET',

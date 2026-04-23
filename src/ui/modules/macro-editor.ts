@@ -2,7 +2,7 @@
 // Macro Editor Modal — Create/edit agent sequence macros.
 // ============================================================================
 
-import { createModal, createButtonRow } from './modal.ts'
+import { createModal } from './detail-modal.ts'
 import type { AgentInfo } from './render-types.ts'
 
 interface MacroStepInput {
@@ -24,19 +24,17 @@ export const openMacroEditorModal = (
     ? existingSteps.map(s => ({ ...s }))
     : [...agents.values()].map(a => ({ agentId: a.id, agentName: a.name, stepPrompt: '' }))
 
-  const { overlay, body: modal, close } = createModal({
+  const { overlay, scrollBody, footer, close } = createModal({
     title: existingName ? `Edit Macro: ${existingName}` : 'Create Macro',
   })
-  modal.className = 'bg-white rounded-lg shadow-xl p-6 w-full max-w-lg mx-4 max-h-[90vh] flex flex-col'
-  modal.onclick = (e) => e.stopPropagation()
 
   const nameInput = document.createElement('input')
-  nameInput.className = 'w-full px-3 py-2 border rounded text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-purple-300'
+  nameInput.className = 'w-full px-3 py-2 border rounded text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-macro-accent'
   nameInput.placeholder = 'Macro name'
   nameInput.value = existingName ?? ''
 
   const descInput = document.createElement('input')
-  descInput.className = 'w-full px-3 py-2 border rounded text-sm mb-3 focus:outline-none focus:ring-1 focus:ring-purple-300'
+  descInput.className = 'w-full px-3 py-2 border rounded text-sm mb-3 focus:outline-none focus:ring-1 focus:ring-macro-accent'
   descInput.placeholder = 'Description / goal (optional)'
   descInput.value = existingDescription ?? ''
 
@@ -55,14 +53,14 @@ export const openMacroEditorModal = (
     stepsContainer.innerHTML = ''
     steps.forEach((step, i) => {
       const row = document.createElement('div')
-      row.className = 'flex gap-2 items-start bg-gray-50 rounded p-2'
+      row.className = 'flex gap-2 items-start bg-surface-muted rounded p-2'
 
       const num = document.createElement('span')
-      num.className = 'text-xs text-gray-400 font-mono pt-2 w-5 text-right shrink-0'
+      num.className = 'text-xs text-text-muted font-mono pt-2 w-5 text-right shrink-0'
       num.textContent = `${i + 1}.`
 
       const select = document.createElement('select')
-      select.className = 'text-sm border rounded px-2 py-1 bg-white shrink-0'
+      select.className = 'text-sm border rounded px-2 py-1 bg-surface shrink-0'
       for (const agent of agents.values()) {
         const opt = document.createElement('option')
         opt.value = agent.id
@@ -76,7 +74,7 @@ export const openMacroEditorModal = (
       }
 
       const promptInput = document.createElement('input')
-      promptInput.className = 'flex-1 text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-300'
+      promptInput.className = 'flex-1 text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-macro-accent'
       promptInput.placeholder = 'Step prompt (optional)'
       promptInput.value = step.stepPrompt
       promptInput.oninput = () => { step.stepPrompt = promptInput.value }
@@ -86,7 +84,7 @@ export const openMacroEditorModal = (
 
       const upBtn = document.createElement('button')
       upBtn.type = 'button'
-      upBtn.className = 'text-xs text-gray-400 hover:text-gray-700 leading-none'
+      upBtn.className = 'text-xs text-text-muted hover:text-text leading-none'
       upBtn.textContent = '▲'
       upBtn.onclick = () => {
         if (i > 0) { [steps[i - 1]!, steps[i]!] = [steps[i]!, steps[i - 1]!]; renderSteps() }
@@ -94,7 +92,7 @@ export const openMacroEditorModal = (
 
       const downBtn = document.createElement('button')
       downBtn.type = 'button'
-      downBtn.className = 'text-xs text-gray-400 hover:text-gray-700 leading-none'
+      downBtn.className = 'text-xs text-text-muted hover:text-text leading-none'
       downBtn.textContent = '▼'
       downBtn.onclick = () => {
         if (i < steps.length - 1) { [steps[i]!, steps[i + 1]!] = [steps[i + 1]!, steps[i]!]; renderSteps() }
@@ -102,14 +100,14 @@ export const openMacroEditorModal = (
 
       const dupBtn = document.createElement('button')
       dupBtn.type = 'button'
-      dupBtn.className = 'text-xs text-purple-400 hover:text-purple-600 leading-none'
+      dupBtn.className = 'text-xs text-macro-accent-soft hover:text-macro-accent leading-none'
       dupBtn.title = 'Duplicate step'
       dupBtn.textContent = '⧉'
       dupBtn.onclick = () => { steps.splice(i + 1, 0, { ...step, stepPrompt: step.stepPrompt }); renderSteps() }
 
       const removeBtn = document.createElement('button')
       removeBtn.type = 'button'
-      removeBtn.className = 'text-xs text-red-400 hover:text-red-600 leading-none'
+      removeBtn.className = 'text-xs text-danger hover:text-danger-hover leading-none'
       removeBtn.textContent = '✕'
       removeBtn.onclick = () => { steps.splice(i, 1); renderSteps() }
 
@@ -127,7 +125,7 @@ export const openMacroEditorModal = (
 
     if (steps.length === 0) {
       const empty = document.createElement('div')
-      empty.className = 'text-sm text-gray-400 text-center py-4'
+      empty.className = 'text-sm text-text-muted text-center py-4'
       empty.textContent = 'No steps yet. Click "+ Add Step" to start building your macro.'
       stepsContainer.appendChild(empty)
     }
@@ -135,7 +133,7 @@ export const openMacroEditorModal = (
 
   const addStepBtn = document.createElement('button')
   addStepBtn.type = 'button'
-  addStepBtn.className = 'text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded hover:bg-purple-200 mb-3'
+  addStepBtn.className = 'text-xs bg-macro-accent-bg text-macro-accent px-3 py-1 rounded hover:bg-macro-accent-border mb-3'
   addStepBtn.textContent = '+ Add Step'
   addStepBtn.onclick = () => {
     const defaultAgent = [...agents.values()].find(a => a.kind === 'ai') ?? [...agents.values()][0]
@@ -145,31 +143,37 @@ export const openMacroEditorModal = (
     stepsContainer.scrollTop = stepsContainer.scrollHeight
   }
 
-  const btnRow = createButtonRow(
-    close,
-    () => {
-      const macroName = nameInput.value.trim()
-      if (!macroName) { nameInput.focus(); return }
-      if (steps.length === 0) return
-      const cleanSteps = steps.map(s => ({
-        agentName: s.agentName,
-        ...(s.stepPrompt.trim() ? { stepPrompt: s.stepPrompt.trim() } : {}),
-      }))
-      const desc = descInput.value.trim() || undefined
-      onSave(macroName, cleanSteps, loopCheckbox.checked, desc)
-      close()
-    },
-    'Save Macro',
-    'bg-purple-500 hover:bg-purple-600',
-  )
+  // Purple-themed save button for macros (consistent with the chip color).
+  const btnRow = document.createElement('div')
+  btnRow.className = 'flex justify-end gap-2 w-full'
+  const cancelBtn = document.createElement('button')
+  cancelBtn.className = 'px-4 py-2 text-sm text-text-subtle'
+  cancelBtn.textContent = 'Cancel'
+  cancelBtn.onclick = close
+  const saveBtn = document.createElement('button')
+  saveBtn.className = 'px-4 py-2 text-sm rounded text-white bg-macro-accent'
+  saveBtn.textContent = 'Save Macro'
+  saveBtn.onclick = () => {
+    const macroName = nameInput.value.trim()
+    if (!macroName) { nameInput.focus(); return }
+    if (steps.length === 0) return
+    const cleanSteps = steps.map(s => ({
+      agentName: s.agentName,
+      ...(s.stepPrompt.trim() ? { stepPrompt: s.stepPrompt.trim() } : {}),
+    }))
+    const desc = descInput.value.trim() || undefined
+    onSave(macroName, cleanSteps, loopCheckbox.checked, desc)
+    close()
+  }
+  btnRow.appendChild(cancelBtn)
+  btnRow.appendChild(saveBtn)
 
-  modal.appendChild(nameInput)
-  modal.appendChild(descInput)
-  modal.appendChild(loopRow)
-  modal.appendChild(stepsContainer)
-  modal.appendChild(addStepBtn)
-  modal.appendChild(btnRow)
-  overlay.appendChild(modal)
+  scrollBody.appendChild(nameInput)
+  scrollBody.appendChild(descInput)
+  scrollBody.appendChild(loopRow)
+  scrollBody.appendChild(stepsContainer)
+  scrollBody.appendChild(addStepBtn)
+  footer.appendChild(btnRow)
   document.body.appendChild(overlay)
 
   renderSteps()

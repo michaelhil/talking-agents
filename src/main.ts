@@ -60,13 +60,8 @@ import { createSkillStore, type SkillStore } from './skills/loader.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-export interface OllamaUrlRegistry {
-  readonly list: () => string[]
-  readonly add: (url: string) => void
-  readonly remove: (url: string) => void
-  readonly getCurrent: () => string
-  readonly setCurrent: (url: string) => void
-}
+import { createOllamaUrlRegistry, type OllamaUrlRegistry } from './core/ollama-urls.ts'
+export type { OllamaUrlRegistry }
 
 export interface System {
   readonly house: House
@@ -85,6 +80,9 @@ export interface System {
   // caches when keys change.
   readonly gateways: Record<string, ProviderGateway>
   readonly toolRegistry: ToolRegistry
+  // Refresh every AI agent's ToolExecutor / ToolDefinitions to reflect the
+  // current registry. Called by the tool-rescan endpoint and by write_tool.
+  readonly refreshAllAgentTools: () => Promise<void>
   readonly skillStore: SkillStore
   readonly skillsDir: string
   readonly knowledgeDir: string
@@ -183,29 +181,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
   const resolveKind = (id: string): 'ai' | 'human' | undefined => team.getAgent(id)?.kind
 
-  // Saved Ollama URLs — only meaningful when Ollama is in the router.
-  // When absent, setters are no-ops and getCurrent returns empty.
-  const savedOllamaUrls = new Set<string>(ollamaRaw ? [ollamaRaw.baseUrl] : [])
-  const ollamaUrls: OllamaUrlRegistry = ollamaRaw && ollama
-    ? {
-        list: () => [...savedOllamaUrls],
-        add: (url: string) => { savedOllamaUrls.add(url) },
-        remove: (url: string) => { savedOllamaUrls.delete(url) },
-        getCurrent: () => ollamaRaw.baseUrl,
-        setCurrent: (url: string) => {
-          ollamaRaw.setBaseUrl(url)
-          savedOllamaUrls.add(url)
-          ollama.resetCircuitBreaker()
-          ollama.refreshHealth()
-        },
-      }
-    : {
-        list: () => [],
-        add: () => {},
-        remove: () => {},
-        getCurrent: () => '',
-        setCurrent: () => {},
-      }
+  const ollamaUrls: OllamaUrlRegistry = createOllamaUrlRegistry(ollamaRaw, ollama)
 
   // Forward-declared: the summary scheduler is built after `house`, but the
   // house's onMessagePosted callback needs to feed into it. We bridge with a
@@ -480,7 +456,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   return {
     house, team, routeMessage,
     llm, ollama, providerConfig, providerKeys, gateways,
-    toolRegistry, skillStore, skillsDir,
+    toolRegistry, refreshAllAgentTools, skillStore, skillsDir,
     knowledgeDir: join(homedir(), '.samsinn', 'knowledge'),
     providersStorePath: join(homedir(), '.samsinn', 'providers.json'),
     ollamaUrls,

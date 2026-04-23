@@ -35,19 +35,17 @@ import {
   $pendingModelChanges,
   $roomIdByName,
   $agentIdByName,
-  type AgentEntry,
-} from './stores.ts'
-import type { UIMessage, RoomProfile, ArtifactInfo } from './render-types.ts'
-import type { WSOutbound } from '../../core/types/ws-protocol.ts'
-import type { Message, AgentProfile, RoomProfile as ServerRoomProfile } from '../../core/types/messaging.ts'
-import type { Artifact } from '../../core/types/artifact.ts'
-import { showToast, roomNameToId } from './ui-utils.ts'
+} from '../stores.ts'
+import type { WSOutbound } from '../../../core/types/ws-protocol.ts'
+import { showToast, roomNameToId } from '../ui-utils.ts'
 import {
   handleSummaryRunStarted,
   handleSummaryRunDelta,
   handleSummaryRunCompleted,
   handleSummaryRunFailed,
-} from './summary-panel.ts'
+} from '../summary-panel.ts'
+import { toUIMessage, toUIRoomProfile, toAgentEntry, toUIArtifact } from './mappers.ts'
+import { shouldEmitBound } from './dedup.ts'
 
 // --- Pending create hooks ---
 // Callers (e.g. the Macro create flow) register a hook keyed by requestId
@@ -55,65 +53,6 @@ import {
 // the hook fires and is removed. Single-fire; lives only in memory.
 export type PendingCreateHook = (artifactId: string, artifactType: string) => void
 export const pendingCreateHooks = new Map<string, PendingCreateHook>()
-
-// === Mappers from server wire types → UI types ===
-
-const toUIMessage = (m: Message): UIMessage => {
-  const meta = (m.metadata ?? {}) as Record<string, unknown>
-  return {
-    id: m.id,
-    senderId: m.senderId,
-    content: m.content,
-    timestamp: m.timestamp,
-    type: m.type,
-    roomId: m.roomId,
-    generationMs: m.generationMs,
-    ...(typeof meta.promptTokens === 'number' ? { promptTokens: meta.promptTokens } : {}),
-    ...(typeof meta.completionTokens === 'number' ? { completionTokens: meta.completionTokens } : {}),
-    ...(typeof meta.contextMax === 'number' ? { contextMax: meta.contextMax } : {}),
-    ...(typeof meta.provider === 'string' ? { provider: meta.provider } : {}),
-    ...(typeof meta.model === 'string' ? { model: meta.model } : {}),
-  }
-}
-
-const toUIRoomProfile = (r: ServerRoomProfile): RoomProfile => ({
-  id: r.id,
-  name: r.name,
-})
-
-const toAgentEntry = (a: AgentProfile): AgentEntry => ({
-  id: a.id,
-  name: a.name,
-  kind: a.kind,
-  model: a.model,
-  state: 'idle',
-})
-
-const toUIArtifact = (a: Artifact): ArtifactInfo => ({
-  id: a.id,
-  type: a.type,
-  title: a.title,
-  description: a.description,
-  body: a.body,
-  scope: a.scope,
-  createdBy: a.createdBy,
-  createdAt: a.createdAt,
-  updatedAt: a.updatedAt,
-  resolution: a.resolution,
-  resolvedAt: a.resolvedAt,
-})
-
-// === Dedup for provider_bound toasts ===
-// Keyed by `${agentId}::${newProvider}`. Same pair within 5s → suppress.
-const BOUND_DEDUP_MS = 5000
-const lastBoundAt = new Map<string, number>()
-const shouldEmitBound = (agentId: string | null, newProvider: string, now: number): boolean => {
-  const key = `${agentId ?? '__system__'}::${newProvider}`
-  const prev = lastBoundAt.get(key)
-  if (prev !== undefined && now - prev < BOUND_DEDUP_MS) return false
-  lastBoundAt.set(key, now)
-  return true
-}
 
 // === Typed dispatch map ===
 

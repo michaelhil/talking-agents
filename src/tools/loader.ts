@@ -39,9 +39,20 @@ export const isTool = (value: unknown): value is Tool => {
   )
 }
 
+export interface LoadSource {
+  readonly kind: 'external' | 'skill-bundled'
+  readonly skill?: string  // owning skill name when kind is skill-bundled
+}
+
 // Load all .ts tool files from a single directory into the registry.
 // Returns silently if the directory does not exist.
-export const loadToolDirectory = async (dir: string, registry: ToolRegistry): Promise<LoadResult> => {
+// Source metadata is attached to each registered tool so the detail endpoint
+// and hot-reload path can locate the originating file.
+export const loadToolDirectory = async (
+  dir: string,
+  registry: ToolRegistry,
+  source: LoadSource = { kind: 'external' },
+): Promise<LoadResult> => {
   const loaded: string[] = []
   const skipped: string[] = []
   const errors: string[] = []
@@ -55,7 +66,11 @@ export const loadToolDirectory = async (dir: string, registry: ToolRegistry): Pr
 
   const entries = await readdir(dir)
 
-  const tsFiles = entries.filter(f => extname(f) === '.ts' && !basename(f, '.ts').startsWith('_'))
+  const tsFiles = entries.filter(f =>
+    extname(f) === '.ts'
+    && !basename(f, '.ts').startsWith('_')
+    && !f.endsWith('.test.ts'),  // colocated tests share the dir; skip them
+  )
 
   // Import all files in parallel
   await Promise.all(tsFiles.map(async (file) => {
@@ -95,7 +110,11 @@ export const loadToolDirectory = async (dir: string, registry: ToolRegistry): Pr
         continue
       }
 
-      registry.register(candidate as Tool)
+      registry.registerWithSource(candidate as Tool, {
+        kind: source.kind,
+        path: filePath,
+        ...(source.skill ? { skill: source.skill } : {}),
+      })
       loaded.push(candidate.name)
     }
   }))
@@ -103,17 +122,19 @@ export const loadToolDirectory = async (dir: string, registry: ToolRegistry): Pr
   return { loaded, skipped, errors }
 }
 
-// Load tools from all standard directories. Called once at startup before agents spawn.
-export const loadExternalTools = async (registry: ToolRegistry): Promise<void> => {
-  const dirs: string[] = [
+const externalDirs = (): string[] => {
+  const dirs = [
     resolve(process.cwd(), 'tools'),
     join(homedir(), '.samsinn', 'tools'),
   ]
-
   const envDir = process.env.SAMSINN_TOOLS_DIR
   if (envDir) dirs.push(resolve(envDir))
+  return dirs
+}
 
-  for (const dir of dirs) {
+// Load tools from all standard directories. Called once at startup before agents spawn.
+export const loadExternalTools = async (registry: ToolRegistry): Promise<void> => {
+  for (const dir of externalDirs()) {
     const result = await loadToolDirectory(dir, registry)
     const total = result.loaded.length + result.skipped.length + result.errors.length
     if (total > 0) {
@@ -125,4 +146,103 @@ export const loadExternalTools = async (registry: ToolRegistry): Promise<void> =
       console.log(`[tools] ${dir}: ${parts}`)
     }
   }
+}
+
+export interface RescanResult {
+  readonly added: ReadonlyArray<string>    // tool names newly registered
+  readonly updated: ReadonlyArray<string>  // tool names re-imported (file modified)
+  readonly removed: ReadonlyArray<string>  // tool names unregistered (file deleted)
+  readonly errors: ReadonlyArray<string>
+}
+
+// Re-import external tool files on demand. Skill-bundled tools are left alone
+// (they reload through write_tool or a full restart). The cachebust query
+// string forces Bun to re-evaluate the module; each rescan gets a unique tag.
+//
+// Known limitation: a tool call in-flight during rescan holds a reference to
+// the previous closure and will continue with old behavior until it returns.
+export const rescanExternalTools = async (registry: ToolRegistry): Promise<RescanResult> => {
+  const added: string[] = []
+  const updated: string[] = []
+  const removed: string[] = []
+  const errors: string[] = []
+
+  // Snapshot: path → names registered from that path (external only)
+  const oldByPath = new Map<string, Set<string>>()
+  for (const entry of registry.listEntries()) {
+    if (entry.source.kind !== 'external' || !entry.source.path) continue
+    const set = oldByPath.get(entry.source.path) ?? new Set<string>()
+    set.add(entry.tool.name)
+    oldByPath.set(entry.source.path, set)
+  }
+
+  const currentPaths = new Set<string>()
+
+  for (const dir of externalDirs()) {
+    try {
+      const s = await stat(dir)
+      if (!s.isDirectory()) continue
+    } catch { continue }
+
+    const entries = await readdir(dir)
+    const tsFiles = entries.filter(f =>
+    extname(f) === '.ts'
+    && !basename(f, '.ts').startsWith('_')
+    && !f.endsWith('.test.ts'),  // colocated tests share the dir; skip them
+  )
+
+    for (const file of tsFiles) {
+      const filePath = join(dir, file)
+      currentPaths.add(filePath)
+      const oldNames = oldByPath.get(filePath) ?? new Set<string>()
+
+      let mod: { default?: unknown }
+      try {
+        // Cachebust — matches the pattern write_tool uses so Bun re-evaluates.
+        mod = await import(`${filePath}?t=${Date.now()}`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        errors.push(`${file}: ${msg}`)
+        continue
+      }
+
+      const candidates = Array.isArray(mod.default) ? mod.default : [mod.default]
+      const newNames = new Set<string>()
+
+      for (const candidate of candidates) {
+        if (!isTool(candidate)) continue
+        if (!VALID_NAME.test(candidate.name)) continue
+
+        // If another file already owns this name, don't clobber. Skill-bundled
+        // or built-in tools win.
+        const existing = registry.getEntry(candidate.name)
+        if (existing && existing.source.kind !== 'external') continue
+        if (existing && existing.source.path && existing.source.path !== filePath) continue
+
+        registry.registerWithSource(candidate as Tool, { kind: 'external', path: filePath })
+        newNames.add(candidate.name)
+
+        if (oldNames.has(candidate.name)) updated.push(candidate.name)
+        else added.push(candidate.name)
+      }
+
+      // Names present in the old version of this file but absent now —
+      // treat as removed (file was edited to drop a tool).
+      for (const oldName of oldNames) {
+        if (!newNames.has(oldName)) {
+          if (registry.unregister(oldName)) removed.push(oldName)
+        }
+      }
+    }
+  }
+
+  // Files that disappeared entirely — unregister every tool they owned.
+  for (const [oldPath, names] of oldByPath) {
+    if (currentPaths.has(oldPath)) continue
+    for (const name of names) {
+      if (registry.unregister(name)) removed.push(name)
+    }
+  }
+
+  return { added, updated, removed, errors }
 }
