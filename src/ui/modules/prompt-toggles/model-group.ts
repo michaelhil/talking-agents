@@ -1,7 +1,8 @@
 // Model group — temperature, history limit, thinking toggle. No master
 // checkbox — model settings always apply.
 
-import { createInlineNumberEditor, showToast } from '../ui-utils.ts'
+import { createInlineNumberEditor } from '../inline-number.ts'
+import { showToast } from '../toast.ts'
 import { mkGroup, type GroupDeps } from './shared.ts'
 
 export const buildModelGroup = (deps: GroupDeps): HTMLElement => {

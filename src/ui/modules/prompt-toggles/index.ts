@@ -16,7 +16,7 @@
 // state, and the render loop. Group builders live in ./groups.ts.
 // ============================================================================
 
-import { safeFetchJson } from '../ui-utils.ts'
+import { safeFetchJson } from '../fetch-helpers.ts'
 import { $selectedRoomId } from '../stores.ts'
 import { buildPromptsGroup } from './prompts-group.ts'
 import { buildContextGroup } from './context-group.ts'

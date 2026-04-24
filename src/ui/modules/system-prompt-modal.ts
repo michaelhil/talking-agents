@@ -4,7 +4,7 @@
 // house endpoint.
 
 import { createModal, createTextarea } from './detail-modal.ts'
-import { showToast } from './ui-utils.ts'
+import { showToast } from './toast.ts'
 
 export const openSystemPromptModal = async (): Promise<void> => {
   const res = await fetch('/api/house/prompts').catch(() => null)

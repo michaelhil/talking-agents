@@ -9,7 +9,7 @@
 // ============================================================================
 
 import { createModal } from './detail-modal.ts'
-import { showToast } from './ui-utils.ts'
+import { showToast } from './toast.ts'
 import type { WSOutbound } from '../../core/types/ws-protocol.ts'
 
 interface Bookmark {

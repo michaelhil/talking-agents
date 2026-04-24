@@ -9,7 +9,8 @@
 // ============================================================================
 
 import { $agentListView, $agents, type AgentEntry } from './stores.ts'
-import { showToast, roomIdToName } from './ui-utils.ts'
+import { showToast } from './toast.ts'
+import { roomIdToName } from './identity-lookups.ts'
 
 // --- Pending create-then-add state ---
 

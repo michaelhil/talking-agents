@@ -3,7 +3,7 @@
 // assistant messages + warnings.
 
 import { createModal } from './detail-modal.ts'
-import { showToast } from './ui-utils.ts'
+import { showToast } from './toast.ts'
 import { $messageContexts, $messageWarnings, type AgentContext } from './stores.ts'
 
 export const showContextModal = (context: AgentContext, warnings?: string[]): void => {

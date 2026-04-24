@@ -4,7 +4,8 @@
 // that open the tool detail modal.
 
 import { createModal, createSectionLabel } from './detail-modal.ts'
-import { safeFetch, showToast } from './ui-utils.ts'
+import { safeFetch } from './fetch-helpers.ts'
+import { showToast } from './toast.ts'
 
 // Shared token-backed styling for single-line inputs and textareas.
 // The distinction: textareas get font-mono + resize-y + no mb.

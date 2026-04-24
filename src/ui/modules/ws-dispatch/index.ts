@@ -37,7 +37,8 @@ import {
   $agentIdByName,
 } from '../stores.ts'
 import type { WSOutbound } from '../../../core/types/ws-protocol.ts'
-import { showToast, roomNameToId } from '../ui-utils.ts'
+import { showToast } from '../toast.ts'
+import { roomNameToId } from '../identity-lookups.ts'
 import {
   handleSummaryRunStarted,
   handleSummaryRunDelta,

@@ -30,7 +30,10 @@ import { openTextEditorModal } from './detail-modal.ts'
 import { createWorkspace } from './workspace.ts'
 import { wsDispatch, pendingCreateHooks } from './ws-dispatch/index.ts'
 import { batched } from '../lib/nanostores.ts'
-import { showToast, roomNameToId, roomIdToName, agentIdToName, populateModelSelect, getShowAllModels, setShowAllModels, safeFetchJson } from './ui-utils.ts'
+import { showToast } from './toast.ts'
+import { roomNameToId, roomIdToName, agentIdToName } from './identity-lookups.ts'
+import { populateModelSelect, getShowAllModels, setShowAllModels } from './model-select.ts'
+import { safeFetchJson } from './fetch-helpers.ts'
 import {
   updateOllamaHealthUI, updateOllamaMetricsUI,
   wireOllamaDashboard, openOllamaDashboard,

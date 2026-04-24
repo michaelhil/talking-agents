@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { createModal, createButtonRow, createTextarea } from './detail-modal.ts'
-import { populateModelSelect } from './ui-utils.ts'
+import { populateModelSelect } from './model-select.ts'
 
 export const openPromptEditor = (
   agentName: string,

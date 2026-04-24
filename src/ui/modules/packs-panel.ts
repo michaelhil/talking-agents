@@ -10,7 +10,7 @@
 // ============================================================================
 
 import { domRefs } from './app-dom.ts'
-import { showToast } from './ui-utils.ts'
+import { showToast } from './toast.ts'
 
 interface InstalledPack {
   namespace: string

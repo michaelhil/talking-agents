@@ -7,7 +7,7 @@
 // context-window info and pin state.
 // ============================================================================
 
-import { showToast } from './ui-utils.ts'
+import { showToast } from './toast.ts'
 
 interface PopoverModel {
   readonly id: string

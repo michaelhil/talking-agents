@@ -12,7 +12,7 @@
 // (fired by ws-dispatch on providers_changed broadcasts).
 // ============================================================================
 
-import { showToast } from '../ui-utils.ts'
+import { showToast } from '../toast.ts'
 import { openModelsPopover } from '../models-popover.ts'
 import { save, saveOrder, testKey, formatTestToast } from './api.ts'
 import { renderRow, type ProviderStatusEntry } from './row.ts'

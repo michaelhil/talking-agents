@@ -6,7 +6,10 @@
 // (description only).
 // ============================================================================
 
-import { safeFetchJson, showToast, agentNameToId, populateModelSelect } from './ui-utils.ts'
+import { safeFetchJson } from './fetch-helpers.ts'
+import { showToast } from './toast.ts'
+import { agentNameToId } from './identity-lookups.ts'
+import { populateModelSelect } from './model-select.ts'
 import { $pendingModelChanges } from './stores.ts'
 import { renderPromptToggles } from './prompt-toggles.ts'
 

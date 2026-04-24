@@ -11,7 +11,7 @@
 
 import { atom } from '../lib/nanostores.ts'
 import { domRefs } from './app-dom.ts'
-import { showToast } from './ui-utils.ts'
+import { showToast } from './toast.ts'
 
 export const $toolsLoaded = atom(false)
 export const $skillsLoaded = atom(false)

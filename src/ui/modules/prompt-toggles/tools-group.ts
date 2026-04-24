@@ -2,7 +2,7 @@
 // shortcut, iter + result-chars inline number editors, warning when the
 // current model is known not to support function calling.
 
-import { createInlineNumberEditor } from '../ui-utils.ts'
+import { createInlineNumberEditor } from '../inline-number.ts'
 import {
   mkGroup, escapeHtml,
   type GroupDeps,
