@@ -4,7 +4,7 @@
 
 import { domRefs } from './app-dom.ts'
 
-type SettingsRow = 'prompt' | 'providers' | 'tools' | 'skills' | 'packs' | 'logging'
+type SettingsRow = 'prompt' | 'providers' | 'tools' | 'skills' | 'packs' | 'logging' | 'reset'
 
 const openers: Record<SettingsRow, () => Promise<void> | void> = {
   prompt: async () => {
@@ -30,6 +30,10 @@ const openers: Record<SettingsRow, () => Promise<void> | void> = {
   logging: async () => {
     const m = await import('./logging-modal.ts')
     m.openLoggingModal()
+  },
+  reset: async () => {
+    const m = await import('./reset-button.ts')
+    await m.triggerReset()
   },
 }
 

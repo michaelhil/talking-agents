@@ -488,18 +488,30 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     createPostToRoomTool(house),
   ])
 
+  // Mode detection: presence of SAMSINN_TOKEN means we're a hardened deploy
+  // (multi-user, untrusted access). Absence means a personal/dev environment
+  // where the operator IS the user, so risky tools default ON. The explicit
+  // flags still override either way for fine-grained control.
+  const isDeployMode = !!(process.env.SAMSINN_TOKEN && process.env.SAMSINN_TOKEN.length > 0)
+  const flag = (name: string, defaultOn: boolean): boolean => {
+    const v = process.env[name]
+    if (v === '1') return true
+    if (v === '0') return false
+    return defaultOn
+  }
+  const networkToolsEnabled = flag('SAMSINN_ENABLE_NETWORK_TOOLS', !isDeployMode)
+  const codegenEnabled = flag('SAMSINN_ENABLE_CODEGEN', !isDeployMode)
+
   // Web tools — web_fetch / web_extract_json / web_search.
   //
   // Disabled by default in deploy mode: web_fetch can hit any URL the host
-  // can reach, including Hetzner's metadata service at 169.254.169.254 and
-  // private network ranges. Operators who need network access opt in with
-  // SAMSINN_ENABLE_NETWORK_TOOLS=1.
+  // can reach, including cloud-metadata services (169.254.169.254) and
+  // private network ranges. On a personal box, default-on (matches the
+  // pre-deploy-hardening UX); on a deploy, opt in via SAMSINN_ENABLE_NETWORK_TOOLS=1.
   //
   // web_search is additionally gated on TAVILY_API_KEY (preferred),
-  // BRAVE_API_KEY, or GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID. Tavily is the
-  // default — LLM-optimized snippets + relevance scores, generous free
-  // tier (1000 searches/month, no card required).
-  if (process.env.SAMSINN_ENABLE_NETWORK_TOOLS === '1') {
+  // BRAVE_API_KEY, or GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID.
+  if (networkToolsEnabled) {
     toolRegistry.registerAll(createWebTools({
       tavilyApiKey: process.env.TAVILY_API_KEY,
       braveApiKey: process.env.BRAVE_API_KEY,
@@ -545,9 +557,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
 
   // write_skill / write_tool / install_pack / update_pack / uninstall_pack /
   // list_packs all let an agent drop arbitrary TS into ~/.samsinn/ and have
-  // it imported. Disabled by default in deploy mode; gated on the env var
-  // so a trusted authoring environment can opt in.
-  if (process.env.SAMSINN_ENABLE_CODEGEN === '1') {
+  // it imported. On a personal box, default-on (matches the pre-deploy
+  // UX); on a deploy (SAMSINN_TOKEN set), default-off — operator opts in
+  // explicitly via SAMSINN_ENABLE_CODEGEN=1 only when authoring is wanted.
+  if (codegenEnabled) {
     toolRegistry.register(createWriteSkillTool(skillStore, skillsDir))
     toolRegistry.register(createWriteToolTool(toolRegistry, skillStore, refreshAllAgentTools))
     toolRegistry.registerAll(createPackTools({

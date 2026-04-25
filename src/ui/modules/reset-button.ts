@@ -1,11 +1,12 @@
 // ============================================================================
-// Reset button + global countdown banner.
+// Reset action + global countdown banner.
 //
-// Anyone with a session can click reset → a confirmation modal → on confirm
-// the server schedules a 10-second commit and broadcasts `reset_pending`.
-// Every connected tab shows a banner with a `Cancel` button; any tab can
-// cancel during the window. After commit the server exits, systemd respawns,
-// browsers reconnect to a fresh state via the existing WS reconnect loop.
+// Triggered from the Settings drawer (data-settings-row="reset"). On click:
+// confirmation modal → POST /api/system/reset → server schedules a 10-second
+// commit and broadcasts `reset_pending`. Every connected tab shows a banner
+// with a `Cancel` button; any tab can cancel during the window. After commit
+// the server exits, systemd respawns, browsers reconnect via the existing
+// WS reconnect loop in ws-client.ts.
 //
 // Server-side single-flight + 5-minute cooldown lives in src/api/routes/
 // system.ts. The UI just trusts the server's responses.
@@ -97,25 +98,29 @@ const showConfirmModal = (): Promise<boolean> =>
     cancel.focus()
   })
 
-export const initResetPanel = (): void => {
-  const btn = document.getElementById('btn-reset-sandbox')
-  if (!btn) return
-  btn.onclick = async () => {
-    const ok = await showConfirmModal()
-    if (!ok) return
-    try {
-      const res = await fetch('/api/system/reset', { method: 'POST' })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string }
-        showToast(document.body, body.error ?? `Reset failed (${res.status})`, { type: 'error', position: 'fixed' })
-      }
-      // The server broadcasts reset_pending; the banner appears via that path.
-    } catch {
-      showToast(document.body, 'Reset request failed', { type: 'error', position: 'fixed' })
+// Triggered from the Settings drawer. Shows a confirmation modal, then POSTs
+// to /api/system/reset. The countdown banner is rendered by the global WS
+// listeners (initResetPanel) — visible to ALL tabs, not just the initiator.
+export const triggerReset = async (): Promise<void> => {
+  const ok = await showConfirmModal()
+  if (!ok) return
+  try {
+    const res = await fetch('/api/system/reset', { method: 'POST' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string }
+      showToast(document.body, body.error ?? `Reset failed (${res.status})`, { type: 'error', position: 'fixed' })
     }
+    // Success path: server broadcasts reset_pending; the banner appears
+    // via the listener installed in initResetPanel().
+  } catch {
+    showToast(document.body, 'Reset request failed', { type: 'error', position: 'fixed' })
   }
+}
 
-  // WS event listeners — fired by ws-dispatch.
+// Install the global WS listeners that show / hide the countdown banner.
+// Called once at app startup. Independent of the trigger surface so the
+// banner appears even on tabs that didn't initiate the reset.
+export const initResetPanel = (): void => {
   window.addEventListener('reset-pending', (e) => {
     const detail = (e as CustomEvent<{ commitsAtMs: number }>).detail
     showCountdownBanner(detail.commitsAtMs)
