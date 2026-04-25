@@ -59,13 +59,12 @@ export const handleAPI = async (
   subscribeAgentState: RouteContext['subscribeAgentState'],
   unsubscribeAgentState?: (agentId: string) => void,
   remoteAddress?: string,
-  onResetCommit?: RouteContext['onResetCommit'],
   resetInstance?: RouteContext['resetInstance'],
   broadcastToInstance?: RouteContext['broadcastToInstance'],
 ): Promise<Response | null> => {
   const ctx: RouteContext = {
     system, instanceId, broadcast, subscribeAgentState, unsubscribeAgentState,
-    remoteAddress, onResetCommit, resetInstance, broadcastToInstance,
+    remoteAddress, resetInstance, broadcastToInstance,
   }
 
   // Auth gate. /api/auth itself is exempt so the UI can submit the token.

@@ -21,11 +21,9 @@ export interface RouteContext {
   readonly subscribeAgentState: (agent: Agent, instanceId: string) => void
   readonly unsubscribeAgentState?: (agentId: string) => void
   readonly remoteAddress?: string
-  // Legacy whole-process reset (still used in single-tenant mode).
-  readonly onResetCommit?: () => Promise<{ ok: true } | { ok: false; reason: string }>
-  // Per-instance reset (Phase F5). Reads the cookie from req, evicts the
-  // current instance, moves its files to .trash, returns a new id +
-  // Set-Cookie header for the response.
+  // Per-instance reset (Phase F5). Reads the cookie from req, trashes the
+  // instance directory, drops it from the registry. The same id is kept;
+  // the next request from the same cookie lazy-creates a fresh empty House.
   readonly resetInstance?: (req: Request) => Promise<ResetInstanceResult>
 }
 

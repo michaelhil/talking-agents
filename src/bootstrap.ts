@@ -266,40 +266,9 @@ export const bootstrap = async (): Promise<void> => {
     )
   }, 60_000)
 
-  // === Reset commit (legacy single-tenant path) ===
-  // Phase F5 replaces this with per-instance reset. For now the existing
-  // process-exit reset still works against the bootInstance only.
-  const onResetCommit = async (): Promise<{ ok: true } | { ok: false; reason: string }> => {
-    try {
-      // Drain in-flight evals across all active instances.
-      const timeout = new Promise<void>(res => setTimeout(res, DRAIN_TIMEOUT_MS))
-      for (const meta of registry.list()) {
-        const sys = await registry.getOrLoad(meta.id)
-        const aiAgents = sys.team.listAgents().flatMap(a => { const ai = asAIAgent(a); return ai ? [ai] : [] })
-        await Promise.all(aiAgents.map(a => Promise.race([a.whenIdle(), timeout])))
-      }
-      // Wipe the entire SAMSINN_HOME (legacy semantics — affects every instance).
-      const { rm } = await import('node:fs/promises')
-      const targets = [
-        sharedPaths.instancesRoot(),
-        sharedPaths.memoryLegacy(),
-        sharedPaths.packs(),
-        sharedPaths.skills(),
-        sharedPaths.tools(),
-      ]
-      for (const t of targets) await rm(t, { recursive: true, force: true })
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
-      console.error('Reset commit failed:', reason)
-      return { ok: false, reason }
-    }
-    setTimeout(() => process.exit(0), 100)
-    return { ok: true }
-  }
-
   // === Per-instance reset ===
-  // Phase F5: trashes the instance dir; same cookie persists. Browser
-  // reconnects → registry creates fresh empty House under same id.
+  // Trashes the cookie's instance dir; the same id persists. Browser
+  // reconnects → registry creates fresh empty House under the same id.
   const resetInstance = async (req: Request) => {
     const { getInstanceId } = await import('./api/instance-cookie.ts')
     const id = getInstanceId(req)
@@ -317,9 +286,7 @@ export const bootstrap = async (): Promise<void> => {
   createServer({
     registry,
     wsManager,
-    bootInstanceId,
     port: parseInt(process.env.PORT ?? String(DEFAULTS.port), 10),
-    onResetCommit,
     resetInstance,
   })
 

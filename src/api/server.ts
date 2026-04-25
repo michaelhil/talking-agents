@@ -38,15 +38,10 @@ const isInstanceBypass = (pathname: string): boolean =>
 interface ServerConfig {
   readonly registry: SystemRegistry
   readonly wsManager: WSManager
-  // Boot instance — used as fallback when a request has no cookie.
-  // Phase F generates this once at boot in bootstrap.ts.
-  readonly bootInstanceId: string
   readonly port?: number
   readonly uiPath?: string
   // Per-instance reset wired by bootstrap.
-  readonly resetInstance?: (req: Request) => Promise<import('./routes/types.ts').ResetInstanceResult>
-  // Legacy fallback (still wired in single-tenant path).
-  readonly onResetCommit?: () => Promise<{ ok: true } | { ok: false; reason: string }>
+  readonly resetInstance: (req: Request) => Promise<import('./routes/types.ts').ResetInstanceResult>
 }
 
 // === Static file serving (path traversal protected) ===
@@ -116,7 +111,7 @@ const serveStatic = async (pathname: string, uiPath: string, transpiler: Bun.Tra
 // === Server Factory ===
 
 export const createServer = (config: ServerConfig) => {
-  const { registry, wsManager, bootInstanceId } = config
+  const { registry, wsManager } = config
   const port = config.port ?? DEFAULTS.port
   const uiPath = resolve(config.uiPath ?? `${import.meta.dir}/../ui`)
   const transpiler = new Bun.Transpiler({ loader: 'ts' })
@@ -150,14 +145,11 @@ export const createServer = (config: ServerConfig) => {
 
       // === Resolve which instance this request is for ===
       // Cookieless requests get a fresh per-visitor id (multi-tenant).
-      // bootInstanceId stays as a separate concept used by warmup + the
-      // headless path; it's not used as a fallback here.
       const resolved = resolveInstanceId(req, url)
       const instanceId = resolved.id ?? generateInstanceId()
       const setCookieValue = resolved.id === null
         ? buildInstanceCookie(instanceId, req)
         : null
-      void bootInstanceId   // referenced via config for tests/admin
 
       // === WebSocket upgrade ===
       if (pathname === '/ws') {
@@ -220,7 +212,6 @@ export const createServer = (config: ServerConfig) => {
         req, pathname, system, instanceId,
         wsManager.broadcast, wsManager.subscribeAgentState, wsManager.unsubscribeAgentState,
         remoteAddress,
-        config.onResetCommit,
         config.resetInstance,
         wsManager.broadcastToInstance,
       )

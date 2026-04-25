@@ -135,9 +135,10 @@ export const wireSystemEvents = (
   })
 
   // === Provider routing events → toasts ===
-  // Phase F4 will route these via the registry's reverse index. For now
-  // (single-tenant + multi-tenant sharing the same listener API), each
-  // System's setOnProvider* late-binding just dispatches its own.
+  // The shared router fires routing events with an agentId; the registry's
+  // reverse index resolves agentId → instanceId in setProviderEventDispatcher,
+  // and the per-instance System's late-bound setOnProvider* slots receive
+  // them and re-broadcast scoped to the originating instance.
 
   system.setOnProviderBound((agentId, model, oldProvider, newProvider) => {
     broadcast({

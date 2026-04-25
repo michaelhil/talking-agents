@@ -99,110 +99,72 @@ export const systemRoutes: RouteEntry[] = [
     method: 'POST',
     pattern: /^\/api\/system\/reset$/,
     handler: async (req, _match, ctx) => {
-      // Per-instance branch (Phase F5). Falls through to legacy onResetCommit
-      // when the boundary doesn't supply a per-instance helper (test mode).
-      if (ctx.resetInstance) {
-        // Resolve the cookie's instance id NOW so we can scope timers + broadcasts.
-        const { getInstanceId } = await import('../instance-cookie.ts')
-        const id = getInstanceId(req)
-        if (!id) return errorResponse('no instance cookie', 400)
+      if (!ctx.resetInstance) return errorResponse('reset not supported in this mode', 501)
+      const { getInstanceId } = await import('../instance-cookie.ts')
+      const id = getInstanceId(req)
+      if (!id) return errorResponse('no instance cookie', 400)
 
-        if (resetTimers.has(id)) return errorResponse('reset already in progress', 409)
-        const sinceLast = Date.now() - (lastResetAt.get(id) ?? 0)
-        if (sinceLast < RESET_COOLDOWN_MS) {
-          const remaining = Math.ceil((RESET_COOLDOWN_MS - sinceLast) / 1000)
-          return errorResponse(`reset cooldown — try again in ${remaining}s`, 429)
-        }
-        lastResetAt.set(id, Date.now())
-        const commitsAtMs = Date.now() + RESET_COUNTDOWN_MS
-
-        const sendToInstance = (msg: import('../../core/types/ws-protocol.ts').WSOutbound): void => {
-          if (ctx.broadcastToInstance) ctx.broadcastToInstance(id, msg)
-          else ctx.broadcast(msg)
-        }
-
-        const timer = setTimeout(async () => {
-          const result = await ctx.resetInstance!(req)
-          if (!result.ok) {
-            sendToInstance({ type: 'reset_failed', reason: result.reason })
-            resetTimers.delete(id)
-            lastResetAt.delete(id)
-            return
-          }
-          // The instance directory was moved to .trash. The browser keeps
-          // the same cookie; on reconnect, registry.getOrLoad creates a
-          // fresh empty House under the same id. WS connections were closed
-          // by the onSystemEvicted hook.
-          sendToInstance({ type: 'reset_committed', oldId: id, newId: result.instanceId })
-          resetTimers.delete(id)
-        }, RESET_COUNTDOWN_MS)
-        resetTimers.set(id, timer)
-
-        sendToInstance({ type: 'reset_pending', commitsAtMs })
-        console.log(`[reset] instance ${id}: initiated; commits at ${new Date(commitsAtMs).toISOString()}`)
-        return json({ resetting: true, commitsAtMs })
-      }
-
-      // Legacy whole-process reset (single-tenant mode without registry).
-      if (!ctx.onResetCommit) return errorResponse('reset not supported in this mode', 501)
-      if (legacyResetTimer !== null) return errorResponse('reset already in progress', 409)
-      const sinceLast = Date.now() - legacyLastResetAt
+      if (resetTimers.has(id)) return errorResponse('reset already in progress', 409)
+      const sinceLast = Date.now() - (lastResetAt.get(id) ?? 0)
       if (sinceLast < RESET_COOLDOWN_MS) {
         const remaining = Math.ceil((RESET_COOLDOWN_MS - sinceLast) / 1000)
         return errorResponse(`reset cooldown — try again in ${remaining}s`, 429)
       }
-      legacyLastResetAt = Date.now()
+      lastResetAt.set(id, Date.now())
       const commitsAtMs = Date.now() + RESET_COUNTDOWN_MS
-      legacyResetTimer = setTimeout(async () => {
-        const result = await ctx.onResetCommit!()
+
+      const sendToInstance = (msg: import('../../core/types/ws-protocol.ts').WSOutbound): void => {
+        if (ctx.broadcastToInstance) ctx.broadcastToInstance(id, msg)
+        else ctx.broadcast(msg)
+      }
+
+      const timer = setTimeout(async () => {
+        const result = await ctx.resetInstance!(req)
         if (!result.ok) {
-          ctx.broadcast({ type: 'reset_failed', reason: result.reason })
-          legacyResetTimer = null
-          legacyLastResetAt = 0
+          sendToInstance({ type: 'reset_failed', reason: result.reason })
+          resetTimers.delete(id)
+          lastResetAt.delete(id)
+          return
         }
+        // The instance directory was moved to .trash. The browser keeps
+        // the same cookie; on reconnect, registry.getOrLoad creates a
+        // fresh empty House under the same id. WS connections were closed
+        // by the onSystemEvicted hook.
+        sendToInstance({ type: 'reset_committed', oldId: id, newId: result.instanceId })
+        resetTimers.delete(id)
       }, RESET_COUNTDOWN_MS)
-      ctx.broadcast({ type: 'reset_pending', commitsAtMs })
+      resetTimers.set(id, timer)
+
+      sendToInstance({ type: 'reset_pending', commitsAtMs })
+      console.log(`[reset] instance ${id}: initiated; commits at ${new Date(commitsAtMs).toISOString()}`)
       return json({ resetting: true, commitsAtMs })
     },
   },
   {
     method: 'POST',
     pattern: /^\/api\/system\/reset\/cancel$/,
-    handler: async (req, _match, ctx) => {
-      // Per-instance cancel (Phase F5).
-      if (ctx.resetInstance) {
-        const { getInstanceId } = await import('../instance-cookie.ts')
-        const id = getInstanceId(req)
-        if (!id) return errorResponse('no instance cookie', 400)
-        const timer = resetTimers.get(id)
-        if (!timer) return errorResponse('no reset in progress', 404)
-        clearTimeout(timer)
-        resetTimers.delete(id)
-        lastResetAt.delete(id)   // refund the cooldown
-        const sendToInstance = (msg: import('../../core/types/ws-protocol.ts').WSOutbound): void => {
-          if (ctx.broadcastToInstance) ctx.broadcastToInstance(id, msg)
-          else ctx.broadcast(msg)
-        }
-        sendToInstance({ type: 'reset_cancelled' })
-        return json({ cancelled: true })
+    handler: async (req, _match, _ctx) => {
+      const { getInstanceId } = await import('../instance-cookie.ts')
+      const id = getInstanceId(req)
+      if (!id) return errorResponse('no instance cookie', 400)
+      const timer = resetTimers.get(id)
+      if (!timer) return errorResponse('no reset in progress', 404)
+      clearTimeout(timer)
+      resetTimers.delete(id)
+      lastResetAt.delete(id)   // refund the cooldown
+      const ctx = _ctx
+      const sendToInstance = (msg: import('../../core/types/ws-protocol.ts').WSOutbound): void => {
+        if (ctx.broadcastToInstance) ctx.broadcastToInstance(id, msg)
+        else ctx.broadcast(msg)
       }
-      // Legacy.
-      if (legacyResetTimer === null) return errorResponse('no reset in progress', 404)
-      clearTimeout(legacyResetTimer)
-      legacyResetTimer = null
-      legacyLastResetAt = 0
-      ctx.broadcast({ type: 'reset_cancelled' })
+      sendToInstance({ type: 'reset_cancelled' })
       return json({ cancelled: true })
     },
   },
 ]
 
-// --- Reset state ---
-// Per-instance: keyed by cookie's instance id.
+// --- Reset state — per-instance, keyed by cookie's instance id ---
 const resetTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const lastResetAt = new Map<string, number>()
-// Legacy single-tenant fallback.
-let legacyResetTimer: ReturnType<typeof setTimeout> | null = null
-let legacyLastResetAt = 0
 const RESET_COOLDOWN_MS = 5 * 60 * 1000
 const RESET_COUNTDOWN_MS = 10 * 1000
