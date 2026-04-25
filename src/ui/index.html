@@ -474,12 +474,21 @@
                data-room-icon-id (stable id) + data-room-icon-label
                (display label). The eye button itself is excluded from
                the registry (always-visible escape hatch). -->
-          <div class="toolbar-group">
+          <!-- Cluster A is `relative` so the visibility popover (last child)
+               can absolute-position itself against the cluster. -->
+          <div class="toolbar-group relative">
             <button id="btn-clear-messages" class="mode-btn icon-btn" data-room-icon-id="clear-messages" data-room-icon-label="Clear messages" title="Clear messages" aria-label="Clear messages"><span data-icon="trash"></span></button>
             <button id="btn-bookmarks" class="mode-btn icon-btn" data-room-icon-id="bookmarks" data-room-icon-label="Bookmarks" title="Bookmarks" aria-label="Bookmarks"><span data-icon="bookmark" data-icon-fill="var(--danger)" data-icon-style="transform: rotate(45deg)"></span></button>
             <button id="btn-room-prompt" class="mode-btn icon-btn" data-room-icon-id="room-prompt" data-room-icon-label="Edit room prompt" title="Room Prompt" aria-label="Edit room prompt"><span data-icon="message-square"></span></button>
             <button id="btn-workspace" class="mode-btn icon-btn hidden" data-room-icon-id="workspace" data-room-icon-label="Workspace" title="Workspace" aria-label="Workspace"><span data-icon="folder-open"></span></button>
             <button id="btn-report-bug" class="mode-btn icon-btn" data-room-icon-id="report-bug" data-room-icon-label="Report bug" title="Report bug" aria-label="Report bug"><span data-icon="bug"></span></button>
+            <!-- Eye sits next to bug with no cluster divider between them
+                 (this IS the same cluster). It's intentionally NOT in the
+                 visibility registry — always-visible escape hatch. -->
+            <button id="btn-icon-visibility" class="mode-btn icon-btn" title="Show/hide room icons" aria-label="Show/hide room icons" aria-haspopup="true" aria-expanded="false"><span data-icon="eye"></span></button>
+            <!-- Popover anchors to the cluster's right edge (which == eye's
+                 right edge since eye is the last child) and grows leftward. -->
+            <div id="icon-visibility-popover" class="hidden absolute z-30 bg-surface border rounded shadow-lg py-1 text-sm" style="right: 0; top: 100%; margin-top: 4px; min-width: 260px;"></div>
           </div>
           <!-- Cluster B: macros -->
           <div id="macro-group" class="toolbar-group toolbar-divider">
@@ -494,17 +503,6 @@
             <button id="btn-summary-settings" class="mode-btn icon-btn hidden" title="Summary settings" aria-label="Summary settings"><span data-icon="settings"></span></button>
             <button id="btn-summary-inspect" class="mode-btn icon-btn hidden" title="Inspect summary + compression" aria-label="Inspect summary"><span data-icon="search"></span></button>
             <button id="btn-summary-regenerate" class="mode-btn icon-btn hidden" title="Regenerate now" aria-label="Regenerate now"><span data-icon="refresh-cw"></span></button>
-          </div>
-          <!-- Cluster Z: visibility manager. Always last so the eye sits at
-               the right edge as a "more options" affordance. -->
-          <div class="toolbar-group toolbar-divider relative">
-            <button id="btn-icon-visibility" class="mode-btn icon-btn" title="Show/hide room icons" aria-label="Show/hide room icons" aria-haspopup="true" aria-expanded="false"><span data-icon="eye"></span></button>
-            <!-- Anchored to the right edge of the eye button so the wide
-                 popover grows leftward into the room, not off-screen.
-                 Top set inline to ensure it lands just below the button
-                 even if Tailwind's top-full utility isn't seen by the
-                 build (we set it via JS-injected styles too). -->
-            <div id="icon-visibility-popover" class="hidden absolute z-30 bg-surface border rounded shadow-lg py-1 text-sm" style="right: 0; top: 100%; margin-top: 4px; min-width: 260px;"></div>
           </div>
         </div>
       </div>
