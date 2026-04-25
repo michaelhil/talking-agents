@@ -71,6 +71,13 @@ export interface ChatRequest {
   readonly maxTokens?: number
   readonly jsonMode?: boolean
   readonly tools?: ReadonlyArray<ToolDefinition>
+  // Force tool-call behaviour for providers that support it (OpenAI Chat
+  // Completions family + Ollama on supported models). 'auto' is the default
+  // (model decides); 'required' demands at least one tool call; { name }
+  // demands a call to that specific tool. Providers that don't support the
+  // option silently ignore it (Anthropic + Gemini fall back to 'auto').
+  // Used by the script engine's phase-1 to force `update_beat`.
+  readonly toolChoice?: 'auto' | 'required' | { readonly name: string }
   readonly think?: boolean
   readonly numCtx?: number
   // Structured system-prompt blocks — opt-in, used only by providers that can

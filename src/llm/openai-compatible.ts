@@ -225,6 +225,13 @@ const buildOAIBody = (request: ChatRequest, stream: boolean, providerName: strin
   if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens
   if (request.jsonMode) body.response_format = { type: 'json_object' }
   if (request.tools && request.tools.length > 0) body.tools = request.tools
+  if (request.toolChoice !== undefined && request.tools && request.tools.length > 0) {
+    if (request.toolChoice === 'auto' || request.toolChoice === 'required') {
+      body.tool_choice = request.toolChoice
+    } else {
+      body.tool_choice = { type: 'function', function: { name: request.toolChoice.name } }
+    }
+  }
   return body
 }
 
