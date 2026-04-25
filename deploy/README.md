@@ -78,19 +78,29 @@ curl -I https://samsinn.example.com/  # HSTS, CSP headers visible
 Open `https://samsinn.example.com` in a browser. Token prompt appears →
 enter token → main UI loads.
 
-## Resetting the sandbox
+## Resetting an instance
 
-Click the `↺ reset` button in the sidebar footer (next to the version
-badge). Confirm in the modal. A 10-second countdown banner appears for
-all connected clients; any user can cancel during the window.
+Multi-tenant: each browser cookie maps to its own per-instance House at
+`$SAMSINN_HOME/instances/<id>/`. Click `↺ reset` in your tab — only your
+instance is affected; other tabs / users keep their state.
+
+A 10-second countdown banner appears for clients currently connected to
+*your* instance only. Any of them can cancel during the window.
 
 After commit:
-- `data/snapshot.json` deleted.
-- `~/.samsinn/{memory,packs,skills,tools}` recursively deleted.
-- Server exits, systemd respawns within ~5 s.
-- Browsers reconnect to a fresh `general` room with no agents.
+- `$SAMSINN_HOME/instances/<your-id>/` is moved to
+  `$SAMSINN_HOME/instances/.trash/<your-id>-<ts>/` (recoverable for 7 days).
+- Your WS connections are closed (1001).
+- Browser reconnects to the same cookie → a fresh empty `general` room
+  appears under the same id.
+- Server stays up. Other instances are untouched.
 
-Server-side: 1 reset / 5 minutes. Concurrent reset attempts return 409.
+Server-side: 1 reset / 5 min **per instance**. Concurrent attempts on
+the same instance return 409.
+
+The janitor (background, hourly) demotes any instance idle on disk for
+> 24 h into `.trash/`, and purges trash entries older than 7 days. Tunable
+via `SAMSINN_INSTANCE_TTL_MS` and `SAMSINN_TRASH_TTL_MS`.
 
 ## Hardening flags
 

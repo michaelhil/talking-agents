@@ -298,6 +298,21 @@ export const bootstrap = async (): Promise<void> => {
     return { ok: true }
   }
 
+  // === Per-instance reset ===
+  // Phase F5: trashes the instance dir; same cookie persists. Browser
+  // reconnects → registry creates fresh empty House under same id.
+  const resetInstance = async (req: Request) => {
+    const { getInstanceId } = await import('./api/instance-cookie.ts')
+    const id = getInstanceId(req)
+    if (!id) return { ok: false as const, reason: 'no instance cookie' }
+    try {
+      await registry.resetInstance(id)
+      return { ok: true as const, instanceId: id }
+    } catch (err) {
+      return { ok: false as const, reason: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   // === HTTP + WS server ===
   const { createServer } = await import('./api/server.ts')
   createServer({
@@ -306,6 +321,7 @@ export const bootstrap = async (): Promise<void> => {
     bootInstanceId,
     port: parseInt(process.env.PORT ?? String(DEFAULTS.port), 10),
     onResetCommit,
+    resetInstance,
   })
 
   // === Graceful shutdown ===

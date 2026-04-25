@@ -100,6 +100,10 @@ export type WSOutbound =
   | { readonly type: 'reset_pending'; readonly commitsAtMs: number }
   | { readonly type: 'reset_cancelled' }
   | { readonly type: 'reset_failed'; readonly reason: string }
+  // Per-instance reset committed. Browser should reload — its cookie has
+  // already been swapped via Set-Cookie on the same response that started
+  // the countdown. Old WS connections close on next eviction sweep.
+  | { readonly type: 'reset_committed'; readonly oldId: string; readonly newId: string }
   // Summary + compression
   | { readonly type: 'summary_config_changed'; readonly roomName: string; readonly config: SummaryConfig }
   | { readonly type: 'summary_run_started'; readonly roomName: string; readonly target: SummaryTarget }

@@ -43,9 +43,9 @@ interface ServerConfig {
   readonly bootInstanceId: string
   readonly port?: number
   readonly uiPath?: string
-  /**
-   * Legacy reset commit (process-exit). Phase F5 replaces with per-instance.
-   */
+  // Per-instance reset wired by bootstrap.
+  readonly resetInstance?: (req: Request) => Promise<import('./routes/types.ts').ResetInstanceResult>
+  // Legacy fallback (still wired in single-tenant path).
   readonly onResetCommit?: () => Promise<{ ok: true } | { ok: false; reason: string }>
 }
 
@@ -216,7 +216,14 @@ export const createServer = (config: ServerConfig) => {
       // Resolve the system for this cookie (lazy-loads from disk if evicted).
       const system = await registry.getOrLoad(instanceId)
       const remoteAddress = server.requestIP(req)?.address
-      const apiResponse = await handleAPI(req, pathname, system, wsManager.broadcast, wsManager.subscribeAgentState, wsManager.unsubscribeAgentState, remoteAddress, config.onResetCommit)
+      const apiResponse = await handleAPI(
+        req, pathname, system,
+        wsManager.broadcast, wsManager.subscribeAgentState, wsManager.unsubscribeAgentState,
+        remoteAddress,
+        config.onResetCommit,
+        config.resetInstance,
+        wsManager.broadcastToInstance,
+      )
       if (apiResponse) {
         if (setCookieValue) apiResponse.headers.append('Set-Cookie', setCookieValue)
         return apiResponse

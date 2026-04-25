@@ -164,26 +164,28 @@ describe('SystemRegistry', () => {
 
   // --- Reset ---
 
-  it('resetInstance moves files to trash and returns a new id', async () => {
+  it('resetInstance moves files to trash; same id is reusable for fresh House', async () => {
     const id = generateInstanceId()
     const sys = await registry.getOrLoad(id)
     sys.house.createRoomSafe({ name: 'reset-test', createdBy: 'system' })
     await registry.evictOne(id)
     expect(await registry.exists(id)).toBe(true)
 
-    const newId = await registry.resetInstance(id)
-    expect(newId).not.toBe(id)
-    expect(newId).toMatch(/^[a-z0-9]{16}$/)
+    await registry.resetInstance(id)
     expect(await registry.exists(id)).toBe(false)
 
-    // Trash entry should exist.
+    // Trash entry created.
     const trashEntries = await readdir(join(homeDir, 'instances', '.trash'))
     expect(trashEntries.some(e => e.startsWith(id + '-'))).toBe(true)
+
+    // Same id is now usable for a fresh empty House.
+    const sys2 = await registry.getOrLoad(id)
+    expect(sys2.house.listAllRooms().length).toBe(0)
   })
 
   it('resetInstance is safe for nonexistent id (ENOENT swallowed)', async () => {
-    const newId = await registry.resetInstance('aaaaaaaaaaaaaaaa')
-    expect(newId).toMatch(/^[a-z0-9]{16}$/)
+    await registry.resetInstance('aaaaaaaaaaaaaaaa')
+    // Should not throw; nothing to do.
   })
 
   // --- list / meta ---

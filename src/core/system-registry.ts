@@ -38,7 +38,6 @@ import {
   loadSnapshot, restoreFromSnapshot, createAutoSaver, type AutoSaver,
 } from './snapshot.ts'
 import { instancePaths, isValidInstanceId, trashPath } from './paths.ts'
-import { generateInstanceId } from '../api/instance-cookie.ts'
 import { mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { asAIAgent } from '../agents/shared.ts'
@@ -88,7 +87,10 @@ export interface SystemRegistry {
   readonly getOrLoad: (id: string) => Promise<System>
   readonly evictOne: (id: string) => Promise<void>
   readonly evictIdle: (now?: number) => Promise<number>
-  readonly resetInstance: (id: string) => Promise<string>   // returns new id
+  // Trash the instance's on-disk state and drop from memory. The same id
+  // is preserved — browser keeps its cookie, next request lazy-creates a
+  // fresh empty House under the same id.
+  readonly resetInstance: (id: string) => Promise<void>
   readonly exists: (id: string) => Promise<boolean>
   readonly list: () => ReadonlyArray<InstanceMeta>
   readonly shutdown: () => Promise<void>
@@ -247,31 +249,26 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     return targets.length
   }
 
-  const resetInstance = async (id: string): Promise<string> => {
+  const resetInstance = async (id: string): Promise<void> => {
     if (!isValidInstanceId(id)) {
       throw new Error(`[registry] invalid instance id: ${id}`)
     }
-    // Drain + drop from memory (not strictly necessary, but cleaner —
-    // any in-flight evals get a chance to finish).
+    // Drain + drop from memory.
     if (map.has(id)) await evictOne(id)
-
-    // Move on disk to trash. Janitor will purge after 7 days.
+    // Move on disk to trash. Janitor purges after 7 days.
     const paths = instancePaths(id)
     const trash = trashPath(id, Date.now())
     try {
       await mkdir(dirname(trash), { recursive: true })
       await rename(paths.root, trash)
     } catch (err) {
-      // ENOENT is fine — instance never had a snapshot.
       const code = (err as NodeJS.ErrnoException).code
       if (code !== 'ENOENT') {
         console.error(`[registry] reset ${id} trash failed: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
-
-    // Caller decides what to do with the new id (typically: set cookie,
-    // broadcast instance_reset to WS subset, browser reconnects).
-    return generateInstanceId()
+    // Same id is preserved. Browser cookie unchanged. Next request →
+    // registry.getOrLoad(id) → no in-memory + no disk → fresh House.
   }
 
   const exists = async (id: string): Promise<boolean> => {
