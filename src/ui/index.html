@@ -324,7 +324,7 @@
     .mode-switcher { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface); }
     .mode-btn { padding: 2px 6px; font-size: 13px; cursor: pointer; background: transparent; border: none; position: relative; line-height: 1.2; color: var(--text); }
     .mode-btn + .mode-btn { border-left: 1px solid var(--border); }
-    .mode-btn[aria-pressed="true"]::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: 0; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; }
+    .mode-btn[aria-pressed="true"]:not(#btn-mode-toggle)::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: 0; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; }
     .mode-btn:hover:not(:disabled) { background: var(--surface-strong); }
     .mode-btn:disabled { opacity: 0.35; cursor: not-allowed; }
     /* Macro running chip */
@@ -486,9 +486,13 @@
         <div id="pinned-messages" class="border-b bg-warning-bg max-h-32 overflow-y-auto hidden"></div>
         <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
         <!-- Room members (chip row) sits just above the input — agent
-             chips are most useful while composing a message. -->
-        <div id="room-members" class="px-3 py-1.5 border-t bg-surface flex flex-wrap gap-1 items-center hidden"></div>
-        <form id="chat-form" class="px-3 py-2 bg-surface flex gap-2 items-center">
+             chips are most useful while composing a message. The mode
+             toggle (broadcast/manual) is right-aligned in the same row. -->
+        <div id="room-members-row" class="px-3 py-0.5 border-t bg-surface flex items-center gap-1 hidden">
+          <div id="room-members" class="flex flex-wrap gap-1 items-center flex-1 min-w-0"></div>
+          <button id="btn-mode-toggle" class="mode-btn icon-btn shrink-0" title="Broadcast — click to switch to Manual" aria-label="Broadcast — click to switch to Manual" aria-pressed="false"><span data-icon="megaphone"></span></button>
+        </div>
+        <form id="chat-form" class="px-3 py-1 bg-surface flex gap-2 items-center">
           <!-- Input wrapper holds the inline send icon, positioned absolutely
                on the right inside the input's padding. -->
           <div class="relative flex-1">
@@ -497,7 +501,6 @@
                    autocomplete="off" disabled>
             <button type="submit" id="btn-send" class="chat-send icon-btn" title="Send" aria-label="Send" disabled><span data-icon="corner-down-left"></span></button>
           </div>
-          <button id="btn-mode-toggle" class="mode-btn icon-btn" title="Broadcast — click to switch to Manual" aria-label="Broadcast — click to switch to Manual" aria-pressed="false"><span data-icon="megaphone"></span></button>
         </form>
       </div>
 

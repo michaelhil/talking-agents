@@ -76,13 +76,14 @@ export const mountRoomMembers = (deps: RoomMembersDeps): void => {
   })
 
   // --- Render on any relevant state change ---
+  const wrapper = container.parentElement ?? container
   $agentListView.subscribe(({ agents, mutedAgents, selectedRoomId, roomMemberIds, deliveryMode }) => {
     if (!selectedRoomId) {
-      container.classList.add('hidden')
+      wrapper.classList.add('hidden')
       container.innerHTML = ''
       return
     }
-    container.classList.remove('hidden')
+    wrapper.classList.remove('hidden')
     render(container, {
       agents,
       mutedAgentIds: mutedAgents,
@@ -208,7 +209,7 @@ const renderAddButton = (opts: RenderOpts, roomName: string): HTMLElement => {
   // Match the chip's box: same inline-flex centring, same px-2/py-0.5,
   // explicit h-5 to align with the chip's intrinsic height (20 px) so the
   // row reads as a single unbroken band of equal-height pills.
-  btn.className = 'inline-flex items-center justify-center h-5 px-2 text-xs border border-dashed border-border-strong text-text-subtle rounded leading-none hover:border-blue-400 hover:text-accent-hover'
+  btn.className = 'inline-flex items-center justify-center h-5 w-5 text-xs border border-dashed border-border-strong text-text-subtle rounded leading-none hover:border-blue-400 hover:text-accent-hover'
   btn.textContent = '＋'
   btn.title = 'Add an agent to this room'
 
