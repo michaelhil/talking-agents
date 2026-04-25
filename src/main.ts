@@ -488,17 +488,25 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     createPostToRoomTool(house),
   ])
 
-  // Web tools — web_fetch and web_extract_json always registered;
-  // web_search registered when TAVILY_API_KEY (preferred), BRAVE_API_KEY, or
-  // GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID is set. Tavily is the default — it's
-  // LLM-optimized (returns clean snippets + relevance scores) and has a
-  // generous free tier (1000 searches/month, no card required).
-  toolRegistry.registerAll(createWebTools({
-    tavilyApiKey: process.env.TAVILY_API_KEY,
-    braveApiKey: process.env.BRAVE_API_KEY,
-    googleApiKey: process.env.GOOGLE_CSE_API_KEY,
-    googleCseId: process.env.GOOGLE_CSE_ID,
-  }))
+  // Web tools — web_fetch / web_extract_json / web_search.
+  //
+  // Disabled by default in deploy mode: web_fetch can hit any URL the host
+  // can reach, including Hetzner's metadata service at 169.254.169.254 and
+  // private network ranges. Operators who need network access opt in with
+  // SAMSINN_ENABLE_NETWORK_TOOLS=1.
+  //
+  // web_search is additionally gated on TAVILY_API_KEY (preferred),
+  // BRAVE_API_KEY, or GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID. Tavily is the
+  // default — LLM-optimized snippets + relevance scores, generous free
+  // tier (1000 searches/month, no card required).
+  if (process.env.SAMSINN_ENABLE_NETWORK_TOOLS === '1') {
+    toolRegistry.registerAll(createWebTools({
+      tavilyApiKey: process.env.TAVILY_API_KEY,
+      braveApiKey: process.env.BRAVE_API_KEY,
+      googleApiKey: process.env.GOOGLE_CSE_API_KEY,
+      googleCseId: process.env.GOOGLE_CSE_ID,
+    }))
+  }
 
   // Document tool — collaborative structured writing with streaming LLM output
   toolRegistry.register(createWriteDocumentSectionTool(house.artifacts))
@@ -528,15 +536,24 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     }
   }
 
-  toolRegistry.register(createWriteSkillTool(skillStore, skillsDir))
-  toolRegistry.register(createWriteToolTool(toolRegistry, skillStore, refreshAllAgentTools))
+  // test_tool + list_skills are read-only (test_tool can only invoke tools
+  // already in the registry; list_skills enumerates skills). They stay
+  // registered regardless of SAMSINN_ENABLE_CODEGEN — disabling codegen
+  // doesn't make these unsafe.
   toolRegistry.register(createTestToolTool(toolRegistry))
   toolRegistry.register(createListSkillsTool(skillStore))
 
-  // Pack admin tools — install/update/uninstall/list GitHub-sourced packs.
-  toolRegistry.registerAll(createPackTools({
-    packsDir, toolRegistry, skillStore, refreshAllAgentTools,
-  }))
+  // write_skill / write_tool / install_pack / update_pack / uninstall_pack /
+  // list_packs all let an agent drop arbitrary TS into ~/.samsinn/ and have
+  // it imported. Disabled by default in deploy mode; gated on the env var
+  // so a trusted authoring environment can opt in.
+  if (process.env.SAMSINN_ENABLE_CODEGEN === '1') {
+    toolRegistry.register(createWriteSkillTool(skillStore, skillsDir))
+    toolRegistry.register(createWriteToolTool(toolRegistry, skillStore, refreshAllAgentTools))
+    toolRegistry.registerAll(createPackTools({
+      packsDir, toolRegistry, skillStore, refreshAllAgentTools,
+    }))
+  }
 
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
     spawnAIAgent(config, llm, house, team, routeMessage, toolRegistry, {
