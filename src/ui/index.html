@@ -322,6 +322,10 @@
     .sidebar-dot { width: 8px; height: 8px; }
     /* Mode icon pair */
     .mode-switcher { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--surface); }
+    /* User-hide channel for room-header icons. Independent of Tailwind's
+       .hidden so app-state toggles (e.g. summary-cluster expansion) don't
+       accidentally resurrect a user-hidden button. */
+    .user-hidden { display: none !important; }
     .mode-btn { padding: 2px 6px; font-size: 13px; cursor: pointer; background: transparent; border: none; position: relative; line-height: 1.2; color: var(--text); }
     .mode-btn + .mode-btn { border-left: 1px solid var(--border); }
     .mode-btn[aria-pressed="true"]:not(#btn-mode-toggle)::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: 0; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; }
@@ -403,6 +407,7 @@
             <span id="logging-state-dot" class="text-xs" title="Logging state">◌</span>
           </button>
           <button data-settings-row="instances" class="w-full text-left text-xs text-text py-1.5 px-3 hover:bg-surface-muted cursor-pointer interactive" title="List, switch, create, or delete sandboxes. Reset lives inside the modal too.">Instances</button>
+          <button data-settings-row="bug"       class="w-full text-left text-xs text-text py-1.5 px-3 hover:bg-surface-muted cursor-pointer interactive" title="Report a bug to the GitHub repo">Report bug</button>
         </div>
       </div>
 
@@ -436,9 +441,16 @@
 
       <!-- Room header -->
       <div id="room-header" class="px-3 py-1.5 border-b bg-surface flex items-center justify-between hidden">
-        <div class="flex items-center gap-2 min-w-0">
+        <div class="flex items-center gap-2 min-w-0 relative">
           <button id="room-status-dot" class="room-status-dot" title="Active — click to pause" aria-pressed="false" aria-label="Toggle pause"></button>
-          <span id="room-name" class="text-base font-semibold text-text-strong truncate"></span>
+          <!-- Room switcher: room name + chevron. Click to open the popover
+               with the room list + "create new" entry. Always visible so it
+               works in both full-screen and sidebar-open modes. -->
+          <button id="room-switcher" class="inline-flex items-center gap-1 text-base font-semibold text-text-strong truncate hover:text-accent-hover" aria-haspopup="true" aria-expanded="false">
+            <span id="room-name" class="truncate"></span>
+            <span data-icon="chevron-down" data-icon-size="14"></span>
+          </button>
+          <div id="room-switcher-popover" class="hidden absolute left-0 top-full mt-1 z-30 bg-surface border rounded shadow-lg py-1 text-sm min-w-[220px] max-h-[60vh] overflow-y-auto"></div>
           <!-- Running macro chip (hidden unless a run is active) -->
           <span id="macro-chip" class="macro-chip hidden">
             <span>▶</span>
@@ -449,26 +461,42 @@
         </div>
         <div class="flex items-center gap-1">
           <!-- Cluster A: room actions (mode toggle now lives next to the
-               composer at the bottom of the chat area). -->
+               composer at the bottom of the chat area).
+               Buttons that participate in the visibility popover carry
+               data-room-icon-id (stable id) + data-room-icon-label
+               (display label). The eye button itself is excluded from
+               the registry (always-visible escape hatch). -->
           <div class="toolbar-group">
-            <button id="btn-clear-messages" class="mode-btn icon-btn" title="Clear messages" aria-label="Clear messages"><span data-icon="trash"></span></button>
-            <button id="btn-bookmarks" class="mode-btn icon-btn" title="Bookmarks" aria-label="Bookmarks"><span data-icon="bookmark" data-icon-fill="var(--danger)" data-icon-style="transform: rotate(45deg)"></span></button>
-            <button id="btn-room-prompt" class="mode-btn icon-btn" title="Room Prompt" aria-label="Edit room prompt"><span data-icon="message-square"></span></button>
-            <button id="btn-workspace" class="mode-btn icon-btn hidden" title="Workspace" aria-label="Workspace"><span data-icon="folder-open"></span></button>
+            <button id="btn-clear-messages" class="mode-btn icon-btn" data-room-icon-id="clear-messages" data-room-icon-label="Clear messages" title="Clear messages" aria-label="Clear messages"><span data-icon="trash"></span></button>
+            <button id="btn-bookmarks" class="mode-btn icon-btn" data-room-icon-id="bookmarks" data-room-icon-label="Bookmarks" title="Bookmarks" aria-label="Bookmarks"><span data-icon="bookmark" data-icon-fill="var(--danger)" data-icon-style="transform: rotate(45deg)"></span></button>
+            <button id="btn-room-prompt" class="mode-btn icon-btn" data-room-icon-id="room-prompt" data-room-icon-label="Edit room prompt" title="Room Prompt" aria-label="Edit room prompt"><span data-icon="message-square"></span></button>
+            <button id="btn-workspace" class="mode-btn icon-btn hidden" data-room-icon-id="workspace" data-room-icon-label="Workspace" title="Workspace" aria-label="Workspace"><span data-icon="folder-open"></span></button>
+            <button id="btn-report-bug" class="mode-btn icon-btn" data-room-icon-id="report-bug" data-room-icon-label="Report bug" title="Report bug" aria-label="Report bug"><span data-icon="bug"></span></button>
           </div>
           <!-- Cluster B: macros -->
           <div id="macro-group" class="toolbar-group toolbar-divider">
-            <button id="btn-macro-picker" class="mode-btn icon-btn" title="Macros" aria-label="Macros" aria-pressed="false"><span data-icon="clapperboard"></span></button>
+            <button id="btn-macro-picker" class="mode-btn icon-btn" data-room-icon-id="macro-picker" data-room-icon-label="Macros" title="Macros" aria-label="Macros" aria-pressed="false"><span data-icon="clapperboard"></span></button>
             <button id="btn-macro-list" class="mode-btn icon-btn hidden" title="Select a macro" aria-label="Select a macro" disabled><span data-icon="list-checks"></span></button>
             <button id="btn-macro-next" class="mode-btn icon-btn hidden" title="Next step — requires a selected macro" aria-label="Next step" disabled><span data-icon="chevron-right"></span></button>
             <button id="btn-macro-create" class="mode-btn icon-btn hidden" title="Create new macro" aria-label="Create new macro"><span data-icon="plus"></span></button>
           </div>
           <!-- Cluster C: summary / compression -->
           <div id="summary-group" class="toolbar-group toolbar-divider">
-            <button id="btn-summary-toggle" class="mode-btn icon-btn" title="Summary & compression" aria-label="Summary & compression" aria-pressed="false"><span data-icon="archive"></span></button>
+            <button id="btn-summary-toggle" class="mode-btn icon-btn" data-room-icon-id="summary" data-room-icon-label="Summary & compression" title="Summary & compression" aria-label="Summary & compression" aria-pressed="false"><span data-icon="archive"></span></button>
             <button id="btn-summary-settings" class="mode-btn icon-btn hidden" title="Summary settings" aria-label="Summary settings"><span data-icon="settings"></span></button>
             <button id="btn-summary-inspect" class="mode-btn icon-btn hidden" title="Inspect summary + compression" aria-label="Inspect summary"><span data-icon="search"></span></button>
             <button id="btn-summary-regenerate" class="mode-btn icon-btn hidden" title="Regenerate now" aria-label="Regenerate now"><span data-icon="refresh-cw"></span></button>
+          </div>
+          <!-- Cluster Z: visibility manager. Always last so the eye sits at
+               the right edge as a "more options" affordance. -->
+          <div class="toolbar-group toolbar-divider relative">
+            <button id="btn-icon-visibility" class="mode-btn icon-btn" title="Show/hide room icons" aria-label="Show/hide room icons" aria-haspopup="true" aria-expanded="false"><span data-icon="eye"></span></button>
+            <!-- Anchored to the right edge of the eye button so the wide
+                 popover grows leftward into the room, not off-screen.
+                 Top set inline to ensure it lands just below the button
+                 even if Tailwind's top-full utility isn't seen by the
+                 build (we set it via JS-injected styles too). -->
+            <div id="icon-visibility-popover" class="hidden absolute z-30 bg-surface border rounded shadow-lg py-1 text-sm" style="right: 0; top: 100%; margin-top: 4px; min-width: 260px;"></div>
           </div>
         </div>
       </div>
@@ -569,6 +597,31 @@
         <div class="text-text-subtle italic p-3">Loading…</div>
       </div>
     </div>
+  </dialog>
+
+  <!-- Bug report modal — POSTs to /api/bugs which creates a GitHub issue. -->
+  <dialog id="bug-modal" class="rounded-lg shadow-xl p-0 w-[560px] max-w-[95vw] bg-surface text-text">
+    <form id="bug-form" class="flex flex-col" style="max-height: 80vh;">
+      <div class="px-4 py-3 border-b flex items-center justify-between">
+        <h3 class="font-medium text-text-strong inline-flex items-center gap-2"><span data-icon="bug"></span> Report a bug</h3>
+        <button type="button" id="bug-close" class="text-text-subtle hover:text-text" aria-label="Close">×</button>
+      </div>
+      <div class="px-4 py-3 space-y-3 flex-1 overflow-y-auto">
+        <div>
+          <label class="text-xs text-text-subtle">Title</label>
+          <input id="bug-title" name="title" required maxlength="200" placeholder="One-line summary" class="w-full mt-1 px-3 py-2 border rounded text-sm">
+        </div>
+        <div>
+          <label class="text-xs text-text-subtle">Description</label>
+          <textarea id="bug-description" name="description" required maxlength="8000" rows="8" placeholder="What were you doing? What did you expect? What happened?" class="w-full mt-1 px-3 py-2 border rounded text-sm resize-vertical"></textarea>
+        </div>
+        <div id="bug-context" class="text-[11px] text-text-subtle leading-snug"></div>
+      </div>
+      <div class="px-4 py-3 border-t flex items-center justify-end gap-2">
+        <button type="button" id="bug-cancel" class="px-3 py-1.5 text-sm text-text">Cancel</button>
+        <button type="submit" id="bug-submit" class="px-3 py-1.5 text-sm bg-accent text-white rounded">Submit</button>
+      </div>
+    </form>
   </dialog>
 
   <!-- Ollama Dashboard Modal -->

@@ -198,6 +198,52 @@ data survives a server reinstall.
 
 ---
 
+## 9b. Bug reporting (optional)
+
+The Settings → Report bug entry and the bug icon in the room header POST
+to `/api/bugs`, which creates a GitHub issue using a server-side PAT. The
+browser never sees the token. With no PAT set, the route returns 503 and
+the UI surfaces "bug reporting not configured."
+
+**Setup:**
+
+1. Create a fine-grained Personal Access Token on GitHub:
+   - Settings → Developer settings → Personal access tokens → Fine-grained
+   - **Repository access:** only the repo you want issues to land in
+     (default `michaelhil/samsinn`; set `SAMSINN_GH_REPO=user/fork` to
+     override).
+   - **Repository permissions:** Issues → Read and write. Nothing else.
+   - **Expiration:** whatever you're comfortable with (90d typical).
+2. Add to `/etc/samsinn/env`:
+   ```
+   SAMSINN_GH_TOKEN=github_pat_xxxxxxxxxxxxxxxxxxxxxxxx
+   # SAMSINN_GH_REPO=youruser/yourfork    # optional override
+   ```
+3. `systemctl restart samsinn`. Boot log will say
+   `[bugs] reporting enabled (repo=…)` (the token is never logged).
+
+**Smoke check:**
+
+```bash
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"runbook smoke","description":"verify bug API"}' \
+  https://yourhost.example.com/api/bugs
+# → 201 + {"ok":true,"htmlUrl":"https://github.com/.../issues/N","number":N}
+```
+
+**What ends up in the issue:** the user-typed title and description,
+verbatim, plus a small footer with `samsinn version` and `user agent`.
+**Never** the conversation, room names, agent names, or logs.
+
+**Rate limit:** shares the instance-creation limiter (5 per IP per 60 s).
+Tunable via `SAMSINN_CREATE_RATE_LIMIT` / `SAMSINN_CREATE_RATE_WINDOW_MS`.
+
+> ⚠ Public repos get public issues. Tell users not to paste secrets,
+> stack traces with credentials, or session tokens. The auto-included
+> footer (version + UA) is non-sensitive by design.
+
+---
+
 ## 10. Multi-domain caveat
 
 The instance cookie is scoped to the exact hostname (no `Domain=`

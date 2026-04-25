@@ -13,6 +13,8 @@ import { fetchRoomMessages, fetchRoomMembers, fetchRoomArtifacts } from './room-
 import { renderRooms, renderArtifacts } from './render-rooms.ts'
 import { renderAgents } from './render-agents.ts'
 import { mountRoomMembers, consumeAutoAddRoom, registerPendingCreateAdd, clearAutoAddRoom } from './render-room-members.ts'
+import { mountRoomSwitcher } from './render-room-switcher.ts'
+import { mountVisibilityPopover } from './visibility-popover.ts'
 import { renderMessage } from './render-message.ts'
 import type {
   UIMessage,
@@ -356,6 +358,23 @@ mountRoomMembers({
     $selectedAgentId.set(agentId)
   },
 })
+
+mountRoomSwitcher({
+  button: document.getElementById('room-switcher') as HTMLButtonElement,
+  popover: document.getElementById('room-switcher-popover') as HTMLElement,
+  openCreateRoomModal: () => roomModal.showModal(),
+})
+
+mountVisibilityPopover({
+  button: document.getElementById('btn-icon-visibility') as HTMLButtonElement,
+  popover: document.getElementById('icon-visibility-popover') as HTMLElement,
+  roomHeader: roomHeader,
+})
+
+// Bug-report icon in the room header — same modal as Settings → Report bug.
+document.getElementById('btn-report-bug')!.onclick = () => {
+  void import('./bug-modal.ts').then(m => m.openBugModal())
+}
 
 // --- Room selection: visibility, fetch data, render messages ---
 $selectedRoomId.listen((roomId, prevRoomId) => {
