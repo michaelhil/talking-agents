@@ -24,6 +24,8 @@
 import type { ProviderConfig } from '../llm/providers-config.ts'
 import type { ProviderSetupResult } from '../llm/providers-setup.ts'
 import type { ProviderKeys } from '../llm/provider-keys.ts'
+import type { Tool } from '../core/types/tool.ts'
+import type { ProviderRoutingEvent } from '../llm/router.ts'
 import { parseProviderConfig } from '../llm/providers-config.ts'
 import { buildProvidersFromConfig } from '../llm/providers-setup.ts'
 import { createProviderKeys } from '../llm/provider-keys.ts'
@@ -33,6 +35,16 @@ export interface SharedRuntime {
   readonly providerConfig: ProviderConfig
   readonly providerKeys: ProviderKeys
   readonly providerSetup: ProviderSetupResult
+  // MCP-backed tools loaded ONCE per process at boot (each MCP server is
+  // a stdio child process; we don't want N children for N instances).
+  // Each instance's createSystem registers these definitions into its
+  // own ToolRegistry — the underlying connection is shared.
+  // Mutable list so bootstrap can populate after construction.
+  mcpTools: Tool[]
+  // Provider routing events fan out via a single listener on the shared
+  // router. The dispatcher is set once by the SystemRegistry, which has
+  // the agentId → instanceId reverse index. Default: noop.
+  setProviderEventDispatcher: (fn: (event: ProviderRoutingEvent) => void) => void
 }
 
 export interface CreateSharedRuntimeOptions {
@@ -60,5 +72,22 @@ export const createSharedRuntime = (
   const providerSetup =
     opts.providerSetup ?? buildProvidersFromConfig(providerConfig, { providerKeys })
 
-  return { providerConfig, providerKeys, providerSetup }
+  // Single listener on the shared router. The registered dispatcher
+  // (set by SystemRegistry) routes events to the correct per-instance
+  // subscriber via the agentId reverse index.
+  let dispatcher: (event: ProviderRoutingEvent) => void = () => { /* noop */ }
+  providerSetup.router.onRoutingEvent((event) => {
+    try { dispatcher(event) } catch (err) {
+      console.error(`[provider-event] dispatch threw: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  })
+
+  const mcpTools: Tool[] = []
+  return {
+    providerConfig,
+    providerKeys,
+    providerSetup,
+    mcpTools,
+    setProviderEventDispatcher: (fn) => { dispatcher = fn },
+  }
 }

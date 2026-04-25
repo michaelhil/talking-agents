@@ -98,6 +98,11 @@ export interface SystemRegistry {
   // wireSystemEvents needs it to schedule saves from broadcast callbacks.
   // Returns null if the instance is not currently in memory.
   readonly autoSaverFor: (id: string) => AutoSaver | null
+  // Agent → instance reverse index for provider routing events. Phase F4
+  // wires shared.setProviderEventDispatcher to use this.
+  readonly attachAgent: (agentId: string, instanceId: string) => void
+  readonly detachAgent: (agentId: string) => void
+  readonly instanceForAgent: (agentId: string) => string | undefined
 }
 
 // ============================================================================
@@ -107,6 +112,9 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
   const drainMs = opts.drainMs ?? DEFAULT_DRAIN_MS
   const map = new Map<string, InstanceEntry>()
   const pendingLoads = new Map<string, Promise<System>>()
+  // Reverse index for provider event routing. Populated when an agent
+  // is spawned in an instance; cleared on agent removal or instance evict.
+  const agentInstanceMap = new Map<string, string>()
 
   // --- Internals ---
 
@@ -296,6 +304,15 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     return entry ? entry.autoSaver : null
   }
 
+  const attachAgent = (agentId: string, instanceId: string): void => {
+    agentInstanceMap.set(agentId, instanceId)
+  }
+  const detachAgent = (agentId: string): void => {
+    agentInstanceMap.delete(agentId)
+  }
+  const instanceForAgent = (agentId: string): string | undefined =>
+    agentInstanceMap.get(agentId)
+
   return {
     getOrLoad,
     evictOne,
@@ -306,5 +323,8 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     shutdown,
     idleMs: () => idleMs,
     autoSaverFor,
+    attachAgent,
+    detachAgent,
+    instanceForAgent,
   }
 }

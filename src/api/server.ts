@@ -5,16 +5,15 @@
 // Handles Bun.serve setup, static file serving, and WebSocket upgrade.
 // ============================================================================
 
-import type { System } from '../main.ts'
 import type { Message } from '../core/types/messaging.ts'
 import type { WSOutbound } from '../core/types/ws-protocol.ts'
-import type { AutoSaver } from '../core/snapshot.ts'
+import type { SystemRegistry } from '../core/system-registry.ts'
+import type { WSManager } from './ws-handler.ts'
 import { DEFAULTS } from '../core/types/constants.ts'
 import { ensureUniqueName } from '../core/names.ts'
 import { authEnabled, isValidSession, sessionFromRequest } from './auth.ts'
 import { handleAPI } from './http-routes.ts'
-import { createWSManager, handleWSMessage, type WSData } from './ws-handler.ts'
-import { wireSystemEvents } from './wire-system-events.ts'
+import { handleWSMessage, type WSData } from './ws-handler.ts'
 import {
   buildInstanceCookie, resolveInstanceId, generateInstanceId,
   getJoinFromQuery,
@@ -37,18 +36,15 @@ const isInstanceBypass = (pathname: string): boolean =>
 // === Server Config ===
 
 interface ServerConfig {
+  readonly registry: SystemRegistry
+  readonly wsManager: WSManager
+  // Boot instance — used as fallback when a request has no cookie.
+  // Phase F generates this once at boot in bootstrap.ts.
+  readonly bootInstanceId: string
   readonly port?: number
   readonly uiPath?: string
-  // The autosaver owned by bootstrap. wireSystemEvents calls scheduleSave()
-  // from each mutating callback. Optional so tests + ephemeral mode can
-  // skip persistence (autoSaver=undefined → save calls are no-ops via the
-  // optional chain in the wire helper).
-  readonly autoSaver?: AutoSaver
   /**
-   * Invoked by the reset endpoint after the 10-second countdown ends.
-   * Implementation must dispose the autoSaver, wipe state directories,
-   * and process.exit(0). Returns { ok: false, reason } if the wipe
-   * fails so the route can broadcast reset_failed and stay alive.
+   * Legacy reset commit (process-exit). Phase F5 replaces with per-instance.
    */
   readonly onResetCommit?: () => Promise<{ ok: true } | { ok: false; reason: string }>
 }
@@ -119,27 +115,14 @@ const serveStatic = async (pathname: string, uiPath: string, transpiler: Bun.Tra
 
 // === Server Factory ===
 
-export const createServer = (system: System, config?: ServerConfig) => {
-  const port = config?.port ?? DEFAULTS.port
-  const uiPath = resolve(config?.uiPath ?? `${import.meta.dir}/../ui`)
+export const createServer = (config: ServerConfig) => {
+  const { registry, wsManager, bootInstanceId } = config
+  const port = config.port ?? DEFAULTS.port
+  const uiPath = resolve(config.uiPath ?? `${import.meta.dir}/../ui`)
   const transpiler = new Bun.Transpiler({ loader: 'ts' })
 
-  const wsManager = createWSManager(system)
-
-  // Wire all per-system event slots — WS broadcasts + autosave scheduling.
-  // Single source of truth for callback wiring lives in wire-system-events.ts.
-  // The boot system gets an instance ID generated here and propagated to
-  // every WS session that connects. Phase F4 replaces this call with
-  // registry.onSystemCreated wiring per cookie-bound System.
-  const bootInstanceId = generateInstanceId()
-  if (config?.autoSaver) {
-    wireSystemEvents(system, wsManager, config.autoSaver, bootInstanceId)
-  } else {
-    // Ephemeral / test path: build a noop autosaver so wireSystemEvents
-    // can wire broadcasts without touching disk.
-    const noopSaver = { scheduleSave: () => {}, flush: async () => {}, dispose: () => {} }
-    wireSystemEvents(system, wsManager, noopSaver, bootInstanceId)
-  }
+  // Note: per-instance event wiring (broadcasts + autosave) is set up by
+  // registry.onSystemCreated. createServer no longer wires anything itself.
 
   const server = Bun.serve<WSData>({
     port,
@@ -166,14 +149,15 @@ export const createServer = (system: System, config?: ServerConfig) => {
       }
 
       // === Resolve which instance this request is for ===
-      // F2 still has only one System. Every cookie-less request gets the
-      // bootInstanceId so all clients share state (matches single-tenant).
-      // Phase F4 swaps this for registry.getOrLoad(resolved.id).
+      // Cookieless requests get a fresh per-visitor id (multi-tenant).
+      // bootInstanceId stays as a separate concept used by warmup + the
+      // headless path; it's not used as a fallback here.
       const resolved = resolveInstanceId(req, url)
-      const instanceId = resolved.id ?? bootInstanceId
+      const instanceId = resolved.id ?? generateInstanceId()
       const setCookieValue = resolved.id === null
         ? buildInstanceCookie(instanceId, req)
         : null
+      void bootInstanceId   // referenced via config for tests/admin
 
       // === WebSocket upgrade ===
       if (pathname === '/ws') {
@@ -188,18 +172,28 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
         // Session token reconnect (same browser tab, brief disconnect)
         if (wsManager.sessions.has(sessionToken)) {
+          // Cross-instance token-reuse refusal — refuse if the existing
+          // session belongs to a different instance.
+          const sess = wsManager.sessions.get(sessionToken)!
+          if (sess.instanceId !== instanceId) {
+            return new Response('Session token belongs to a different instance', { status: 403 })
+          }
           const upgraded = server.upgrade(req, { data: { sessionToken, instanceId, reconnect: true } })
           return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 500 })
         }
 
+        // Resolve the per-instance system to scope reclaim + spawn.
+        const targetSystem = await registry.getOrLoad(instanceId)
+
         // Name-based reclaim: find inactive human agent with same name
-        const existingAgent = system.team.listAgents().find(a =>
+        const existingAgent = targetSystem.team.listAgents().find(a =>
           a.kind === 'human' && a.name === name && a.inactive,
         )
         if (existingAgent) {
           // Find and reuse the old session for this agent
           let reclaimedToken: string | undefined
           for (const [token, session] of wsManager.sessions) {
+            if (session.instanceId !== instanceId) continue
             if (session.agent.id === existingAgent.id) {
               reclaimedToken = token
               break
@@ -210,8 +204,8 @@ export const createServer = (system: System, config?: ServerConfig) => {
           return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 500 })
         }
 
-        // New connection — create fresh agent (auto-rename on collision with active agents)
-        const activeNames = system.team.listAgents().filter(a => !a.inactive).map(a => a.name)
+        // New connection — fresh agent. Collision check scoped to instance.
+        const activeNames = targetSystem.team.listAgents().filter(a => !a.inactive).map(a => a.name)
         const assignedName = activeNames.includes(name) ? ensureUniqueName(name, activeNames) : name
 
         const upgraded = server.upgrade(req, { data: { sessionToken, instanceId, name: assignedName } })
@@ -219,11 +213,10 @@ export const createServer = (system: System, config?: ServerConfig) => {
       }
 
       // === API + static dispatch ===
-      // The instance cookie is appended on the way out for any request that
-      // didn't already have one. Pre-auth routes (/, /api/auth, etc.) still
-      // get the cookie so the browser persists it from the first GET /.
+      // Resolve the system for this cookie (lazy-loads from disk if evicted).
+      const system = await registry.getOrLoad(instanceId)
       const remoteAddress = server.requestIP(req)?.address
-      const apiResponse = await handleAPI(req, pathname, system, wsManager.broadcast, wsManager.subscribeAgentState, wsManager.unsubscribeAgentState, remoteAddress, config?.onResetCommit)
+      const apiResponse = await handleAPI(req, pathname, system, wsManager.broadcast, wsManager.subscribeAgentState, wsManager.unsubscribeAgentState, remoteAddress, config.onResetCommit)
       if (apiResponse) {
         if (setCookieValue) apiResponse.headers.append('Set-Cookie', setCookieValue)
         return apiResponse
@@ -267,7 +260,8 @@ export const createServer = (system: System, config?: ServerConfig) => {
           return
         }
 
-        const agent = await system.spawnHumanAgent(
+        const targetSystem = await registry.getOrLoad(ws.data.instanceId)
+        const agent = await targetSystem.spawnHumanAgent(
           { name: ws.data.name! },
           (msg: Message) => {
             ws.send(JSON.stringify({ type: 'message', message: msg } satisfies WSOutbound))
@@ -285,18 +279,31 @@ export const createServer = (system: System, config?: ServerConfig) => {
         const session = wsManager.sessions.get(ws.data.sessionToken)
         if (!session) return
         session.lastActivity = Date.now()
-        await handleWSMessage(ws, session, typeof raw === 'string' ? raw : raw.toString(), system, wsManager)
+        // Resolve the cookie's system (lazy-load if evicted between connect
+        // and message). Eviction during an active WS is rare — onSystemEvicted
+        // closes the WS — but races are possible and getOrLoad returns the
+        // reloaded system safely.
+        const targetSystem = await registry.getOrLoad(ws.data.instanceId)
+        await handleWSMessage(ws, session, typeof raw === 'string' ? raw : raw.toString(), targetSystem, wsManager)
       },
 
       close(ws) {
         const session = wsManager.sessions.get(ws.data.sessionToken)
         if (session?.agent.kind === 'human') {
           session.agent.setInactive?.(true)
-          // Remove from all rooms to prevent phantom member accumulation
-          for (const room of system.house.getRoomsForAgent(session.agent.id)) {
-            room.removeMember(session.agent.id)
-          }
-          wsManager.broadcast({ type: 'agent_removed', agentName: session.agent.name })
+          // Remove from all rooms to prevent phantom member accumulation —
+          // scope to the originating instance.
+          // System may have been evicted; if so, skip cleanup (the snapshot
+          // captured pre-evict state and lazy reload won't see this human).
+          ;(async () => {
+            try {
+              const sys = await registry.getOrLoad(ws.data.instanceId)
+              for (const room of sys.house.getRoomsForAgent(session.agent.id)) {
+                room.removeMember(session.agent.id)
+              }
+              wsManager.broadcastToInstance(ws.data.instanceId, { type: 'agent_removed', agentName: session.agent.name })
+            } catch { /* evicted; skip */ }
+          })()
         }
         wsManager.wsConnections.delete(ws.data.sessionToken)
         if (session) wsManager.unsubscribeOllamaMetrics(session.agent.id)

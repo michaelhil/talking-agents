@@ -178,6 +178,7 @@ export interface CreateSystemOptions {
 export const createSystem = (options: CreateSystemOptions = {}): System => {
   // Either reuse a shared runtime (multi-instance) or build one inline
   // (legacy single-tenant + tests). The result is the same shape either way.
+  const sharedWasGiven = options.shared !== undefined
   const shared: SharedRuntime = options.shared ?? createSharedRuntime({
     ...(options.providerConfig ? { providerConfig: options.providerConfig } : {}),
     ...(options.providerSetup ? { providerSetup: options.providerSetup } : {}),
@@ -575,17 +576,12 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       onEvalEvent: evalEvent.proxy,
     })
 
-  // Wire router routing events → late-bound dispatch (ws-handler broadcasts
-  // the corresponding provider_* WS messages to UI clients).
-  llm.onRoutingEvent((event) => {
-    if (event.type === 'provider_bound') {
-      providerBound.proxy(event.agentId, event.model, event.oldProvider, event.newProvider)
-    } else if (event.type === 'provider_all_failed') {
-      providerAllFailed.proxy(event.agentId, event.model, event.attempts)
-    } else {
-      providerStreamFailed.proxy(event.agentId, event.model, event.provider, event.reason)
-    }
-  })
+  // Provider-routing-event listener lives on the shared router (see
+  // createSharedRuntime). The dispatcher is normally set by SystemRegistry
+  // (multi-instance) — but when this System is built standalone (tests
+  // and the headless legacy path), we set the dispatcher to forward
+  // events to *this* System's late-bound subscribers. Multi-instance
+  // boot overrides this when registry sets its own dispatcher.
 
   const boundSpawnHumanAgent = async (config: HumanAgentConfig, send: TransportSend): Promise<HumanAgent> => {
     const agent = createHumanAgent(config, send)
@@ -683,6 +679,21 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       sink.write(mkSessionStart(next.sessionId, { dir: next.dir, kinds: next.kinds }))
       loggingState.sink = sink
     },
+  }
+
+  // Standalone path (test + legacy): forward provider routing events to
+  // *this* System. Multi-instance boot replaces this dispatcher via
+  // SystemRegistry → shared.setProviderEventDispatcher.
+  if (!sharedWasGiven) {
+    shared.setProviderEventDispatcher((event) => {
+      if (event.type === 'provider_bound') {
+        providerBound.proxy(event.agentId, event.model, event.oldProvider, event.newProvider)
+      } else if (event.type === 'provider_all_failed') {
+        providerAllFailed.proxy(event.agentId, event.model, event.attempts)
+      } else {
+        providerStreamFailed.proxy(event.agentId, event.model, event.provider, event.reason)
+      }
+    })
   }
 
   return {

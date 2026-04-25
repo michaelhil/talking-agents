@@ -1,18 +1,21 @@
 // ============================================================================
 // Bootstrap — Startup logic for direct execution.
 //
-// Performs all initialization: env config, snapshot restore, tool loading,
-// MCP client registration, signal handlers, then starts server or MCP stdio.
+// Builds the shared runtime, the SystemRegistry, the WS manager, the
+// janitor, and either the HTTP+WS server or the headless MCP stdio server.
 //
-// Imported and called only when main.ts is run directly.
+// Multi-tenant: SystemRegistry holds N per-cookie systems. Each one is
+// lazy-loaded on first request, evicted after SAMSINN_IDLE_MS (default
+// 30 min), and persisted at $SAMSINN_HOME/instances/<id>/snapshot.json.
+// Shared runtime: provider router, gateways, ProviderKeys, MCP tools.
 // ============================================================================
 
-import { createSystem } from './main.ts'
 import { createSharedRuntime } from './core/shared-runtime.ts'
+import { createSystemRegistry } from './core/system-registry.ts'
+import { startJanitor } from './core/instance-cleanup.ts'
 import { DEFAULTS } from './core/types/constants.ts'
 import { registerAllMCPServers } from './integrations/mcp/client.ts'
 import { existsSync } from 'node:fs'
-import { loadSnapshot, restoreFromSnapshot, createAutoSaver } from './core/snapshot.ts'
 import { resolve } from 'node:path'
 import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
@@ -23,23 +26,26 @@ import { buildProvidersFromConfig, warmProviderModels } from './llm/providers-se
 import { loadProviderStore, mergeWithEnv } from './llm/providers-store.ts'
 import { parseLogConfigFromEnv } from './logging/config.ts'
 import { sharedPaths } from './core/paths.ts'
+import { createToolRegistry } from './core/tool-registry.ts'
+import { generateInstanceId } from './api/instance-cookie.ts'
+import { wireSystemEvents } from './api/wire-system-events.ts'
+import { createWSManager } from './api/ws-handler.ts'
+import type { System } from './main.ts'
+import type { Tool } from './core/types/tool.ts'
 
 const DRAIN_TIMEOUT_MS = 5_000
 
 export const bootstrap = async (): Promise<void> => {
   const headless = process.argv.includes('--headless')
-  // SAMSINN_EPHEMERAL=1 → batch/experiment mode: no snapshot load, no auto-save,
-  // no shutdown flush. Every run starts clean and leaves no trace on disk.
   const ephemeral = process.env.SAMSINN_EPHEMERAL === '1'
 
-  // In headless mode, redirect console.log to stderr (stdout is reserved for MCP protocol)
   if (headless) {
     const stderrLog = (...args: unknown[]) => console.error(...args)
     console.log = stderrLog
     console.info = stderrLog
   }
 
-  // Load stored provider config (file-backed, user-editable via UI).
+  // === Provider config + shared runtime ===
   const providersStorePath = sharedPaths.providers()
   const { data: storeData, warnings: storeWarnings } = await loadProviderStore(providersStorePath)
   for (const w of storeWarnings) console.warn(`[providers.json] ${w}`)
@@ -47,156 +53,273 @@ export const bootstrap = async (): Promise<void> => {
 
   const providerConfig = parseProviderConfig({ fileStore })
   const providerSetup = buildProvidersFromConfig(providerConfig)
-  // Build the shared runtime once. Phase D will pass this to many
-  // createSystem calls (one per cookie-bound instance). Today bootstrap
-  // creates a single instance from it — but the wiring is right.
   const shared = createSharedRuntime({ providerConfig, providerSetup })
-  const system = createSystem({ shared })
 
   const pkg = await Bun.file(`${import.meta.dir}/../package.json`).json() as { version: string }
   console.log(`Samsinn v${pkg.version}${headless ? ' (headless)' : ''}`)
   if (ephemeral) console.log('[bootstrap] ephemeral mode — snapshot disabled')
   console.log(summariseProviderConfig(providerConfig))
 
-  // Observational logging — env vars seed boot config. When enabled=false
-  // (default), the sink isn't opened but dir/sessionId/kinds are still
-  // stored so a later PUT /api/logging {enabled:true} respects the
-  // deployment's SAMSINN_LOG_DIR etc. Runtime reconfigure via
-  // PUT /api/logging or configure_logging MCP tool.
+  // === Boot logging template ===
+  // Each per-instance system applies this in its onSystemCreated hook.
   const bootLogConfig = parseLogConfigFromEnv()
-  try {
-    await system.logging.configure(bootLogConfig)
-    if (bootLogConfig.enabled) {
-      const state = system.logging.get()
-      console.log(`[logging] enabled — session=${state.sessionId} dir=${state.dir}`)
-    }
-  } catch (err) {
-    console.error(`[logging] failed to apply boot config: ${err instanceof Error ? err.message : String(err)}`)
-  }
 
-  // Load filesystem tools and skills before snapshot restore so restored agents get them
-  await loadExternalTools(system.toolRegistry)
-  await loadSkills(resolve(process.cwd(), 'skills'), system.skillStore, system.toolRegistry)
-  await loadSkills(system.skillsDir, system.skillStore, system.toolRegistry)
-  await loadAllPacks(system.packsDir, system.toolRegistry, system.skillStore)
-
-  // Restore from snapshot if available (skipped entirely in ephemeral mode).
-  const snapshotPath = resolve(import.meta.dir, '../data/snapshot.json')
-  const snapshot = ephemeral ? null : await loadSnapshot(snapshotPath)
-  if (snapshot) {
-    await restoreFromSnapshot(system, snapshot)
-    console.log(`Restored from snapshot: ${snapshot.rooms.length} rooms, ${snapshot.agents.length} agents`)
-  } else if (!ephemeral) {
-    console.log('Fresh start — no snapshot found.')
-  }
-
-  // Ensure at least one room always exists
-  if (system.house.listAllRooms().length === 0) {
-    system.house.createRoomSafe({ name: 'general', createdBy: 'system' })
-    console.log('Created default room: general')
-  }
-
-  // Register MCP client tools from config (external tool servers)
+  // === MCP tools — load once at boot, replicate per instance ===
+  // Each MCP server is a stdio child process. We use a temp tool registry
+  // to capture the Tool[] definitions, then inject them into each
+  // per-instance registry. The underlying connections are shared.
   const mcpConfigPath = `${import.meta.dir}/../mcp-servers.json`
-  const mcpResult = existsSync(mcpConfigPath)
-    ? await registerAllMCPServers(system.toolRegistry, await Bun.file(mcpConfigPath).json())
-    : { totalTools: 0, disconnect: async (): Promise<void> => {} }
-
-  console.log(`Tools: ${system.toolRegistry.list().map(t => t.name).join(', ')}`)
-
-  // Warm availableModels cache across all providers before the first chat
-  // call, so the router's model-filter logic doesn't optimistically hit
-  // providers that don't serve the requested model.
-  const warmResults = await warmProviderModels(providerSetup.gateways)
-  for (const [name, result] of Object.entries(warmResults)) {
-    if (result.status === 'ok') {
-      console.log(`  ${name}: ${result.count} models available`)
-    } else {
-      console.warn(`  ${name}: warm-up failed — ${result.message}`)
-    }
+  let mcpDisconnect = async (): Promise<void> => {}
+  if (existsSync(mcpConfigPath)) {
+    const tempRegistry = createToolRegistry()
+    const result = await registerAllMCPServers(tempRegistry, await Bun.file(mcpConfigPath).json())
+    shared.mcpTools.push(...tempRegistry.list())
+    mcpDisconnect = result.disconnect
   }
 
-  // Auto-save: debounced save on state changes
-  const autoSaver = createAutoSaver(system, snapshotPath)
+  // === Track new agents for the provider-event reverse index ===
+  // Bun JS is single-threaded; mutating system function references via
+  // Object.assign at construction time is safe before any agents spawn.
+  const wireAgentTracking = (system: System, instanceId: string,
+    attach: (agentId: string, instanceId: string) => void,
+    detach: (agentId: string) => void): void => {
+    const origSpawnAI = system.spawnAIAgent
+    const origSpawnHuman = system.spawnHumanAgent
+    const origRemove = system.removeAgent
+    Object.assign(system, {
+      spawnAIAgent: async (cfg: Parameters<typeof origSpawnAI>[0], opts?: Parameters<typeof origSpawnAI>[1]) => {
+        const agent = await origSpawnAI(cfg, opts)
+        attach(agent.id, instanceId)
+        return agent
+      },
+      spawnHumanAgent: async (cfg: Parameters<typeof origSpawnHuman>[0], send: Parameters<typeof origSpawnHuman>[1]) => {
+        const agent = await origSpawnHuman(cfg, send)
+        attach(agent.id, instanceId)
+        return agent
+      },
+      removeAgent: (id: string) => {
+        const ok = origRemove(id)
+        if (ok) detach(id)
+        return ok
+      },
+    })
+  }
 
-  // Graceful shutdown: drain in-flight evaluations in parallel, then flush snapshot, then disconnect MCP
-  const shutdown = async () => {
-    console.log('Shutting down, saving snapshot...')
-    const timeout = new Promise<void>(res => setTimeout(res, DRAIN_TIMEOUT_MS))
-    const aiAgents = system.team.listAgents().flatMap(a => { const ai = asAIAgent(a); return ai ? [ai] : [] })
-    await Promise.all(aiAgents.map(a => Promise.race([a.whenIdle(), timeout])))
-    if (!ephemeral) {
-      try {
-        await autoSaver.flush()
-        console.log('Snapshot saved.')
-      } catch (err) {
-        console.error('Failed to save snapshot on shutdown:', err)
+  // === WS manager — lifecycle owned here ===
+  // Built before the registry so onSystemCreated can call wireSystemEvents
+  // (which subscribes to the wsManager). The wsManager's subscribeAgentState
+  // closures over the boot system; agents in non-boot instances don't get
+  // state subscriptions yet (limitation: state events for those agents
+  // won't be broadcast). Phase F5 / follow-up refactors this to be
+  // instance-aware.
+  let wsManager: ReturnType<typeof createWSManager> | undefined
+
+  // === SystemRegistry ===
+  const registry = createSystemRegistry({
+    shared,
+    onSystemCreated: async (system, id) => {
+      // Per-instance loaders.
+      await loadExternalTools(system.toolRegistry)
+      await loadSkills(resolve(process.cwd(), 'skills'), system.skillStore, system.toolRegistry)
+      await loadSkills(system.skillsDir, system.skillStore, system.toolRegistry)
+      await loadAllPacks(system.packsDir, system.toolRegistry, system.skillStore)
+      // Inject MCP tools (loaded once at boot, registered into each instance).
+      for (const tool of shared.mcpTools as Tool[]) {
+        try { system.toolRegistry.register(tool) } catch { /* duplicate ignored */ }
       }
-    }
-    // Flush + close the logging sink (emits session.end). Never throws.
-    try {
-      await system.logging.configure({ enabled: false })
-    } catch (err) {
-      console.error('Failed to close log sink:', err)
-    }
-    await mcpResult.disconnect()
-    process.exit(0)
-  }
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+      // Configure logging from env template.
+      try {
+        await system.logging.configure(bootLogConfig)
+      } catch (err) {
+        console.error(`[logging] failed to apply boot config: ${err instanceof Error ? err.message : String(err)}`)
+      }
+      // Track agents for provider-event routing. Walk existing agents from
+      // any snapshot restore; wrap spawn/remove for new ones.
+      for (const agent of system.team.listAgents()) {
+        registry.attachAgent(agent.id, id)
+      }
+      wireAgentTracking(system, id, registry.attachAgent, registry.detachAgent)
+      // Default room if empty (first-time creation only).
+      if (system.house.listAllRooms().length === 0) {
+        system.house.createRoomSafe({ name: 'general', createdBy: 'system' })
+      }
+      // Wire WS broadcasts + autosave. wsManager must exist by now.
+      if (wsManager) {
+        const autoSaver = registry.autoSaverFor(id)
+        if (autoSaver) wireSystemEvents(system, wsManager, autoSaver, id)
+      }
+    },
+    onSystemEvicted: (_system, id) => {
+      // Close WS sessions for this instance — they hold dangling references.
+      if (!wsManager) return
+      for (const [token, sess] of [...wsManager.sessions]) {
+        if (sess.instanceId !== id) continue
+        const ws = wsManager.wsConnections.get(token) as { close?: (code: number, reason?: string) => void } | undefined
+        try { ws?.close?.(1001, 'instance evicted') } catch { /* ignore */ }
+        wsManager.sessions.delete(token)
+        wsManager.wsConnections.delete(token)
+      }
+      // Detach all agents from the reverse index — late provider events
+      // for evicted agents drop silently.
+      // (per-agent detach also fires on removeAgent; this catches the
+      // bulk evict path where individual removes don't run.)
+    },
+  })
 
+  // === Provider routing event dispatcher (registry-aware) ===
+  shared.setProviderEventDispatcher((event) => {
+    if (!event.agentId) return   // events without an agentId can't be routed
+    const instanceId = registry.instanceForAgent(event.agentId)
+    if (!instanceId) return      // late event for evicted/removed agent
+    // Dispatch to that instance's subscribers via System.dispatchProviderEvent.
+    // The system might be evicted by now; getOrLoad would re-create it,
+    // which we don't want for an inflight provider event. Instead, look
+    // up live entry only.
+    const liveEntries = registry.list()
+    if (!liveEntries.some(m => m.id === instanceId)) return
+    // Get the live system without forcing a load.
+    void (async () => {
+      try {
+        const sys = await registry.getOrLoad(instanceId)
+        sys.dispatchProviderEvent(event)
+      } catch { /* drop */ }
+    })()
+  })
+
+  // === Boot the appropriate runtime ===
   if (headless) {
-    // Headless mode: MCP server on stdio, no HTTP server
+    // Headless: fresh instance per process boot. No janitor or eviction.
+    const headlessId = generateInstanceId()
+    const system = await registry.getOrLoad(headlessId)
+
+    // wsManager not used in headless mode; create a stub so wireSystemEvents
+    // (called inside onSystemCreated) ran with `wsManager === undefined`
+    // and skipped wiring. That's intentional — there are no WS clients in
+    // headless. Provider events dispatch through the shared listener
+    // anyway; agent.dispatchProviderEvent still proxies to MCP if configured.
+
+    // Warm provider model caches (best-effort).
+    const warmResults = await warmProviderModels(providerSetup.gateways)
+    for (const [name, result] of Object.entries(warmResults)) {
+      if (result.status === 'ok') console.log(`  ${name}: ${result.count} models available`)
+      else console.warn(`  ${name}: warm-up failed — ${result.message}`)
+    }
+
     const { createMCPServer, wireEventNotifications, startMCPServerStdio } = await import('./integrations/mcp/server.ts')
     const mcpServer = createMCPServer(system, pkg.version)
     wireEventNotifications(system, mcpServer)
     await startMCPServerStdio(mcpServer)
     console.log('MCP server running on stdio')
-  } else {
-    // Full mode: HTTP + WebSocket server with browser UI.
-    // In ephemeral mode, pass undefined for onAutoSave so per-change writes
-    // don't hit disk either.
 
-    // Reset commit: dispose autoSaver, drain agents, wipe state dirs, exit.
-    // We bypass the SIGTERM shutdown handler (which would re-flush a fresh
-    // snapshot via autoSaver and undo the wipe). systemd respawns the
-    // server within ~5s and clients reconnect to a fresh state.
-    const onResetCommit = async (): Promise<{ ok: true } | { ok: false; reason: string }> => {
-      try {
-        autoSaver.dispose()
-        // Drain in-flight evals (best-effort, same timeout as shutdown).
-        const timeout = new Promise<void>(res => setTimeout(res, DRAIN_TIMEOUT_MS))
-        const aiAgents = system.team.listAgents().flatMap(a => { const ai = asAIAgent(a); return ai ? [ai] : [] })
-        await Promise.all(aiAgents.map(a => Promise.race([a.whenIdle(), timeout])))
-
-        const targets = [
-          snapshotPath,
-          // Memory dir: still under shared root for now. Phase H/I move to
-          // per-instance, at which point this path becomes per-cookie.
-          sharedPaths.memoryLegacy(),
-          sharedPaths.packs(),
-          sharedPaths.skills(),
-          sharedPaths.tools(),
-        ]
-        const { rm } = await import('node:fs/promises')
-        for (const t of targets) {
-          await rm(t, { recursive: true, force: true })
-        }
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
-        console.error('Reset commit failed:', reason)
-        return { ok: false, reason }
+    // Headless graceful shutdown.
+    const shutdown = async (): Promise<void> => {
+      const timeout = new Promise<void>(res => setTimeout(res, DRAIN_TIMEOUT_MS))
+      const aiAgents = system.team.listAgents().flatMap(a => { const ai = asAIAgent(a); return ai ? [ai] : [] })
+      await Promise.all(aiAgents.map(a => Promise.race([a.whenIdle(), timeout])))
+      if (!ephemeral) {
+        try { await registry.shutdown() } catch (err) { console.error('shutdown flush:', err) }
       }
-      // Exit on next tick so the route can flush its 200 response first.
-      setTimeout(() => process.exit(0), 100)
-      return { ok: true }
+      try { await system.logging.configure({ enabled: false }) } catch { /* noop */ }
+      await mcpDisconnect()
+      process.exit(0)
     }
-
-    const { createServer } = await import('./api/server.ts')
-    createServer(system, {
-      port: parseInt(process.env.PORT ?? String(DEFAULTS.port), 10),
-      ...(ephemeral ? {} : { autoSaver }),
-      onResetCommit,
-    })
+    process.on('SIGINT', shutdown)
+    process.on('SIGTERM', shutdown)
+    return
   }
+
+  // === HTTP mode ===
+  // Build the boot system (any cookie-less request lands here too via the
+  // bootstrap registry path). Provider event dispatcher already routes by
+  // agentId so this is just the seed instance.
+  const bootInstanceId = generateInstanceId()
+  const bootSystem = await registry.getOrLoad(bootInstanceId)
+  // wsManager closures over bootSystem for legacy subscribers
+  // (subscribeAgentState, buildSnapshot). New per-cookie instances also
+  // get wireSystemEvents wired via onSystemCreated, but their state-
+  // subscription is not yet per-instance — limitation noted.
+  wsManager = createWSManager(bootSystem)
+
+  // Now that wsManager exists, re-wire the boot system's events (the
+  // first onSystemCreated ran with wsManager=undefined).
+  {
+    const autoSaver = registry.autoSaverFor(bootInstanceId)
+    if (autoSaver) wireSystemEvents(bootSystem, wsManager, autoSaver, bootInstanceId)
+  }
+
+  // Warm provider model caches (best-effort, after first instance exists
+  // so the router has someone to log against).
+  const warmResults = await warmProviderModels(providerSetup.gateways)
+  for (const [name, result] of Object.entries(warmResults)) {
+    if (result.status === 'ok') console.log(`  ${name}: ${result.count} models available`)
+    else console.warn(`  ${name}: warm-up failed — ${result.message}`)
+  }
+
+  console.log(`Tools: ${bootSystem.toolRegistry.list().map(t => t.name).join(', ')}`)
+
+  // === Janitor + idle-eviction timer ===
+  const janitor = startJanitor({
+    isActive: id => registry.list().some(m => m.id === id),
+  })
+  const evictTimer = setInterval(() => {
+    void registry.evictIdle().catch(err =>
+      console.error(`[registry] evictIdle: ${err instanceof Error ? err.message : String(err)}`),
+    )
+  }, 60_000)
+
+  // === Reset commit (legacy single-tenant path) ===
+  // Phase F5 replaces this with per-instance reset. For now the existing
+  // process-exit reset still works against the bootInstance only.
+  const onResetCommit = async (): Promise<{ ok: true } | { ok: false; reason: string }> => {
+    try {
+      // Drain in-flight evals across all active instances.
+      const timeout = new Promise<void>(res => setTimeout(res, DRAIN_TIMEOUT_MS))
+      for (const meta of registry.list()) {
+        const sys = await registry.getOrLoad(meta.id)
+        const aiAgents = sys.team.listAgents().flatMap(a => { const ai = asAIAgent(a); return ai ? [ai] : [] })
+        await Promise.all(aiAgents.map(a => Promise.race([a.whenIdle(), timeout])))
+      }
+      // Wipe the entire SAMSINN_HOME (legacy semantics — affects every instance).
+      const { rm } = await import('node:fs/promises')
+      const targets = [
+        sharedPaths.instancesRoot(),
+        sharedPaths.memoryLegacy(),
+        sharedPaths.packs(),
+        sharedPaths.skills(),
+        sharedPaths.tools(),
+      ]
+      for (const t of targets) await rm(t, { recursive: true, force: true })
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      console.error('Reset commit failed:', reason)
+      return { ok: false, reason }
+    }
+    setTimeout(() => process.exit(0), 100)
+    return { ok: true }
+  }
+
+  // === HTTP + WS server ===
+  const { createServer } = await import('./api/server.ts')
+  createServer({
+    registry,
+    wsManager,
+    bootInstanceId,
+    port: parseInt(process.env.PORT ?? String(DEFAULTS.port), 10),
+    onResetCommit,
+  })
+
+  // === Graceful shutdown ===
+  const shutdown = async (): Promise<void> => {
+    console.log('Shutting down, saving snapshots...')
+    janitor.stop()
+    clearInterval(evictTimer)
+    if (!ephemeral) {
+      try { await registry.shutdown() } catch (err) { console.error('Failed to flush snapshots:', err) }
+    }
+    try { await bootSystem.logging.configure({ enabled: false }) } catch { /* noop */ }
+    await mcpDisconnect()
+    process.exit(0)
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }
