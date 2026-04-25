@@ -15,13 +15,24 @@ import { authEnabled, isValidSession, sessionFromRequest } from './auth.ts'
 import { handleAPI } from './http-routes.ts'
 import { createWSManager, handleWSMessage, type WSData } from './ws-handler.ts'
 import { wireSystemEvents } from './wire-system-events.ts'
+import {
+  buildInstanceCookie, resolveInstanceId, generateInstanceId,
+  getJoinFromQuery,
+} from './instance-cookie.ts'
 import { resolve, normalize } from 'node:path'
 
-// Single-tenant placeholder instance ID used by the boot path until Phase F4
-// wires real per-cookie ids. Sessions are tagged with this; broadcastToInstance
-// then reaches every session (they all share the same id), preserving the
-// pre-multi-tenant broadcast semantics.
-const SINGLE_TENANT_INSTANCE_ID = 'singletontenantid'
+// Routes that never need a per-instance system. Bypass the cookie
+// resolution + Set-Cookie path. The set is explicit; static files under
+// /dist (bundled CSS + sourcemap) match a separate prefix.
+const PRE_AUTH_INSTANCE_BYPASS: ReadonlySet<string> = new Set([
+  '/', '/index.html',
+  '/favicon.ico',
+  '/api/auth',
+  '/api/system/info',
+  '/health',
+])
+const isInstanceBypass = (pathname: string): boolean =>
+  PRE_AUTH_INSTANCE_BYPASS.has(pathname) || pathname.startsWith('/dist')
 
 // === Server Config ===
 
@@ -117,18 +128,17 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
   // Wire all per-system event slots — WS broadcasts + autosave scheduling.
   // Single source of truth for callback wiring lives in wire-system-events.ts.
-  // For the single-tenant boot path, we tag broadcasts with a placeholder
-  // instance id; sessions also carry that id, so broadcastToInstance reaches
-  // all clients exactly as the previous global broadcast did. Phase F4
-  // replaces this call with registry.onSystemCreated wiring per cookie-bound
-  // System.
+  // The boot system gets an instance ID generated here and propagated to
+  // every WS session that connects. Phase F4 replaces this call with
+  // registry.onSystemCreated wiring per cookie-bound System.
+  const bootInstanceId = generateInstanceId()
   if (config?.autoSaver) {
-    wireSystemEvents(system, wsManager, config.autoSaver, SINGLE_TENANT_INSTANCE_ID)
+    wireSystemEvents(system, wsManager, config.autoSaver, bootInstanceId)
   } else {
     // Ephemeral / test path: build a noop autosaver so wireSystemEvents
     // can wire broadcasts without touching disk.
     const noopSaver = { scheduleSave: () => {}, flush: async () => {}, dispose: () => {} }
-    wireSystemEvents(system, wsManager, noopSaver, SINGLE_TENANT_INSTANCE_ID)
+    wireSystemEvents(system, wsManager, noopSaver, bootInstanceId)
   }
 
   const server = Bun.serve<WSData>({
@@ -138,7 +148,34 @@ export const createServer = (system: System, config?: ServerConfig) => {
       const url = new URL(req.url)
       const pathname = url.pathname
 
-      // WebSocket upgrade
+      // === ?join=<id> redirect — set cookie + 303 to a clean URL ===
+      // Strip the join param and preserve the rest, so a shared link with
+      // extra params (?join=abc&room=general) doesn't loop the redirect.
+      const joinId = getJoinFromQuery(url)
+      if (joinId) {
+        const cleaned = new URL(url)
+        cleaned.searchParams.delete('join')
+        const target = cleaned.pathname + (cleaned.search || '')
+        return new Response(null, {
+          status: 303,
+          headers: {
+            'Location': target,
+            'Set-Cookie': buildInstanceCookie(joinId, req),
+          },
+        })
+      }
+
+      // === Resolve which instance this request is for ===
+      // F2 still has only one System. Every cookie-less request gets the
+      // bootInstanceId so all clients share state (matches single-tenant).
+      // Phase F4 swaps this for registry.getOrLoad(resolved.id).
+      const resolved = resolveInstanceId(req, url)
+      const instanceId = resolved.id ?? bootInstanceId
+      const setCookieValue = resolved.id === null
+        ? buildInstanceCookie(instanceId, req)
+        : null
+
+      // === WebSocket upgrade ===
       if (pathname === '/ws') {
         // Auth gate (deploy mode only). Cookie is set by /api/auth.
         if (authEnabled() && !isValidSession(sessionFromRequest(req))) {
@@ -151,7 +188,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
 
         // Session token reconnect (same browser tab, brief disconnect)
         if (wsManager.sessions.has(sessionToken)) {
-          const upgraded = server.upgrade(req, { data: { sessionToken, instanceId: SINGLE_TENANT_INSTANCE_ID, reconnect: true } })
+          const upgraded = server.upgrade(req, { data: { sessionToken, instanceId, reconnect: true } })
           return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 500 })
         }
 
@@ -169,7 +206,7 @@ export const createServer = (system: System, config?: ServerConfig) => {
             }
           }
           const useToken = reclaimedToken ?? sessionToken
-          const upgraded = server.upgrade(req, { data: { sessionToken: useToken, instanceId: SINGLE_TENANT_INSTANCE_ID, reconnect: true, name } })
+          const upgraded = server.upgrade(req, { data: { sessionToken: useToken, instanceId, reconnect: true, name } })
           return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 500 })
         }
 
@@ -177,18 +214,32 @@ export const createServer = (system: System, config?: ServerConfig) => {
         const activeNames = system.team.listAgents().filter(a => !a.inactive).map(a => a.name)
         const assignedName = activeNames.includes(name) ? ensureUniqueName(name, activeNames) : name
 
-        const upgraded = server.upgrade(req, { data: { sessionToken, instanceId: SINGLE_TENANT_INSTANCE_ID, name: assignedName } })
+        const upgraded = server.upgrade(req, { data: { sessionToken, instanceId, name: assignedName } })
         return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 500 })
       }
 
-      // API routes — resolve client IP for endpoints that gate source-serving.
+      // === API + static dispatch ===
+      // The instance cookie is appended on the way out for any request that
+      // didn't already have one. Pre-auth routes (/, /api/auth, etc.) still
+      // get the cookie so the browser persists it from the first GET /.
       const remoteAddress = server.requestIP(req)?.address
       const apiResponse = await handleAPI(req, pathname, system, wsManager.broadcast, wsManager.subscribeAgentState, wsManager.unsubscribeAgentState, remoteAddress, config?.onResetCommit)
-      if (apiResponse) return apiResponse
+      if (apiResponse) {
+        if (setCookieValue) apiResponse.headers.append('Set-Cookie', setCookieValue)
+        return apiResponse
+      }
 
-      // Static files
       const staticResponse = await serveStatic(pathname, uiPath, transpiler)
-      if (staticResponse) return staticResponse
+      if (staticResponse) {
+        if (setCookieValue && isInstanceBypass(pathname)) {
+          // Set-Cookie on the page-load GET so the browser has it before
+          // any subsequent XHR / WS upgrade.
+          const headers = new Headers(staticResponse.headers)
+          headers.append('Set-Cookie', setCookieValue)
+          return new Response(staticResponse.body, { status: staticResponse.status, headers })
+        }
+        return staticResponse
+      }
 
       return new Response('Not found', { status: 404 })
     },
