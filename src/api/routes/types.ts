@@ -12,6 +12,18 @@ export interface ResetInstanceFail {
 }
 export type ResetInstanceResult = ResetInstanceOk | ResetInstanceFail
 
+// Capabilities that the Instances admin routes need. Wired in bootstrap.ts.
+export interface InstanceAdmin {
+  readonly listOnDisk: () => Promise<ReadonlyArray<{ id: string; snapshotMtimeMs: number; snapshotSizeBytes: number }>>
+  readonly liveIds: () => ReadonlySet<string>
+  readonly createNew: () => Promise<{ id: string }>
+  // Trash an instance directory by id. Refuses if id is the current cookie's
+  // instance — caller should use /api/system/reset for that.
+  readonly delete: (id: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+  // Build a Set-Cookie value pointing at `id`. The route returns it on the response.
+  readonly buildSwitchCookie: (id: string, req: Request) => string
+}
+
 export interface RouteContext {
   readonly system: System
   // Instance bound to this request via the cookie (resolved before dispatch).
@@ -25,6 +37,8 @@ export interface RouteContext {
   // instance directory, drops it from the registry. The same id is kept;
   // the next request from the same cookie lazy-creates a fresh empty House.
   readonly resetInstance?: (req: Request) => Promise<ResetInstanceResult>
+  // Instances admin (list / create / switch / delete). Wired in bootstrap.
+  readonly instances?: InstanceAdmin
 }
 
 export interface RouteEntry {

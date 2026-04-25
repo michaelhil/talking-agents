@@ -42,6 +42,8 @@ interface ServerConfig {
   readonly uiPath?: string
   // Per-instance reset wired by bootstrap.
   readonly resetInstance: (req: Request) => Promise<import('./routes/types.ts').ResetInstanceResult>
+  // Instances admin (list / create / switch / delete) wired by bootstrap.
+  readonly instances: import('./routes/types.ts').InstanceAdmin
 }
 
 // === Static file serving (path traversal protected) ===
@@ -214,6 +216,7 @@ export const createServer = (config: ServerConfig) => {
         remoteAddress,
         config.resetInstance,
         wsManager.broadcastToInstance,
+        config.instances,
       )
       if (apiResponse) {
         if (setCookieValue) apiResponse.headers.append('Set-Cookie', setCookieValue)

@@ -20,6 +20,7 @@ import { ollamaRoutes } from './routes/ollama.ts'
 import { providersRoutes } from './routes/providers.ts'
 import { packsRoutes } from './routes/packs.ts'
 import { systemRoutes } from './routes/system.ts'
+import { instanceRoutes } from './routes/instances.ts'
 import { bookmarkRoutes } from './routes/bookmarks.ts'
 import { toolRoutes } from './routes/tools.ts'
 import { loggingRoutes } from './routes/logging.ts'
@@ -39,6 +40,7 @@ const allRoutes = [
   ...providersRoutes,
   ...packsRoutes,
   ...systemRoutes,
+  ...instanceRoutes,
   ...loggingRoutes,
   ...bookmarkRoutes,
   // Artifacts before rooms (avoids /rooms/:name/artifacts being shadowed)
@@ -61,10 +63,11 @@ export const handleAPI = async (
   remoteAddress?: string,
   resetInstance?: RouteContext['resetInstance'],
   broadcastToInstance?: RouteContext['broadcastToInstance'],
+  instances?: RouteContext['instances'],
 ): Promise<Response | null> => {
   const ctx: RouteContext = {
     system, instanceId, broadcast, subscribeAgentState, unsubscribeAgentState,
-    remoteAddress, resetInstance, broadcastToInstance,
+    remoteAddress, resetInstance, broadcastToInstance, instances,
   }
 
   // Auth gate. /api/auth itself is exempt so the UI can submit the token.

@@ -281,6 +281,31 @@ export const bootstrap = async (): Promise<void> => {
     }
   }
 
+  // === Instances admin ===
+  // Capability bundle for the Instances modal under Settings. Delete reuses
+  // registry.resetInstance (trashes the dir, drops in-memory state). The id
+  // remains valid in principle, but listOnDisk no longer reports it.
+  const { buildInstanceCookie } = await import('./api/instance-cookie.ts')
+  const instancesAdmin = {
+    listOnDisk: () => registry.listOnDisk(),
+    liveIds: () => new Set(registry.list().map(m => m.id)),
+    createNew: async () => {
+      const newId = generateInstanceId()
+      // Materialize so the directory exists on disk before the next listOnDisk.
+      await registry.getOrLoad(newId)
+      return { id: newId }
+    },
+    delete: async (id: string) => {
+      try {
+        await registry.resetInstance(id)
+        return { ok: true as const }
+      } catch (err) {
+        return { ok: false as const, reason: err instanceof Error ? err.message : String(err) }
+      }
+    },
+    buildSwitchCookie: (id: string, req: Request) => buildInstanceCookie(id, req),
+  }
+
   // === HTTP + WS server ===
   const { createServer } = await import('./api/server.ts')
   createServer({
@@ -288,6 +313,7 @@ export const bootstrap = async (): Promise<void> => {
     wsManager,
     port: parseInt(process.env.PORT ?? String(DEFAULTS.port), 10),
     resetInstance,
+    instances: instancesAdmin,
   })
 
   // === Graceful shutdown ===

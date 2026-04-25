@@ -37,9 +37,9 @@ import { createSystem } from '../main.ts'
 import {
   loadSnapshot, restoreFromSnapshot, createAutoSaver, type AutoSaver,
 } from './snapshot.ts'
-import { instancePaths, isValidInstanceId, trashPath } from './paths.ts'
-import { mkdir, rename, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { instancePaths, isValidInstanceId, sharedPaths, trashPath } from './paths.ts'
+import { mkdir, readdir, rename, stat } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { asAIAgent } from '../agents/shared.ts'
 
 // --- Defaults & env ---
@@ -60,6 +60,12 @@ export interface InstanceMeta {
   readonly id: string
   readonly lastTouchedAt: number
   readonly state: 'active' | 'evicting'
+}
+
+export interface InstanceOnDisk {
+  readonly id: string
+  readonly snapshotMtimeMs: number   // 0 if snapshot file is missing
+  readonly snapshotSizeBytes: number // 0 if snapshot file is missing
 }
 
 interface InstanceEntry {
@@ -93,6 +99,10 @@ export interface SystemRegistry {
   readonly resetInstance: (id: string) => Promise<void>
   readonly exists: (id: string) => Promise<boolean>
   readonly list: () => ReadonlyArray<InstanceMeta>
+  // Enumerate every valid instance directory under SAMSINN_HOME/instances,
+  // returning snapshot mtime + size. Includes instances not currently in
+  // memory. Used by the Instances admin UI.
+  readonly listOnDisk: () => Promise<ReadonlyArray<InstanceOnDisk>>
   readonly shutdown: () => Promise<void>
   // For tests + boundary handlers that need to know the configured timer.
   readonly idleMs: () => number
@@ -295,6 +305,32 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
       state: e.state,
     }))
 
+  const listOnDisk = async (): Promise<ReadonlyArray<InstanceOnDisk>> => {
+    const root = sharedPaths.instancesRoot()
+    let entries: string[]
+    try {
+      entries = await readdir(root)
+    } catch {
+      return []   // root doesn't exist yet — first boot
+    }
+    const out: InstanceOnDisk[] = []
+    for (const name of entries) {
+      // Skip .trash + anything that isn't a valid instance id.
+      if (!isValidInstanceId(name)) continue
+      let mtimeMs = 0
+      let sizeBytes = 0
+      try {
+        const st = await stat(join(root, name, 'snapshot.json'))
+        mtimeMs = st.mtimeMs
+        sizeBytes = st.size
+      } catch {
+        // No snapshot yet (just-created instance) — directory exists, file doesn't.
+      }
+      out.push({ id: name, snapshotMtimeMs: mtimeMs, snapshotSizeBytes: sizeBytes })
+    }
+    return out
+  }
+
   // Final flush of every active instance. Called from the SIGINT/SIGTERM
   // handler in bootstrap.ts (replaces the single-system flush).
   const shutdown = async (): Promise<void> => {
@@ -329,6 +365,7 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     resetInstance,
     exists,
     list,
+    listOnDisk,
     shutdown,
     idleMs: () => idleMs,
     autoSaverFor,
