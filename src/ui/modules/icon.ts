@@ -29,6 +29,7 @@ export type IconName =
   | 'square'               // macro stop
   | 'pin'                  // pin message
   | 'folder-open'          // workspace
+  | 'corner-down-left'     // send (carriage-return)
 
 // Path fragments only (no SVG wrapper). Each string is the inner markup of
 // a 24×24 viewBox. Keep alphabetical.
@@ -41,6 +42,8 @@ const PATHS: Readonly<Record<IconName, string>> = {
     '<path d="m6 9 6 6 6-6"/>',
   'chevron-right':
     '<path d="m9 18 6-6-6-6"/>',
+  'corner-down-left':
+    '<polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/>',
   'clapperboard':
     '<path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"/><path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   'external-link':

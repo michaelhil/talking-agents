@@ -279,6 +279,35 @@
     .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
     .input:disabled { opacity: 0.5; cursor: not-allowed; }
     textarea.input { font-family: var(--font-mono); resize: vertical; }
+
+    /* Chat input variant: borderless, sits flush with the row's bg-surface
+       to feel inline rather than boxed-in. Focus still highlights via the
+       global :focus-visible ring on the parent form-row. Right padding
+       reserves space for the absolutely-positioned send icon (see .chat-send). */
+    .chat-input {
+      border: 0;
+      background: var(--surface-muted);
+      padding: 8px 36px 8px 12px;
+    }
+    .chat-input:focus { outline: none; box-shadow: 0 0 0 2px var(--accent-ring); }
+
+    /* Send icon nested inside the input — carriage-return glyph. Sits at
+       the right edge of the input's reserved padding, vertically centred. */
+    .chat-send {
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-subtle);
+      background: transparent;
+      border: 0;
+      padding: 4px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: color 150ms, background-color 150ms;
+    }
+    .chat-send:hover:not(:disabled) { color: var(--accent); background: var(--surface-strong); }
+    .chat-send:disabled { color: var(--text-muted); cursor: not-allowed; opacity: 0.5; }
     /* Native <dialog> backdrop matches createModal's overlay (same token). */
     dialog::backdrop { background: var(--shadow-overlay); }
     /* Restore modal centering — Tailwind Preflight resets margin to 0 on all
@@ -419,12 +448,12 @@
           </span>
         </div>
         <div class="flex items-center gap-1">
-          <!-- Cluster A: room actions -->
+          <!-- Cluster A: room actions (mode toggle now lives next to the
+               composer at the bottom of the chat area). -->
           <div class="toolbar-group">
             <button id="btn-clear-messages" class="mode-btn icon-btn" title="Clear messages" aria-label="Clear messages"><span data-icon="trash"></span></button>
             <button id="btn-bookmarks" class="mode-btn icon-btn" title="Bookmarks" aria-label="Bookmarks"><span data-icon="bookmark" data-icon-fill="var(--danger)" data-icon-style="transform: rotate(45deg)"></span></button>
             <button id="btn-room-prompt" class="mode-btn icon-btn" title="Room Prompt" aria-label="Edit room prompt"><span data-icon="message-square"></span></button>
-            <button id="btn-mode-toggle" class="mode-btn icon-btn" title="Broadcast — click to switch to Manual" aria-label="Broadcast — click to switch to Manual" aria-pressed="false"><span data-icon="megaphone"></span></button>
             <button id="btn-workspace" class="mode-btn icon-btn hidden" title="Workspace" aria-label="Workspace"><span data-icon="folder-open"></span></button>
           </div>
           <!-- Cluster B: macros -->
@@ -459,11 +488,16 @@
         <!-- Room members (chip row) sits just above the input — agent
              chips are most useful while composing a message. -->
         <div id="room-members" class="px-3 py-1.5 border-t bg-surface flex flex-wrap gap-1 items-center hidden"></div>
-        <form id="chat-form" class="p-3 border-t bg-surface flex gap-2">
-          <input id="chat-input" type="text" placeholder="Type a message..."
-                 class="input flex-1"
-                 autocomplete="off" disabled>
-          <button type="submit" id="btn-send" class="btn btn-primary" disabled>Send</button>
+        <form id="chat-form" class="px-3 py-2 bg-surface flex gap-2 items-center">
+          <!-- Input wrapper holds the inline send icon, positioned absolutely
+               on the right inside the input's padding. -->
+          <div class="relative flex-1">
+            <input id="chat-input" type="text" placeholder="Type a message..."
+                   class="input chat-input w-full"
+                   autocomplete="off" disabled>
+            <button type="submit" id="btn-send" class="chat-send icon-btn" title="Send" aria-label="Send" disabled><span data-icon="corner-down-left"></span></button>
+          </div>
+          <button id="btn-mode-toggle" class="mode-btn icon-btn" title="Broadcast — click to switch to Manual" aria-label="Broadcast — click to switch to Manual" aria-pressed="false"><span data-icon="megaphone"></span></button>
         </form>
       </div>
 
