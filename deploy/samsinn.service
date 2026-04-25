@@ -1,0 +1,37 @@
+[Unit]
+Description=Samsinn — multi-agent collaboration server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=samsinn
+Group=samsinn
+WorkingDirectory=/home/samsinn/talkingAgents
+
+# Adjust the bun path if you installed Bun system-wide or via another user.
+ExecStart=/home/samsinn/.bun/bin/bun run start
+
+# Restart policy: bring the server back fast after a crash OR after the
+# /api/system/reset endpoint exits the process.
+Restart=always
+RestartSec=5s
+
+# Defaults — override via /etc/samsinn/env (operator-edited, mode 0600).
+Environment=PORT=3000
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/samsinn/env
+
+# Logs go to journald — view with `journalctl -u samsinn -f`.
+StandardOutput=journal
+StandardError=journal
+
+# Hardening (best-effort; relax if a feature stops working).
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/samsinn/talkingAgents /home/samsinn/.samsinn
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

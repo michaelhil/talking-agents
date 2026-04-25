@@ -1,0 +1,32 @@
+# Caddy configuration for a Samsinn sandbox.
+#
+# Replace `samsinn.example.com` with your actual hostname. Caddy will
+# auto-provision a Let's Encrypt cert as long as DNS resolves to this box
+# and ports 80/443 are open.
+#
+# Place at /etc/caddy/Caddyfile, then `systemctl reload caddy`.
+
+samsinn.example.com {
+	# Compress text responses (HTML, CSS, transpiled TS).
+	encode gzip
+
+	header {
+		# 2-year HSTS; safe to ramp up once you've confirmed TLS works.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+
+		# CSP: 'unsafe-inline' on script-src is required for the inline
+		# pre-paint theme script in index.html. Move to a nonce later.
+		# jsdelivr is allowed for marked, DOMPurify, and the dynamic
+		# Mermaid ESM import.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss: ws: https://cdn.jsdelivr.net; font-src 'self' data:; frame-ancestors 'none'"
+
+		# Strip Caddy's default Server header.
+		-Server
+	}
+
+	# WebSocket upgrade is handled transparently by reverse_proxy.
+	reverse_proxy localhost:3000
+}
