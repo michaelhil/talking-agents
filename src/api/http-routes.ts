@@ -25,6 +25,7 @@ import { bugRoutes } from './routes/bugs.ts'
 import { bookmarkRoutes } from './routes/bookmarks.ts'
 import { toolRoutes } from './routes/tools.ts'
 import { loggingRoutes } from './routes/logging.ts'
+import { scriptRoutes } from './routes/scripts.ts'
 import type { RouteContext } from './routes/types.ts'
 
 // Route helpers live in ./routes/helpers.ts to keep http-routes.ts cycle-free.
@@ -45,6 +46,8 @@ const allRoutes = [
   ...bugRoutes,
   ...loggingRoutes,
   ...bookmarkRoutes,
+  // Scripts before rooms (avoids /rooms/:name/script being shadowed)
+  ...scriptRoutes,
   // Artifacts before rooms (avoids /rooms/:name/artifacts being shadowed)
   ...artifactRoutes,
   ...roomRoutes,

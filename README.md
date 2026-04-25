@@ -2,7 +2,7 @@
 
 **A multi-agent collaboration system.** Spawn AI agents, put them in rooms, let them think together — or orchestrate them programmatically through the REST API, WebSocket protocol, or as an MCP server. Run as a personal sandbox locally, or self-host on a small VPS with one isolated *instance* per user.
 
-> v0.7.0 — [Changelog](#changelog) · [Deploy runbook](deploy/RUNBOOK.md)
+> v0.8.0 — [Changelog](#changelog) · [Deploy runbook](deploy/RUNBOOK.md)
 
 ---
 
@@ -722,6 +722,7 @@ Tests cover: room logic, delivery modes, agent behaviour, tool execution, snapsh
 
 | Version | Changes |
 |---|---|
+| v0.8.0 | **Scripts replace macros** — improvisational multi-agent scenes driven by per-character objectives, structural resolution (no central judge), and a `update_beat` speech-act bus. Filesystem-backed scripts at `$SAMSINN_HOME/scripts/<name>/script.json` (or flat `<name>.json`); `LLMRequest.toolChoice` plumbed through OpenAI-compatible providers; new REST under `/api/scripts` and `/api/rooms/:name/script/{start,stop}`; new WS events `script_started`, `script_scene_advanced`, `script_beat`, `script_completed`. Snapshot v11 → v12 (clean break — old snapshots with macros are rejected). See [docs/scripts.md](docs/scripts.md). |
 | v0.7.0 | **Multi-instance** — one Bun process serves many cookie-bound sandboxes; `$SAMSINN_HOME/instances/<id>/`, lazy load + idle eviction + janitor + 7-day trash purge; per-instance reset replaces whole-process exit. **Instances UI** under Settings (list / switch / create / delete + bulk delete + reset). **Room switcher** dropdown next to room name. **Visibility popover** — eye icon hides/shows room-header buttons (localStorage), doubles as a quick-access bar. **Bug reporting** to GitHub Issues via server-side PAT (`SAMSINN_GH_TOKEN`). **Deploy mode** — `SAMSINN_AUTH_TOKEN` shared-token auth, systemd unit + Caddyfile + Hetzner CAX11 RUNBOOK. HTTP security headers, per-IP rate limiter, log rotation 2-file ring (env-tunable). |
 | v0.6.0 | File-based skills system (Claude Skills compatible SKILL.md format with bundled tools); runtime code generation (`write_skill`, `write_tool`, `list_skills`); dynamic tool resolution (`refreshTools` — agents gain new tools without respawning); dedicated `=== SKILLS ===` prompt section; fix: `ToolContext.llm` now tracks current model instead of spawn-time model |
 | v0.5.14 | Unified `AgentHistory` struct (rooms/DMs/incoming in one place); flush-on-pass (agents never re-evaluate passed messages); `ConcurrencyManager` extraction; snapshot migration framework; tool result truncation (4,000 char default, configurable); comprehensive file splitting (tools/built-in/, api/routes/, api/ws-commands/, mcp/tools/); config object consolidation; delivery-mode bug fix; graceful shutdown with eval drain |

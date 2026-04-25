@@ -1,7 +1,7 @@
 {
   "name": "samsinn",
-  "version": "0.7.0",
-  "description": "Multi-agent room communication system with multi-instance deploy, delivery modes, macros, artifacts, MCP server, and bug reporting to GitHub",
+  "version": "0.8.0",
+  "description": "Multi-agent room communication system with multi-instance deploy, delivery modes, scripts (improv scenes), artifacts, MCP server, and bug reporting to GitHub",
   "module": "src/index.ts",
   "type": "module",
   "scripts": {

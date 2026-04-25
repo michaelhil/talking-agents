@@ -171,3 +171,35 @@ full phase-2 generation. Roughly 1.5× a normal multi-agent broadcast turn.
 The existing macro system (`MacroStep`, `MacroRun`, macro artifact, macro
 overlay on delivery, macro UI panel/editor) is removed in full. Macros and
 scripts are not coexisting concepts; scripts are the successor.
+
+## Running a script
+
+Drop a script under `~/.samsinn/scripts/<name>/script.json` (or flat
+`~/.samsinn/scripts/<name>.json`). Reload the catalog and start a run in
+an existing room:
+
+```bash
+# Inspect the catalog
+curl http://localhost:3000/api/scripts
+
+# Reload after editing files
+curl -X POST http://localhost:3000/api/scripts/reload
+
+# Start a script in a room (the room must already exist)
+curl -X POST http://localhost:3000/api/rooms/<room>/script/start \
+  -H 'Content-Type: application/json' \
+  -d '{"scriptName": "the-accusation"}'
+
+# Inspect the live run
+curl http://localhost:3000/api/rooms/<room>/script
+
+# Stop early
+curl -X POST http://localhost:3000/api/rooms/<room>/script/stop
+```
+
+While a script is active the room is set to manual delivery. AI cast members
+are spawned under scoped names (`script-<roomId8>-<castName>`) and despawned
+on stop. WebSocket clients receive `script_started`, `script_scene_advanced`,
+`script_beat`, `script_completed` events.
+
+A complete reference script is in `examples/scripts/the-accusation.json`.
