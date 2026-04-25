@@ -58,6 +58,9 @@ import { mermaidArtifactType } from './core/artifact-types/mermaid.ts'
 // Native-only tool calling — no capability probing needed
 import { createSkillStore, type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/script-store.ts'
+import { createScriptRegistry, type ScriptRegistry } from './core/script-registry.ts'
+import { createScriptEngine, createCastMap, type ScriptEngine, type ScriptEventEmitter } from './core/script-engine.ts'
+import { createUpdateBeatTool } from './tools/built-in/script-tools.ts'
 import { sharedPaths } from './core/paths.ts'
 
 import { createOllamaUrlRegistry, type OllamaUrlRegistry } from './core/ollama-urls.ts'
@@ -99,6 +102,9 @@ export interface System {
   readonly skillsDir: string
   readonly scriptStore: ScriptStore
   readonly scriptsDir: string
+  readonly scriptRegistry: ScriptRegistry
+  readonly scriptEngine: ScriptEngine
+  readonly setOnScriptEvent: (cb: ScriptEventEmitter) => void
   readonly packsDir: string
   readonly knowledgeDir: string
   readonly providersStorePath: string
@@ -250,6 +256,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const summaryRunDelta = lateBinding<(roomId: string, target: SummaryTarget, delta: string) => void>()
   const summaryRunCompleted = lateBinding<(roomId: string, target: SummaryTarget, text: string) => void>()
   const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>()
+  const scriptHook = lateBinding<(roomId: string, message: import('./core/types/messaging.ts').Message) => void>()
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
@@ -270,6 +277,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     onMessagePosted: (roomId, message) => {
       messagePosted.proxy(roomId, message)
       schedulerRef?.onMessagePosted(roomId, message)
+      scriptHook.proxy(roomId, message)
     },
     onTurnChanged: turnChanged.proxy,
     onDeliveryModeChanged: deliveryModeChanged.proxy,
@@ -529,6 +537,13 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // matching the skills loader pattern (which runs from bootstrap.ts).
   void scriptStore.reload().catch(err => console.error('[scripts] reload failed:', err))
 
+  // Script engine — registry + cast-map + update_beat tool, all wired together.
+  const scriptRegistry = createScriptRegistry()
+  const castMap = createCastMap()
+  const updateBeatTool = createUpdateBeatTool(scriptRegistry, castMap)
+  toolRegistry.register(updateBeatTool)
+  const scriptEvent = lateBinding<ScriptEventEmitter>()
+
   const getSkillsForRoom = (roomName: string): string => {
     const skills = skillStore.forScope(roomName)
     if (skills.length === 0) return ''
@@ -695,11 +710,32 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     })
   }
 
-  return {
+  // Forward-declared system ref so the script engine can use System.spawnAIAgent
+  // / addAgentToRoom without us having to inject every dep individually. The
+  // ref is filled at the end of createSystem (just before return).
+  const systemRef: { current: System | undefined } = { current: undefined }
+  const scriptEngine = createScriptEngine({
+    get system() { return systemRef.current as System },
+    registry: scriptRegistry,
+    castMap,
+    updateBeatTool,
+    emit: ((roomId: string, event: string, detail: unknown) => {
+      // Cast through generic position — late-binding proxy is generic, the
+      // emitter is generic, but the call site is monomorphic at runtime.
+      ;(scriptEvent.proxy as (roomId: string, event: string, detail: unknown) => void)(roomId, event, detail)
+    }) as ScriptEventEmitter,
+  } as unknown as Parameters<typeof createScriptEngine>[0])
+  // Wire the engine's room-message hook into the late-bound proxy that
+  // houseCallbacks already routes through.
+  scriptHook.set((roomId, message) => scriptEngine.onRoomMessage(roomId, message))
+
+  const system: System = {
     house, team, routeMessage,
     llm, ollama, providerConfig, providerKeys, gateways,
     toolRegistry, refreshAllAgentTools, skillStore, skillsDir,
     scriptStore, scriptsDir,
+    scriptRegistry, scriptEngine,
+    setOnScriptEvent: scriptEvent.set,
     packsDir,
     knowledgeDir: sharedPaths.knowledge(),
     providersStorePath: sharedPaths.providers(),
@@ -743,6 +779,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     addEventObserver: (observer) => addEventObserver(observer, loggingState.sessionRef),
     logging,
   }
+  systemRef.current = system
+  return system
 }
 
 // --- Startup (only when run directly) ---
