@@ -2,24 +2,44 @@
 Description=Samsinn — multi-agent collaboration server
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=samsinn
 Group=samsinn
-WorkingDirectory=/home/samsinn/talkingAgents
 
-# Adjust the bun path if you installed Bun system-wide or via another user.
+# Canonical install layout (matches deploy/RUNBOOK.md):
+#   /opt/samsinn        — repo checkout, owned by samsinn:samsinn
+#   /var/lib/samsinn    — SAMSINN_HOME (snapshots, providers.json, logs)
+# If you keep the old layout (~samsinn/talkingAgents + ~samsinn/.samsinn),
+# update WorkingDirectory, ExecStart, ReadWritePaths, and the SAMSINN_HOME
+# Environment line below.
+WorkingDirectory=/opt/samsinn
+
+# Adjust the bun path if you installed Bun system-wide.
 ExecStart=/home/samsinn/.bun/bin/bun run start
 
 # Restart policy: bring the server back fast after a crash OR after the
-# /api/system/reset endpoint exits the process.
+# /api/system/reset endpoint exits the process. Crash-loop guard
+# (StartLimitBurst above) caps to 5 restarts in 60 s.
 Restart=always
 RestartSec=5s
+
+# Resource caps. Tune up on bigger boxes; these defaults fit CAX11 (4 GB).
+MemoryMax=2G
+CPUQuota=180%
+LimitNOFILE=65536
+
+# Files created by the service (providers.json, snapshots) inherit 0600.
+UMask=0077
 
 # Defaults — override via /etc/samsinn/env (operator-edited, mode 0600).
 Environment=PORT=3000
 Environment=NODE_ENV=production
+Environment=SAMSINN_HOME=/var/lib/samsinn
+Environment=SAMSINN_SECURE_COOKIES=1
 EnvironmentFile=-/etc/samsinn/env
 
 # Logs go to journald — view with `journalctl -u samsinn -f`.
@@ -30,7 +50,7 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/samsinn/talkingAgents /home/samsinn/.samsinn
+ReadWritePaths=/opt/samsinn /var/lib/samsinn
 PrivateTmp=true
 
 [Install]
