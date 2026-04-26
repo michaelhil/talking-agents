@@ -30,7 +30,6 @@ import {
   $messageContexts,
   $messageWarnings,
   $ollamaHealth,
-  $ollamaMetrics,
   $lastProviderEvent,
   $pendingModelChanges,
   $roomIdByName,
@@ -479,10 +478,6 @@ const handlers: Handlers = {
 
   ollama_health(msg) {
     $ollamaHealth.set(msg.health)
-  },
-
-  ollama_metrics(msg) {
-    $ollamaMetrics.set(msg.metrics)
   },
 
   // --- Provider routing ---

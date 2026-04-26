@@ -244,7 +244,6 @@ export const bootstrap = async (): Promise<void> => {
   // system, but any active system would yield the same gateway reference.
   wsManager = createWSManager({
     getSystem: (id) => registry.tryGetLive(id),
-    getOllama: () => bootSystem.ollama,
     limitMetrics: shared.limitMetrics,
   })
 
@@ -274,6 +273,16 @@ export const bootstrap = async (): Promise<void> => {
       console.error(`[registry] evictIdle: ${err instanceof Error ? err.message : String(err)}`),
     )
   }, 60_000)
+
+  // Stale-session sweep — every hour, drop sessions whose WS has been
+  // closed for >7d and remove the inactive human agent from its team.
+  // Without this, every disconnected user accumulates forever until the
+  // instance is evicted.
+  const sessionSweepTimer = setInterval(() => {
+    try { wsManager?.sweepStaleSessions() } catch (err) {
+      console.error(`[ws] sweepStaleSessions: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, 60 * 60 * 1000)
 
   // === Per-instance reset ===
   // Trashes the cookie's instance dir; the same id persists. Browser
@@ -330,6 +339,7 @@ export const bootstrap = async (): Promise<void> => {
     console.log('Shutting down, saving snapshots...')
     janitor.stop()
     clearInterval(evictTimer)
+    clearInterval(sessionSweepTimer)
     if (!ephemeral) {
       try { await registry.shutdown() } catch (err) { console.error('Failed to flush snapshots:', err) }
     }

@@ -282,7 +282,12 @@ export const createServer = (config: ServerConfig) => {
           }
           session.lastActivity = Date.now()
           wsManager.wsConnections.set(ws.data.sessionToken, ws)
-          wsManager.safeSend(ws, JSON.stringify(wsManager.buildSnapshot(session.instanceId, session.agent.id)))
+          // Custom WS close code 4001 = "instance unavailable" (WS spec
+          // reserves 4000–4999 for application use). Client sees onclose
+          // with this code and reconnects via the registry's lazy-load path.
+          const snap = wsManager.buildSnapshot(session.instanceId, session.agent.id)
+          if (!snap) { ws.close(4001, 'instance unavailable'); return }
+          wsManager.safeSend(ws, JSON.stringify(snap))
           return
         }
 
@@ -298,7 +303,9 @@ export const createServer = (config: ServerConfig) => {
         wsManager.sessions.set(ws.data.sessionToken, session)
         wsManager.wsConnections.set(ws.data.sessionToken, ws)
 
-        wsManager.safeSend(ws, JSON.stringify(wsManager.buildSnapshot(ws.data.instanceId, agent.id, ws.data.sessionToken)))
+        const snap = wsManager.buildSnapshot(ws.data.instanceId, agent.id, ws.data.sessionToken)
+        if (!snap) { ws.close(4001, 'instance unavailable'); return }
+        wsManager.safeSend(ws, JSON.stringify(snap))
       },
 
       async message(ws, raw) {
@@ -332,7 +339,6 @@ export const createServer = (config: ServerConfig) => {
           })()
         }
         wsManager.wsConnections.delete(ws.data.sessionToken)
-        if (session) wsManager.unsubscribeOllamaMetrics(session.agent.id)
       },
     },
   })

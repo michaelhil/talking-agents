@@ -33,6 +33,12 @@ import type { LimitMetrics } from '../core/limit-metrics.ts'
 // reconnects fresh, server state is authoritative so no data lost.
 const MAX_WS_BUFFERED_BYTES = 8 * 1024 * 1024
 
+// How long an inactive (closed-WS) human session is preserved for name-based
+// reclaim. After this window the agent is removed from the team and the
+// session entry deleted. 7 days strikes a balance: covers a long weekend or
+// vacation, prevents indefinite accumulation.
+export const SESSION_STALE_MS = 7 * 24 * 60 * 60 * 1000
+
 // === Types ===
 
 // Stored ws value. ServerWebSocket from Bun has both methods natively;
@@ -75,9 +81,17 @@ export interface WSManager {
   readonly broadcastToInstance: (instanceId: string, msg: WSOutbound) => void
   readonly subscribeAgentState: (agent: Agent, instanceId: string) => void
   readonly unsubscribeAgentState: (agentId: string) => void
-  readonly subscribeOllamaMetrics: (sessionToken: string) => void
-  readonly unsubscribeOllamaMetrics: (sessionToken: string) => void
-  readonly buildSnapshot: (instanceId: string, agentId: string, sessionToken?: string) => Extract<WSOutbound, { type: 'snapshot' }>
+  // Returns null when the instance has been evicted between the WS upgrade
+  // and the snapshot build. Callers must close the socket (4001) instead of
+  // sending a fabricated empty snapshot — clients trust empty rooms+agents
+  // and would render a blank UI without knowing why.
+  readonly buildSnapshot: (instanceId: string, agentId: string, sessionToken?: string) => Extract<WSOutbound, { type: 'snapshot' }> | null
+  // Drop sessions whose WS has been closed for more than SESSION_STALE_MS
+  // and remove the corresponding human agent from the team. Without this,
+  // every disconnected user accumulates a session entry forever (and an
+  // inactive human in team.listAgents()) until the instance is evicted.
+  // Returns the number of sessions dropped.
+  readonly sweepStaleSessions: (now?: number) => number
 }
 
 // Resolver: given an instanceId, return the live System if currently in
@@ -87,13 +101,12 @@ export interface WSManager {
 // any live system's ollama field works (callers pass the resolved one in).
 export interface WSManagerDeps {
   readonly getSystem: (instanceId: string) => System | undefined
-  readonly getOllama: () => System['ollama']
   // Optional — when present, backpressure drops are counted. Tests omit.
   readonly limitMetrics?: LimitMetrics
 }
 
 export const createWSManager = (deps: WSManagerDeps): WSManager => {
-  const { getSystem, getOllama, limitMetrics } = deps
+  const { getSystem, limitMetrics } = deps
   const sessions = new Map<string, ClientSession>()
   const wsConnections = new Map<string, WSConnection>()
   const stateUnsubs = new Map<string, () => void>()
@@ -134,45 +147,8 @@ export const createWSManager = (deps: WSManagerDeps): WSManager => {
 
   // System callback wiring (room/membership/agent-activity/provider-events/
   // summary lifecycle/ollama-health) lives in src/api/wire-system-events.ts.
-  // Called once per System (here for now via the call site in createServer
-  // for backward compat; Phase F4 moves it into registry.onSystemCreated).
-
-  // Subscribe-based ollama metrics push (keyed by agent ID)
-  const metricsSubscribers = new Set<string>()
-  let metricsPushTimer: ReturnType<typeof setInterval> | undefined
-
-  const startMetricsPush = (): void => {
-    if (metricsPushTimer) return
-    metricsPushTimer = setInterval(() => {
-      if (metricsSubscribers.size === 0) return
-      const ollama = getOllama()
-      if (!ollama) return
-      const metrics = ollama.getMetrics()
-      const data = JSON.stringify({ type: 'ollama_metrics', metrics })
-      // Find WS connections for subscribed agents
-      for (const agentId of metricsSubscribers) {
-        for (const [token, session] of sessions) {
-          if (session.agent.id === agentId) {
-            const ws = wsConnections.get(token)
-            if (ws) safeSend(ws, data)
-          }
-        }
-      }
-    }, 3_000)
-  }
-
-  const subscribeOllamaMetrics = (agentId: string): void => {
-    metricsSubscribers.add(agentId)
-    startMetricsPush()
-  }
-
-  const unsubscribeOllamaMetrics = (agentId: string): void => {
-    metricsSubscribers.delete(agentId)
-    if (metricsSubscribers.size === 0 && metricsPushTimer) {
-      clearInterval(metricsPushTimer)
-      metricsPushTimer = undefined
-    }
-  }
+  // Ollama metrics are pulled by the dashboard via GET /api/ollama/metrics
+  // (3s polling) — no WS push path.
 
   const subscribeAgentState = (agent: Agent, instanceId: string): void => {
     if (agent.kind !== 'ai') return
@@ -197,15 +173,16 @@ export const createWSManager = (deps: WSManagerDeps): WSManager => {
   // any snapshot restore). Single-tenant boot path calls wireSystemEvents
   // immediately after createWSManager, so behavior is preserved.
 
-  const buildSnapshot = (instanceId: string, agentId: string, sessionToken?: string): Extract<WSOutbound, { type: 'snapshot' }> => {
+  const buildSnapshot = (instanceId: string, agentId: string, sessionToken?: string): Extract<WSOutbound, { type: 'snapshot' }> | null => {
     const sys = getSystem(instanceId)
     if (!sys) {
-      // Instance evicted between connect and snapshot. Return an empty
-      // shell — the caller's reconnect path will re-resolve and try again.
-      return {
-        type: 'snapshot', rooms: [], agents: [], agentId, roomStates: {},
-        ...(sessionToken ? { sessionToken } : {}),
-      }
+      // Instance evicted between WS upgrade and snapshot build. Returning
+      // an empty shell would make the client trust a blank UI; instead we
+      // return null and the caller closes the socket so the client
+      // reconnects honestly through the registry's lazy-load path.
+      console.error(`[ws] buildSnapshot for evicted instance ${instanceId} — caller will close socket (4001)`)
+      void agentId; void sessionToken
+      return null
     }
     const roomStates: Record<string, RoomState> = {}
     for (const profile of sys.house.listAllRooms()) {
@@ -229,7 +206,27 @@ export const createWSManager = (deps: WSManagerDeps): WSManager => {
     }
   }
 
-  return { sessions, wsConnections, safeSend, broadcast, broadcastToInstance, subscribeAgentState, unsubscribeAgentState, subscribeOllamaMetrics, unsubscribeOllamaMetrics, buildSnapshot }
+  const sweepStaleSessions = (now: number = Date.now()): number => {
+    let dropped = 0
+    const cutoff = now - SESSION_STALE_MS
+    for (const [token, session] of [...sessions]) {
+      // Skip live connections — their lastActivity is fresh anyway.
+      if (wsConnections.has(token)) continue
+      if (session.lastActivity > cutoff) continue
+      // Remove the agent from its instance's team. If the instance is
+      // currently evicted, getSystem returns undefined; skip the team
+      // cleanup (the snapshot rehydrate path won't see this human). The
+      // session entry is dropped either way.
+      const sys = getSystem(session.instanceId)
+      try { sys?.removeAgent(session.agent.id) } catch { /* best-effort */ }
+      sessions.delete(token)
+      limitMetrics?.inc('staleSessionsEvicted')
+      dropped++
+    }
+    return dropped
+  }
+
+  return { sessions, wsConnections, safeSend, broadcast, broadcastToInstance, subscribeAgentState, unsubscribeAgentState, buildSnapshot, sweepStaleSessions }
 }
 
 // === Command dispatch order — first handler that returns true wins ===
@@ -244,7 +241,7 @@ const commandHandlers = [
 // === Message Handler ===
 
 export const handleWSMessage = async (
-  ws: { send: (data: string) => void },
+  ws: WSConnection,
   session: ClientSession,
   raw: string,
   system: System,
@@ -254,18 +251,7 @@ export const handleWSMessage = async (
   try {
     msg = JSON.parse(raw) as WSInbound
   } catch {
-    sendError(ws, 'Invalid JSON')
-    return
-  }
-
-  // Handle ollama metrics subscribe/unsubscribe
-  const msgType = (msg as Record<string, unknown>).type
-  if (msgType === 'subscribe_ollama_metrics') {
-    wsManager.subscribeOllamaMetrics(session.agent.id)
-    return
-  }
-  if (msgType === 'unsubscribe_ollama_metrics') {
-    wsManager.unsubscribeOllamaMetrics(session.agent.id)
+    sendError(wsManager, ws, 'Invalid JSON')
     return
   }
 
@@ -275,8 +261,8 @@ export const handleWSMessage = async (
     for (const handler of commandHandlers) {
       if (await handler(msg, ctx)) return
     }
-    sendError(ws, `Unknown message type: ${(msg as Record<string, unknown>).type}`)
+    sendError(wsManager, ws, `Unknown message type: ${(msg as Record<string, unknown>).type}`)
   } catch (err) {
-    sendError(ws, err instanceof Error ? err.message : 'Command failed')
+    sendError(wsManager, ws, err instanceof Error ? err.message : 'Command failed')
   }
 }

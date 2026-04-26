@@ -2,7 +2,7 @@ import type { WSInbound, WSOutbound } from '../../core/types/ws-protocol.ts'
 import type { CommandContext } from './types.ts'
 
 export const handleMessageCommand = (msg: WSInbound, ctx: CommandContext): boolean => {
-  const { ws, session, system } = ctx
+  const { ws, session, system, wsManager } = ctx
 
   switch (msg.type) {
     case 'post_message': {
@@ -14,7 +14,7 @@ export const handleMessageCommand = (msg: WSInbound, ctx: CommandContext): boole
         type: 'chat',
       })
       for (const m of delivered) {
-        ws.send(JSON.stringify({ type: 'message', message: m } satisfies WSOutbound))
+        wsManager.safeSend(ws, JSON.stringify({ type: 'message', message: m } satisfies WSOutbound))
       }
       return true
     }

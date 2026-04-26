@@ -23,6 +23,7 @@ export interface LimitMetricsSnapshot {
   evictionForceEvicts: number          // system-registry force-evict after exhaustion
   wsBackpressureDropped: number        // ws-handler closed slow consumer
   rateLimitEvicted: number             // rate-limit LRU dropped a key
+  staleSessionsEvicted: number         // ws-handler TTL sweep dropped a session
 }
 
 export interface LimitMetrics {
@@ -37,6 +38,7 @@ const zeroSnapshot = (): LimitMetricsSnapshot => ({
   evictionForceEvicts: 0,
   wsBackpressureDropped: 0,
   rateLimitEvicted: 0,
+  staleSessionsEvicted: 0,
 })
 
 export const createLimitMetrics = (): LimitMetrics => {

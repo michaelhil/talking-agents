@@ -174,24 +174,44 @@ export const wireOllamaDashboard = (
     await refreshOllamaUrls(els.urlSelect)
   }
 
+  // Metrics are polled via REST while the dashboard is open. The interval
+  // is captured in module scope so close handlers can stop it.
   els.closeBtn.onclick = () => {
     els.dashboard.close()
-    send({ type: 'unsubscribe_ollama_metrics' })
+    stopMetricsPoll()
   }
 
   els.dashboard.addEventListener('close', () => {
-    send({ type: 'unsubscribe_ollama_metrics' })
+    stopMetricsPoll()
   })
+}
+
+// === Metrics polling ===
+
+let metricsPollTimer: ReturnType<typeof setInterval> | null = null
+
+const stopMetricsPoll = (): void => {
+  if (metricsPollTimer) {
+    clearInterval(metricsPollTimer)
+    metricsPollTimer = null
+  }
+}
+
+const pollOllamaMetrics = async (): Promise<void> => {
+  try {
+    const res = await fetch('/api/ollama/metrics')
+    if (res.ok) updateOllamaMetricsUI(await res.json() as Record<string, unknown>)
+  } catch { /* transient — next tick will retry */ }
 }
 
 // === Open dashboard (fetch initial data) ===
 
 export const openOllamaDashboard = async (
   els: OllamaDashboardElements,
-  send: (data: unknown) => void,
+  _send: (data: unknown) => void,
 ): Promise<void> => {
+  void _send  // signature preserved for callers; metrics now poll REST.
   els.dashboard.showModal()
-  send({ type: 'subscribe_ollama_metrics' })
   void refreshOllamaUrls(els.urlSelect)
 
   try {
@@ -214,4 +234,8 @@ export const openOllamaDashboard = async (
       if (cfgKeepalive) cfgKeepalive.value = String(cfg.keepAlive ?? '30m')
     }
   } catch { /* ignore fetch errors on dashboard open */ }
+
+  // Start the live-metrics poll. Stopped on close (above).
+  stopMetricsPoll()  // defensive — in case dashboard reopens
+  metricsPollTimer = setInterval(() => { void pollOllamaMetrics() }, 3_000)
 }

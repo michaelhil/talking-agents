@@ -238,7 +238,6 @@ export const $activeScriptByRoom = map<Record<string, ActiveScript>>({})
 // === Ollama dashboard ===
 
 export const $ollamaHealth = atom<Record<string, unknown> | null>(null)
-export const $ollamaMetrics = atom<Record<string, unknown> | null>(null)
 
 // === Provider routing ===
 // The most recent provider routing event (bound / all_failed / stream_failed).

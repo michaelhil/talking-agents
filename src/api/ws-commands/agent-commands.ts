@@ -4,7 +4,7 @@ import { buildToolSupport } from '../../agents/spawn.ts'
 import { requireAgent, sendError, type CommandContext } from './types.ts'
 
 export const handleAgentCommand = async (msg: WSInbound, ctx: CommandContext): Promise<boolean> => {
-  const { ws, system } = ctx
+  const { ws, system, wsManager } = ctx
 
   switch (msg.type) {
     case 'create_agent': {
@@ -50,10 +50,10 @@ export const handleAgentCommand = async (msg: WSInbound, ctx: CommandContext): P
       return true
     }
     case 'cancel_generation': {
-      const agent = requireAgent(ws, system, msg.name)
+      const agent = requireAgent(wsManager, ws, system, msg.name)
       if (!agent) return true
       const aiAgent = asAIAgent(agent)
-      if (!aiAgent) { sendError(ws, `"${msg.name}" is not an AI agent`); return true }
+      if (!aiAgent) { sendError(wsManager, ws, `"${msg.name}" is not an AI agent`); return true }
       aiAgent.cancelGeneration()
       return true
     }

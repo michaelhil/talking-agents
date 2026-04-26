@@ -2,13 +2,13 @@ import type { WSInbound } from '../../core/types/ws-protocol.ts'
 import { sendError, type CommandContext } from './types.ts'
 
 export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): boolean => {
-  const { ws, session, system } = ctx
+  const { ws, session, system, wsManager } = ctx
 
   switch (msg.type) {
     case 'add_artifact': {
       const typeDef = system.house.artifactTypes.get(msg.artifactType)
       if (!typeDef) {
-        sendError(ws, `Unknown artifact type "${msg.artifactType}"`)
+        sendError(wsManager, ws, `Unknown artifact type "${msg.artifactType}"`)
         return true
       }
       // Resolve scope: room names → IDs
@@ -17,7 +17,7 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
         for (const name of msg.scope) {
           const room = system.house.getRoom(name)
           if (!room) {
-            sendError(ws, `Room "${name}" not found`)
+            sendError(wsManager, ws, `Room "${name}" not found`)
             return true
           }
           scope.push(room.profile.id)
@@ -32,7 +32,7 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
         createdBy: session.agent.name,
       })
       if (msg.requestId) {
-        ws.send(JSON.stringify({
+        wsManager.safeSend(ws, JSON.stringify({
           type: 'artifact_created',
           requestId: msg.requestId,
           artifactId: created.id,
@@ -52,24 +52,24 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
         },
         { callerId: session.agent.id, callerName: session.agent.name },
       )
-      if (!updated) sendError(ws, `Artifact "${msg.artifactId}" not found`)
+      if (!updated) sendError(wsManager, ws, `Artifact "${msg.artifactId}" not found`)
       return true
     }
 
     case 'remove_artifact': {
       const removed = system.house.artifacts.remove(msg.artifactId)
-      if (!removed) sendError(ws, `Artifact "${msg.artifactId}" not found`)
+      if (!removed) sendError(wsManager, ws, `Artifact "${msg.artifactId}" not found`)
       return true
     }
 
     case 'cast_vote': {
       const artifact = system.house.artifacts.get(msg.artifactId)
       if (!artifact) {
-        sendError(ws, `Artifact "${msg.artifactId}" not found`)
+        sendError(wsManager, ws, `Artifact "${msg.artifactId}" not found`)
         return true
       }
       if (artifact.type !== 'poll') {
-        sendError(ws, `Artifact "${msg.artifactId}" is not a poll`)
+        sendError(wsManager, ws, `Artifact "${msg.artifactId}" is not a poll`)
         return true
       }
       system.house.artifacts.update(

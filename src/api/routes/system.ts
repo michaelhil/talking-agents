@@ -95,6 +95,7 @@ export const systemRoutes: RouteEntry[] = [
         maxScriptSourceBytes: 256 * 1024,
         maxConsecutiveWhisperFailures: 5,
         evictionFlushBackoffMs: [5_000, 15_000, 60_000],
+        sessionStaleMs: 7 * 24 * 60 * 60 * 1000,
       },
     }),
   },

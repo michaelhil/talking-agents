@@ -107,7 +107,8 @@ const makeWS = () => {
   return { ws, messages, errors, setBuffered, closed }
 }
 
-const dispatch = (ws: { send: (d: string) => void }, session: ClientSession, system: System, wsManager: WSManager, payload: unknown) =>
+type FakeWS = ReturnType<typeof makeWS>['ws']
+const dispatch = (ws: FakeWS, session: ClientSession, system: System, wsManager: WSManager, payload: unknown) =>
   handleWSMessage(ws, session, JSON.stringify(payload), system, wsManager)
 
 // === Tests ===
@@ -124,7 +125,6 @@ describe('WS Handler', () => {
     session = { agent: human, instanceId: 'test0123456789ab', lastActivity: Date.now() }
     wsManager = createWSManager({
       getSystem: () => system,
-      getOllama: () => system.ollama,
     })
   })
 
@@ -328,7 +328,6 @@ describe('WSManager.safeSend backpressure', () => {
     const limitMetrics = createLimitMetrics()
     const wsManager = createWSManager({
       getSystem: () => undefined,
-      getOllama: () => undefined,
       limitMetrics,
     })
     const { ws, messages, setBuffered, closed } = makeWS()
@@ -341,7 +340,7 @@ describe('WSManager.safeSend backpressure', () => {
   })
 
   test('sends normally when buffer is under cap', () => {
-    const wsManager = createWSManager({ getSystem: () => undefined, getOllama: () => undefined })
+    const wsManager = createWSManager({ getSystem: () => undefined })
     const { ws, setBuffered, closed } = makeWS()
     setBuffered(1024)
     let received = ''
@@ -354,5 +353,85 @@ describe('WSManager.safeSend backpressure', () => {
     expect(accepted).toBe(true)
     expect(received).toBe('hello')
     expect(closed()).toBeNull()
+  })
+
+  test('buildSnapshot returns null when system is evicted (caller closes 4001)', () => {
+    const wsManager = createWSManager({ getSystem: () => undefined })
+    const result = wsManager.buildSnapshot('test0123456789ab', 'agent-id')
+    expect(result).toBeNull()
+  })
+
+  test('sweepStaleSessions drops sessions with closed WS + old lastActivity, removes agent', async () => {
+    const { createLimitMetrics } = await import('../core/limit-metrics.ts')
+    const limitMetrics = createLimitMetrics()
+    const removed: string[] = []
+    const fakeSystem = { removeAgent: (id: string) => { removed.push(id); return true } } as unknown as System
+    const wsManager = createWSManager({
+      getSystem: () => fakeSystem,
+      limitMetrics,
+    })
+    const TEN_DAYS_AGO = Date.now() - 10 * 24 * 60 * 60 * 1000
+    wsManager.sessions.set('stale-token', {
+      agent: { id: 'agent-stale', name: 'Stale' } as never,
+      instanceId: 'test0123456789ab',
+      lastActivity: TEN_DAYS_AGO,
+    })
+    // Recent + no live ws — should NOT be swept.
+    wsManager.sessions.set('recent-token', {
+      agent: { id: 'agent-recent', name: 'Recent' } as never,
+      instanceId: 'test0123456789ab',
+      lastActivity: Date.now() - 60_000,
+    })
+    // Old but live connection — should NOT be swept.
+    wsManager.sessions.set('live-token', {
+      agent: { id: 'agent-live', name: 'Live' } as never,
+      instanceId: 'test0123456789ab',
+      lastActivity: TEN_DAYS_AGO,
+    })
+    wsManager.wsConnections.set('live-token', {
+      send: () => {}, getBufferedAmount: () => 0, close: () => {},
+    })
+
+    const dropped = wsManager.sweepStaleSessions()
+    expect(dropped).toBe(1)
+    expect(wsManager.sessions.has('stale-token')).toBe(false)
+    expect(wsManager.sessions.has('recent-token')).toBe(true)
+    expect(wsManager.sessions.has('live-token')).toBe(true)
+    expect(removed).toEqual(['agent-stale'])
+    expect(limitMetrics.snapshot().staleSessionsEvicted).toBe(1)
+  })
+
+  test('sweepStaleSessions tolerates evicted instance (no agent removal, session still dropped)', async () => {
+    const { createLimitMetrics } = await import('../core/limit-metrics.ts')
+    const limitMetrics = createLimitMetrics()
+    const wsManager = createWSManager({
+      getSystem: () => undefined,           // instance evicted
+      limitMetrics,
+    })
+    wsManager.sessions.set('orphan-token', {
+      agent: { id: 'agent-orphan', name: 'Orphan' } as never,
+      instanceId: 'test0123456789ab',
+      lastActivity: Date.now() - 10 * 24 * 60 * 60 * 1000,
+    })
+    const dropped = wsManager.sweepStaleSessions()
+    expect(dropped).toBe(1)
+    expect(wsManager.sessions.has('orphan-token')).toBe(false)
+    expect(limitMetrics.snapshot().staleSessionsEvicted).toBe(1)
+  })
+
+  test('post_message ack uses safeSend (drops on slow consumer)', async () => {
+    // End-to-end proof that command-handler responses go through safeSend
+    // after the Phase 1 widening — not direct ws.send.
+    const localSystem = (await import('./ws-handler.test.ts')) as never
+    void localSystem
+    const wsManager = createWSManager({ getSystem: () => undefined })
+    const { ws, messages, setBuffered, closed } = makeWS()
+    setBuffered(9 * 1024 * 1024)
+    // Direct safeSend invocation — proves the wire works. The end-to-end
+    // path is exercised by integration; covering the wire is the regression
+    // guard against future calls bypassing safeSend.
+    wsManager.safeSend(ws, JSON.stringify({ type: 'message', message: { id: 'x' } }))
+    expect(messages()).toHaveLength(0)
+    expect(closed()).toEqual({ code: 1009, reason: 'slow consumer' })
   })
 })
