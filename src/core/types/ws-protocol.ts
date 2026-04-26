@@ -67,11 +67,6 @@ export type WSOutbound =
   | { readonly type: 'messages_cleared'; readonly roomName: string }
   | { readonly type: 'activation_result'; readonly roomName: string; readonly agentName: string; readonly ok: boolean; readonly queued: boolean; readonly reason?: string }
   | { readonly type: 'mode_auto_switched'; readonly roomName: string; readonly toMode: DeliveryMode; readonly reason: 'second-ai-joined' }
-  // Script engine lifecycle events
-  | { readonly type: 'script_started'; readonly roomName: string; readonly scriptId: string; readonly scriptName: string }
-  | { readonly type: 'script_scene_advanced'; readonly roomName: string; readonly scriptId: string; readonly sceneIndex: number; readonly setup: string }
-  | { readonly type: 'script_beat'; readonly roomName: string; readonly scriptId: string; readonly beat: { readonly turn: number; readonly character: string; readonly status: 'pursuing' | 'met' | 'abandoned'; readonly intent: 'speak' | 'hold'; readonly addressedTo?: string; readonly mood?: string; readonly speechActs?: ReadonlyArray<string> } }
-  | { readonly type: 'script_completed'; readonly roomName: string; readonly scriptId: string; readonly outcomes: ReadonlyArray<'resolved' | 'fizzled'> }
   // Directed reply to the client that sent add_artifact with a requestId.
   | { readonly type: 'artifact_created'; readonly requestId: string; readonly artifactId: string; readonly artifactType: string }
   | { readonly type: 'ollama_health'; readonly health: OllamaHealth }

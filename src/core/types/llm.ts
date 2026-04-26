@@ -76,7 +76,7 @@ export interface ChatRequest {
   // (model decides); 'required' demands at least one tool call; { name }
   // demands a call to that specific tool. Providers that don't support the
   // option silently ignore it (Anthropic + Gemini fall back to 'auto').
-  // Used by the script engine's phase-1 to force `update_beat`.
+  // Used by the script runner's whisper-classify pass (forced JSON-mode).
   readonly toolChoice?: 'auto' | 'required' | { readonly name: string }
   readonly think?: boolean
   readonly numCtx?: number

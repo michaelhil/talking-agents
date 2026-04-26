@@ -46,12 +46,6 @@
   --color-msg-self:           var(--msg-self);
   --color-msg-agent:          var(--msg-agent);
 
-  --color-macro-accent:       var(--macro-accent);
-  --color-macro-accent-hover: var(--macro-accent-hover);
-  --color-macro-accent-soft:  var(--macro-accent-soft);
-  --color-macro-accent-bg:    var(--macro-accent-bg);
-  --color-macro-accent-border:var(--macro-accent-border);
-
   /* Elevation — drives Tailwind's shadow-{sm,md,lg}. shadow-xl stays the
      Tailwind default (used only by modal cards). */
   --shadow-sm: var(--shadow-sm);

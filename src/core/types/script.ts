@@ -1,118 +1,78 @@
 // ============================================================================
-// Script types — multi-agent improvisational drama.
+// Script types — multi-agent collaborative scripts (v2 — see docs/scripts.md).
 //
-// Authoring surface:
-//   - Script: cast (one entry per character) + acts glossary + scenes.
-//   - Scene:  setup paragraph, present cast, per-character objectives.
-//   - Objective: free-text `want` + structural `signal`.
-//   - Signal: composable predicate over speech-acts and status transitions.
+// A script is a passive document. Definition lives on the filesystem under
+// $SAMSINN_HOME/scripts/<name>/script.json (or flat <name>.json). At start
+// time the runner spawns the cast as normal AI agents, sets the room to
+// manual, and reacts to each cast post by classifying a "whisper" (small
+// JSON-mode self-reflection) that drives step advancement.
 //
-// Run state lives in ScriptRun and is updated by src/core/script-runs.ts (pure
-// functions) and src/core/script-engine.ts (the driver loop).
-//
-// See docs/scripts.md for the full design.
+// No engine loop. No phase-1 fan-out. The runner is a reactive listener
+// over the room's existing onMessagePosted callback. See script-runner.ts.
 // ============================================================================
 
-import type { AIAgentConfig } from './agent.ts'
-
-// === Speech-act glossary entry ===
-
-export interface SpeechActDef {
-  readonly name: string         // identifier the LLM declares; arbitrary string
-  readonly description: string  // one-line gloss for the LLM and the author
-}
-
-// === Cast member ===
-
-export type CastKind = 'ai' | 'human'
+// === Authored shape (what lives in script.json) ===
 
 export interface CastMember {
-  readonly name: string                 // display name (within the script)
-  readonly kind: CastKind
-  // Required when kind === 'ai'. The persona and tools used for this character.
-  // Spawned per-room with a scoped agent id (`script::{roomId}::{name}`).
-  readonly agentConfig?: AIAgentConfig
-  // Optional. When kind === 'human' and a binding is desired, the script
-  // engine resolves this to an existing human agent in the room. Empty / unset
-  // means "any human in the room can play the part" (single-human rooms).
-  readonly humanAgentName?: string
+  readonly name: string                                 // unique within script; used as agent name
+  readonly persona: string
+  readonly model: string
+  readonly starts?: boolean                             // exactly one cast member is true
+  readonly tools?: ReadonlyArray<string>                // optional regular tool list
 }
 
-// === Signals ===
-
-export type Signal =
-  | { readonly acts: Readonly<Record<string, ReadonlyArray<string>>> }
-  | { readonly status: Readonly<Record<string, 'met' | 'abandoned'>> }
-  | { readonly any_of: ReadonlyArray<Signal> }
-
-// === Objectives ===
-
-export interface Objective {
-  readonly want: string         // free-text pursuit shown to the character
-  readonly signal: Signal       // structural success criterion
+export interface Step {
+  readonly title: string
+  readonly description?: string
+  readonly roles: Readonly<Record<string, string>>      // castName → free-text role
 }
 
-// === Scenes ===
-
-export interface Scene {
-  readonly setup: string                              // narration injected privately to each entering character
-  readonly present: ReadonlyArray<string>             // cast names present in this scene
-  readonly objectives: Readonly<Record<string, Objective>>  // keyed by cast name
+export interface ContextOverrides {
+  readonly includePrompts?: {
+    readonly persona?: boolean
+    readonly room?: boolean
+    readonly house?: boolean
+    readonly responseFormat?: boolean
+    readonly skills?: boolean
+    readonly script?: boolean                           // gates the SCRIPT block (Phase E)
+  }
+  readonly includeContext?: {
+    readonly participants?: boolean
+    readonly artifacts?: boolean
+    readonly activity?: boolean
+    readonly knownAgents?: boolean
+  }
+  readonly includeTools?: boolean
 }
-
-// === Top-level script ===
 
 export interface Script {
-  readonly id: string                                 // crypto.randomUUID() at load
-  readonly name: string                               // unique within the store
-  readonly acts: Readonly<Record<string, SpeechActDef>>
-  readonly cast: ReadonlyArray<CastMember>
-  readonly scenes: ReadonlyArray<Scene>
+  readonly id: string                                   // crypto.randomUUID() at load
+  readonly name: string                                 // filesystem name
+  readonly title: string
+  readonly prompt?: string                              // hint shown next to the start button
+  readonly cast: ReadonlyArray<CastMember>              // exactly 2 in v1
+  readonly steps: ReadonlyArray<Step>                   // ≥1
+  readonly contextOverrides?: ContextOverrides
 }
 
-// === Run state ===
+// === Runtime shapes (built in Phase B/C/D) ===
 
-export type BeatStatus = 'pursuing' | 'met' | 'abandoned'
-export type BeatIntent = 'speak' | 'hold'
-
-// One BeatRecord per call to `update_beat`. Phase-1 calls have no speech_acts;
-// phase-2 calls (the elected speaker) declare them.
-export interface BeatRecord {
-  readonly turn: number
-  readonly character: string                          // cast name
-  readonly status: BeatStatus
-  readonly intent: BeatIntent
-  readonly addressedTo?: string                       // cast name
-  readonly mood?: string                              // one-word peer-visible tag
-  readonly speechActs?: ReadonlyArray<string>         // glossary names; phase-2 only
+export interface Whisper {
+  readonly ready_to_advance: boolean
+  readonly notes?: string                               // ≤200 chars
+  readonly addressing?: string                          // a present cast name
+  readonly role_update?: string                         // self-update for current step's role
 }
-
-export type SceneOutcome = 'resolved' | 'fizzled'
 
 export interface ScriptRun {
   readonly script: Script
   readonly roomId: string
-  sceneIndex: number
-  turn: number
-  // Per-scene state. Reset on advance.
-  beats: BeatRecord[]
-  statuses: Record<string, BeatStatus>                // keyed by cast name; 'pursuing' default
-  stallStreak: number
-  // Outcome of the most recently resolved/fizzled scene; cleared at scene advance.
-  lastOutcome?: SceneOutcome
-  // Set when the entire script ends. The engine emits script_completed and
-  // tears down spawned cast agents.
-  ended?: boolean
+  currentStep: number
+  turn: number                                          // total turns within current step
+  readiness: Record<string, boolean>                    // castName → ready_to_advance
+  roleOverrides: Record<string, string>                 // castName → current role override
+  lastWhisper: Record<string, Whisper>                  // castName → most recent whisper
+  whisperFailures: number                               // consecutive failures, surfaced in UI
+  priorMode?: 'broadcast' | 'manual'                    // restored on stop
+  ended: boolean
 }
-
-// === Wire-level events for UI ===
-
-export interface ScriptEvent {
-  readonly script_started: { readonly scriptId: string; readonly scriptName: string }
-  readonly script_scene_advanced: { readonly scriptId: string; readonly sceneIndex: number; readonly setup: string }
-  readonly script_beat: { readonly scriptId: string; readonly beat: BeatRecord }
-  readonly script_completed: { readonly scriptId: string; readonly outcomes: ReadonlyArray<SceneOutcome> }
-}
-
-export type ScriptEventName = keyof ScriptEvent
-export type ScriptEventDetail<E extends ScriptEventName = ScriptEventName> = ScriptEvent[E]

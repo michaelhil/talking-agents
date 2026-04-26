@@ -7,10 +7,12 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v12: current. Older versions are rejected at load — no migration ladder.
-//      v12 removes macros entirely (replaced by the script engine — see
-//      docs/scripts.md). Drops RoomSnapshot.selectedMacroId and any persisted
-//      macro artifacts. Old snapshots fail isValidSnapshot and are ignored.
+// v13: current. Older versions are rejected at load — no migration ladder.
+//      v13 removes the v1 script engine entirely (replaced by the v2 reactive
+//      runner — see docs/scripts.md). v1 ScriptRun was never persisted, so
+//      this is a clean drop with nothing to migrate.
+//      v12 removed macros entirely. Dropped RoomSnapshot.selectedMacroId and
+//      any persisted macro artifacts.
 //      v11 added RoomSnapshot.summaryConfig + latestSummary. Also removed the
 //      cap-based message pruning path, so compressedIds are only populated by
 //      the summary-engine's replaceCompression() now.
@@ -27,7 +29,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 12
+export const SNAPSHOT_VERSION = 13
 
 // --- Snapshot schema ---
 
@@ -50,7 +52,7 @@ export interface AgentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '12'
+  readonly version: '13'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>
@@ -125,7 +127,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const artifacts = system.house.artifacts.list({ includeResolved: true })
 
   return {
-    version: '12',
+    version: '13',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -143,8 +145,8 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
 const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
   raw.version === String(SNAPSHOT_VERSION)
 
-// No migration ladder — v12 is a clean break (macro removal). Older snapshots
-// are rejected by isValidSnapshot and the server starts fresh.
+// No migration ladder — v13 is a clean break (script-engine removal). Older
+// snapshots are rejected by isValidSnapshot and the server starts fresh.
 
 // --- Save / Load ---
 

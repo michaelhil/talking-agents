@@ -1,5 +1,5 @@
 // ============================================================================
-// Script store — filesystem-backed loader.
+// Script store — filesystem-backed loader (v2 shape).
 //
 // Layout (mirrors src/skills/loader.ts):
 //   $SAMSINN_HOME/scripts/<name>/script.json      ← preferred
@@ -8,13 +8,17 @@
 // Each entry is parsed into a Script and registered under <name>. The name
 // must match VALID_NAME (lowercase alphanumerics + dash + underscore).
 //
-// Loading is one-shot: scanScriptDir() at startup populates the store; reload()
-// rescans on demand (used after the user drops in a new script). No watchers.
+// v2 shape: cast (≥2, exactly 2 in v1) + steps (≥1) + optional contextOverrides.
 // ============================================================================
 
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { readdir, readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Script, Scene, CastMember, Objective, Signal, SpeechActDef } from './types/script.ts'
+import type {
+  Script,
+  Step,
+  CastMember,
+  ContextOverrides,
+} from './types/script.ts'
 
 const VALID_NAME = /^[a-z0-9][a-z0-9_-]*$/
 
@@ -22,6 +26,8 @@ export interface ScriptStore {
   readonly get: (name: string) => Script | undefined
   readonly list: () => ReadonlyArray<Script>
   readonly reload: () => Promise<ReadonlyArray<string>>   // returns names loaded
+  readonly upsert: (raw: unknown) => Promise<Script>      // write file + reload + return parsed
+  readonly remove: (name: string) => Promise<boolean>     // returns false if not found
 }
 
 export const createScriptStore = (baseDir: string): ScriptStore => {
@@ -34,10 +40,43 @@ export const createScriptStore = (baseDir: string): ScriptStore => {
     return loaded.map(s => s.name)
   }
 
+  const upsert = async (raw: unknown): Promise<Script> => {
+    if (!raw || typeof raw !== 'object') throw new Error('script must be a JSON object')
+    const obj = raw as Record<string, unknown>
+    if (typeof obj.name !== 'string' || !VALID_NAME.test(obj.name)) {
+      throw new Error(`script name must match ${VALID_NAME} (got "${String(obj.name)}")`)
+    }
+    const name = obj.name
+    // Validate by parsing first so we never write garbage.
+    const json = JSON.stringify(obj, null, 2)
+    parseScript(name, json)
+    // Write to dir-form (consistent with skills layout).
+    const dir = join(baseDir, name)
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'script.json'), json, 'utf-8')
+    await reload()
+    const reloaded = scripts.get(name)
+    if (!reloaded) throw new Error(`upsert: script "${name}" did not reload`)
+    return reloaded
+  }
+
+  const remove = async (name: string): Promise<boolean> => {
+    if (!VALID_NAME.test(name)) return false
+    const dir = join(baseDir, name)
+    const flat = join(baseDir, `${name}.json`)
+    let removed = false
+    try { await rm(dir, { recursive: true, force: true }); removed = true } catch { /* may not exist */ }
+    try { await rm(flat, { force: true }); removed = removed || true } catch { /* may not exist */ }
+    if (removed) await reload()
+    return scripts.get(name) === undefined && removed
+  }
+
   return {
     get: (name) => scripts.get(name),
     list: () => [...scripts.values()],
     reload,
+    upsert,
+    remove,
   }
 }
 
@@ -48,7 +87,7 @@ const scanScriptDir = async (baseDir: string): Promise<ReadonlyArray<Script>> =>
   try {
     entries = await readdir(baseDir)
   } catch {
-    return []   // dir absent — empty store
+    return []
   }
 
   const out: Script[] = []
@@ -67,7 +106,7 @@ const scanScriptDir = async (baseDir: string): Promise<ReadonlyArray<Script>> =>
       try {
         raw = await readFile(join(full, 'script.json'), 'utf-8')
       } catch {
-        continue   // dir without script.json — skip silently
+        continue
       }
       name = entry
     } else if (info.isFile() && entry.endsWith('.json')) {
@@ -101,7 +140,7 @@ const scanScriptDir = async (baseDir: string): Promise<ReadonlyArray<Script>> =>
 
 // === Parsing + validation ===
 
-const parseScript = (name: string, raw: string): Script => {
+export const parseScript = (name: string, raw: string): Script => {
   let json: unknown
   try {
     json = JSON.parse(raw)
@@ -111,172 +150,153 @@ const parseScript = (name: string, raw: string): Script => {
   if (!json || typeof json !== 'object') throw new Error('script must be a JSON object')
   const j = json as Record<string, unknown>
 
-  const acts = parseActs(j.acts)
+  if (typeof j.title !== 'string' || j.title.trim() === '') {
+    throw new Error('title: required non-empty string')
+  }
+  const prompt = typeof j.prompt === 'string' ? j.prompt : undefined
+
   const cast = parseCast(j.cast)
+  if (cast.length !== 2) throw new Error(`cast: v1 requires exactly 2 members (got ${cast.length})`)
+  const startsCount = cast.filter(c => c.starts).length
+  if (startsCount !== 1) {
+    throw new Error(`cast: exactly one member must have starts: true (got ${startsCount})`)
+  }
+
   const castNames = new Set(cast.map(c => c.name))
-  const scenes = parseScenes(j.scenes, castNames, acts)
+  const steps = parseSteps(j.steps, castNames)
+  const contextOverrides = parseContextOverrides(j.contextOverrides)
 
   return {
     id: crypto.randomUUID(),
     name,
-    acts,
+    title: j.title,
+    ...(prompt !== undefined ? { prompt } : {}),
     cast,
-    scenes,
+    steps,
+    ...(contextOverrides !== undefined ? { contextOverrides } : {}),
   }
-}
-
-const parseActs = (raw: unknown): Record<string, SpeechActDef> => {
-  if (!raw || typeof raw !== 'object') throw new Error('acts: must be an object')
-  const out: Record<string, SpeechActDef> = {}
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof v === 'string') {
-      out[k] = { name: k, description: v }
-    } else if (v && typeof v === 'object' && typeof (v as { description?: unknown }).description === 'string') {
-      out[k] = { name: k, description: (v as { description: string }).description }
-    } else {
-      throw new Error(`acts.${k}: expected string description or { description: string }`)
-    }
-  }
-  if (Object.keys(out).length === 0) throw new Error('acts: must declare at least one speech-act')
-  return out
 }
 
 const parseCast = (raw: unknown): ReadonlyArray<CastMember> => {
-  if (!raw || typeof raw !== 'object') throw new Error('cast: must be an object')
+  if (!Array.isArray(raw)) throw new Error('cast: must be an array')
   const out: CastMember[] = []
-  for (const [castName, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (!v || typeof v !== 'object') throw new Error(`cast.${castName}: must be an object`)
+  const seen = new Set<string>()
+  for (let i = 0; i < raw.length; i++) {
+    const v = raw[i]
+    if (!v || typeof v !== 'object') throw new Error(`cast[${i}]: must be an object`)
     const c = v as Record<string, unknown>
-    const kind = c.kind === 'human' ? 'human' : 'ai'
-    if (kind === 'ai') {
-      const cfg = c.agentConfig
-      if (!cfg || typeof cfg !== 'object') {
-        throw new Error(`cast.${castName}: ai cast requires agentConfig`)
-      }
-      const ag = cfg as Record<string, unknown>
-      if (typeof ag.model !== 'string' || typeof ag.persona !== 'string') {
-        throw new Error(`cast.${castName}.agentConfig: model and persona are required`)
-      }
-      out.push({
-        name: castName,
-        kind: 'ai',
-        agentConfig: { ...ag, name: castName } as CastMember['agentConfig'],
-      })
-    } else {
-      out.push({
-        name: castName,
-        kind: 'human',
-        ...(typeof c.humanAgentName === 'string' ? { humanAgentName: c.humanAgentName } : {}),
-      })
+    if (typeof c.name !== 'string' || c.name.trim() === '') {
+      throw new Error(`cast[${i}].name: required non-empty string`)
     }
+    if (seen.has(c.name)) throw new Error(`cast: duplicate name "${c.name}"`)
+    seen.add(c.name)
+    if (typeof c.persona !== 'string' || c.persona.trim() === '') {
+      throw new Error(`cast[${i}].persona: required non-empty string`)
+    }
+    if (typeof c.model !== 'string' || c.model.trim() === '') {
+      throw new Error(`cast[${i}].model: required non-empty string`)
+    }
+    let tools: ReadonlyArray<string> | undefined
+    if (c.tools !== undefined) {
+      if (!Array.isArray(c.tools) || c.tools.some(t => typeof t !== 'string')) {
+        throw new Error(`cast[${i}].tools: must be a string array`)
+      }
+      tools = c.tools as string[]
+    }
+    out.push({
+      name: c.name,
+      persona: c.persona,
+      model: c.model,
+      ...(c.starts === true ? { starts: true } : {}),
+      ...(tools ? { tools } : {}),
+    })
   }
-  if (out.length === 0) throw new Error('cast: must declare at least one member')
   return out
 }
 
-const parseScenes = (
-  raw: unknown,
-  castNames: ReadonlySet<string>,
-  acts: Readonly<Record<string, SpeechActDef>>,
-): ReadonlyArray<Scene> => {
+const parseSteps = (raw: unknown, castNames: ReadonlySet<string>): ReadonlyArray<Step> => {
   if (!Array.isArray(raw) || raw.length === 0) {
-    throw new Error('scenes: must be a non-empty array')
+    throw new Error('steps: must be a non-empty array')
   }
-  return raw.map((s, i) => parseScene(s, i, castNames, acts))
+  return raw.map((s, i) => parseStep(s, i, castNames))
 }
 
-const parseScene = (
+const parseStep = (
   raw: unknown,
   index: number,
   castNames: ReadonlySet<string>,
-  acts: Readonly<Record<string, SpeechActDef>>,
-): Scene => {
-  if (!raw || typeof raw !== 'object') throw new Error(`scenes[${index}]: must be an object`)
+): Step => {
+  if (!raw || typeof raw !== 'object') throw new Error(`steps[${index}]: must be an object`)
   const s = raw as Record<string, unknown>
-  if (typeof s.setup !== 'string') throw new Error(`scenes[${index}].setup: required string`)
-  if (!Array.isArray(s.present) || s.present.length === 0) {
-    throw new Error(`scenes[${index}].present: required non-empty string array`)
+  if (typeof s.title !== 'string' || s.title.trim() === '') {
+    throw new Error(`steps[${index}].title: required non-empty string`)
   }
-  const present: string[] = []
-  for (const n of s.present) {
-    if (typeof n !== 'string' || !castNames.has(n)) {
-      throw new Error(`scenes[${index}].present: "${String(n)}" not in cast`)
+  if (!s.roles || typeof s.roles !== 'object') {
+    throw new Error(`steps[${index}].roles: required object keyed by cast name`)
+  }
+  const roles: Record<string, string> = {}
+  for (const [castName, role] of Object.entries(s.roles as Record<string, unknown>)) {
+    if (!castNames.has(castName)) {
+      throw new Error(`steps[${index}].roles: "${castName}" not in cast`)
     }
-    present.push(n)
-  }
-  if (!s.objectives || typeof s.objectives !== 'object') {
-    throw new Error(`scenes[${index}].objectives: required object keyed by cast name`)
-  }
-  const objectives: Record<string, Objective> = {}
-  for (const [castName, obj] of Object.entries(s.objectives as Record<string, unknown>)) {
-    if (!present.includes(castName)) {
-      throw new Error(`scenes[${index}].objectives: "${castName}" not in this scene's present list`)
+    if (typeof role !== 'string' || role.trim() === '') {
+      throw new Error(`steps[${index}].roles.${castName}: required non-empty string`)
     }
-    objectives[castName] = parseObjective(obj, `scenes[${index}].objectives.${castName}`, castNames, acts)
+    roles[castName] = role
   }
-  // Each present character must have an objective
-  for (const n of present) {
-    if (!objectives[n]) {
-      throw new Error(`scenes[${index}].objectives.${n}: missing objective for present character`)
+  // Every cast member must have a role declared for every step.
+  for (const c of castNames) {
+    if (!roles[c]) {
+      throw new Error(`steps[${index}].roles.${c}: missing role for cast member`)
     }
   }
-  return { setup: s.setup, present, objectives }
+  return {
+    title: s.title,
+    ...(typeof s.description === 'string' ? { description: s.description } : {}),
+    roles,
+  }
 }
 
-const parseObjective = (
-  raw: unknown,
-  path: string,
-  castNames: ReadonlySet<string>,
-  acts: Readonly<Record<string, SpeechActDef>>,
-): Objective => {
-  if (!raw || typeof raw !== 'object') throw new Error(`${path}: must be an object`)
+const parseContextOverrides = (raw: unknown): ContextOverrides | undefined => {
+  if (raw === undefined) return undefined
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('contextOverrides: must be an object')
+  }
   const o = raw as Record<string, unknown>
-  if (typeof o.want !== 'string' || o.want.trim() === '') {
-    throw new Error(`${path}.want: required non-empty string`)
-  }
-  return { want: o.want, signal: parseSignal(o.signal, `${path}.signal`, castNames, acts) }
-}
+  const result: ContextOverrides = {}
 
-const parseSignal = (
-  raw: unknown,
-  path: string,
-  castNames: ReadonlySet<string>,
-  acts: Readonly<Record<string, SpeechActDef>>,
-): Signal => {
-  if (!raw || typeof raw !== 'object') throw new Error(`${path}: must be an object`)
-  const s = raw as Record<string, unknown>
-  if (Array.isArray(s.any_of)) {
-    if (s.any_of.length === 0) throw new Error(`${path}.any_of: must be non-empty`)
-    return { any_of: s.any_of.map((sub, i) => parseSignal(sub, `${path}.any_of[${i}]`, castNames, acts)) }
-  }
-  if (s.acts && typeof s.acts === 'object') {
-    const out: Record<string, ReadonlyArray<string>> = {}
-    for (const [castName, list] of Object.entries(s.acts as Record<string, unknown>)) {
-      if (!castNames.has(castName)) throw new Error(`${path}.acts: "${castName}" not in cast`)
-      if (!Array.isArray(list) || list.length === 0) {
-        throw new Error(`${path}.acts.${castName}: must be non-empty string array`)
-      }
-      const acts2: string[] = []
-      for (const a of list) {
-        if (typeof a !== 'string' || !acts[a]) {
-          throw new Error(`${path}.acts.${castName}: "${String(a)}" not in glossary`)
-        }
-        acts2.push(a)
-      }
-      out[castName] = acts2
+  if (o.includePrompts !== undefined) {
+    if (!o.includePrompts || typeof o.includePrompts !== 'object') {
+      throw new Error('contextOverrides.includePrompts: must be an object')
     }
-    return { acts: out }
-  }
-  if (s.status && typeof s.status === 'object') {
-    const out: Record<string, 'met' | 'abandoned'> = {}
-    for (const [castName, val] of Object.entries(s.status as Record<string, unknown>)) {
-      if (!castNames.has(castName)) throw new Error(`${path}.status: "${castName}" not in cast`)
-      if (val !== 'met' && val !== 'abandoned') {
-        throw new Error(`${path}.status.${castName}: must be "met" or "abandoned"`)
-      }
-      out[castName] = val
+    const ip = o.includePrompts as Record<string, unknown>
+    const allowed = ['persona', 'room', 'house', 'responseFormat', 'skills', 'script']
+    for (const k of Object.keys(ip)) {
+      if (!allowed.includes(k)) throw new Error(`contextOverrides.includePrompts.${k}: unknown key`)
+      if (typeof ip[k] !== 'boolean') throw new Error(`contextOverrides.includePrompts.${k}: must be boolean`)
     }
-    return { status: out }
+    ;(result as { includePrompts?: ContextOverrides['includePrompts'] }).includePrompts = ip as ContextOverrides['includePrompts']
   }
-  throw new Error(`${path}: must be { acts }, { status }, or { any_of: [...] }`)
+
+  if (o.includeContext !== undefined) {
+    if (!o.includeContext || typeof o.includeContext !== 'object') {
+      throw new Error('contextOverrides.includeContext: must be an object')
+    }
+    const ic = o.includeContext as Record<string, unknown>
+    const allowed = ['participants', 'artifacts', 'activity', 'knownAgents']
+    for (const k of Object.keys(ic)) {
+      if (!allowed.includes(k)) throw new Error(`contextOverrides.includeContext.${k}: unknown key`)
+      if (typeof ic[k] !== 'boolean') throw new Error(`contextOverrides.includeContext.${k}: must be boolean`)
+    }
+    ;(result as { includeContext?: ContextOverrides['includeContext'] }).includeContext = ic as ContextOverrides['includeContext']
+  }
+
+  if (o.includeTools !== undefined) {
+    if (typeof o.includeTools !== 'boolean') {
+      throw new Error('contextOverrides.includeTools: must be boolean')
+    }
+    ;(result as { includeTools?: boolean }).includeTools = o.includeTools
+  }
+
+  return result
 }
