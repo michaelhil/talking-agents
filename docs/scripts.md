@@ -121,9 +121,11 @@ honestly. There is no save mechanism, no narration, no nudge.
 
 ## What is deliberately absent
 
-- **Narrator.** The system never speaks in prose. Setup paragraphs are
-  injected as private context to each entering character; transcripts contain
-  only character dialogue and the structural marker `(silence)`.
+- **Narrator.** The system never speaks in prose mid-scene. The only
+  engine-emitted text is the **setup card** at scene boundaries (sender
+  name `Stage`, bracket-prefixed `[Scene N] ...`) — a structural stage
+  direction the cast reads, not a voice in the scene. There is no
+  ambient narration, no pressure narration, no closing line.
 - **Director / judge.** No agent or rule decides scene-end on behalf of the
   characters. Every status is either self-declared by a character or
   structurally derived from declared acts.

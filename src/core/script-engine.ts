@@ -484,11 +484,14 @@ export const createScriptEngine = (deps: ScriptEngineDeps): ScriptEngine => {
     const room = system().house.getRoom(roomId)
     if (!room) return
     const cast = scene.present.join(', ')
-    // Post as 'chat' so cast agents pick it up in their context. (System
-    // messages are filtered out by the context-builder.)
+    // Setup card — structural scene-boundary context, NOT a voice in the
+    // scene. Posted as 'chat' (so cast agents pick it up in their context;
+    // 'system'-typed messages are filtered out by context-builder), but
+    // labelled "Stage" and bracket-prefixed so the LLMs read it as a
+    // stage direction, not a character speaking.
     room.post({
       senderId: SYSTEM_SENDER_ID,
-      senderName: 'Narrator',
+      senderName: 'Stage',
       content: `[Scene ${run.sceneIndex + 1}] ${scene.setup}\n(Present: ${cast})`,
       type: 'chat',
     })
