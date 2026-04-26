@@ -39,12 +39,13 @@ export const renderRooms = (
     const base = 'inline-block w-2 h-2 rounded-full shrink-0'
     const dotColor = isPaused ? 'bg-border-strong' : isThinking ? 'bg-thinking typing-indicator' : 'bg-success'
     dot.className = `${base} ${dotColor}`
-    if (opts.onTogglePaused) {
+    const onTogglePaused = opts.onTogglePaused
+    if (onTogglePaused) {
       const btn = dot as HTMLButtonElement
       btn.type = 'button'
       btn.title = isPaused ? 'Paused — click to resume' : 'Active — click to pause'
       btn.setAttribute('aria-pressed', isPaused ? 'true' : 'false')
-      btn.onclick = (e) => { e.stopPropagation(); opts.onTogglePaused!(room.id, room.name, !isPaused) }
+      btn.onclick = (e) => { e.stopPropagation(); onTogglePaused(room.id, room.name, !isPaused) }
     }
     div.appendChild(dot)
 
@@ -54,12 +55,13 @@ export const renderRooms = (
     if (unread > 0) name.className += ' font-bold'
     div.appendChild(name)
 
-    if (opts.onDelete) {
+    const onDelete = opts.onDelete
+    if (onDelete) {
       const del = document.createElement('button')
       del.className = 'text-danger hover:text-danger text-xs opacity-0 group-hover:opacity-100 shrink-0'
       del.textContent = '×'
       del.title = 'Delete room'
-      del.onclick = (e) => { e.stopPropagation(); opts.onDelete!(room.id, room.name) }
+      del.onclick = (e) => { e.stopPropagation(); onDelete(room.id, room.name) }
       div.appendChild(del)
     }
 

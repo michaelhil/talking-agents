@@ -19,7 +19,7 @@ export interface CastMember {
   readonly model: string
   readonly starts?: boolean                             // exactly one cast member is true
   readonly tools?: ReadonlyArray<string>                // optional tool list (always includes nothing extra by default)
-  readonly includePrompts?: IncludePrompts              // legacy passthrough for non-script-mode agents
+  readonly includePrompts?: IncludePrompts              // forwarded to the spawned agent's config
   readonly includeContext?: IncludeContext
   readonly includeTools?: boolean
 }

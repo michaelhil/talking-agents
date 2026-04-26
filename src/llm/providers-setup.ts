@@ -54,11 +54,12 @@ export const buildProvidersFromConfig = (
   // Cloud providers — build a gateway for every known profile so that keys
   // added at runtime can activate a provider without server restart. The
   // router skips providers whose current key is empty via `isProviderEnabled`.
+  const providerKeys = options.providerKeys
   for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
     const cc = config.cloud[name]
     const staticKey = cc?.apiKey ?? ''
-    const getApiKey = options.providerKeys
-      ? () => options.providerKeys!.get(name)
+    const getApiKey = providerKeys
+      ? () => providerKeys.get(name)
       : () => staticKey
     const maxConcurrent = cc?.maxConcurrent
     // Anthropic's OpenAI-compat endpoint rejects `Authorization: Bearer ...`
@@ -85,8 +86,8 @@ export const buildProvidersFromConfig = (
   const router = createProviderRouter(gateways, {
     order: config.order,
     forceFailProvider: config.forceFailProvider,
-    isProviderEnabled: options.providerKeys
-      ? (name) => name === 'ollama' || options.providerKeys!.isEnabled(name)
+    isProviderEnabled: providerKeys
+      ? (name) => name === 'ollama' || providerKeys.isEnabled(name)
       : undefined,
     contextLookup: async (provider, model) => {
       const info = await getContextWindow(provider, model, {
