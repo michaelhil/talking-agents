@@ -592,7 +592,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     spawnAIAgent(config, llm, house, team, routeMessage, toolRegistry, {
       ...options,
       getSkills: getSkillsForRoom,
-      getScript: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
+      getScriptContext: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
       onEvalEvent: evalEvent.proxy,
     })
 

@@ -1,207 +1,149 @@
-# Scripts — Multi-Agent Improvisational Drama
+# Scripts — Multi-Agent Living Documents
 
-## Premise
+A script is a markdown document that orchestrates a multi-agent
+conversation. The same document evolves at runtime: each agent's spoken
+line gets inserted under the current step, and the result becomes both the
+agent's system prompt AND the right-rail panel you watch in the UI.
 
-Multi-agent conversations driven by hand-written turn-prompts (the old macro
-system) feel artificial. Round-robin sequencing forces structure where there
-should be intention. This document specifies **scripts**: a replacement that
-treats a multi-agent exchange like an improv troupe playing a loose script,
-not like a state machine cycling through agents.
+There is no separate transcript fed to the cast — the script IS the
+transcript. Cast members read a single coherent document that names them,
+states the current step's goal, lists their role in that step, shows the
+dialogue so far in this step, and indicates whose turn it is.
 
-A script is **a stage**, not a controller. There is no narrator, no director,
-no judge. Agents are characters with private wants. Resolution is structural.
+## File format
 
-Scripts replace macros entirely.
+Scripts live at `$SAMSINN_HOME/scripts/<name>/script.md` (or flat
+`<name>.md`). The grammar is strict; bad input is rejected with a
+line-precise error.
 
-## The shape of a script
+```markdown
+# SCRIPT: <title>                       ← required, exactly one
+Premise: <one-line text>                 ← optional
 
-A script is data. Three layers:
+## Cast                                  ← required
 
-```
-script:
-  acts:                                # speech-act glossary, per-script
-    admit_knowledge: "speaker acknowledges they knew something concealed"
-    deflect:         "speaker redirects without committing"
-    forgive:         "speaker releases the other from accountability"
-    withdraw:        "speaker disengages from the line of questioning"
+### <CastName>  [(starts)]               ← one per cast member, ≥2
+- model: <model-id>                      ← required
+- tools: <csv> | [a, b, c]               ← optional
+- includeTools: true|false               ← optional
+- persona: |                             ← required, multiline (4-space indent)
+    <line>
+    <line>
 
-  cast:                                # one entry per character, full agent config
-    Anna: { systemPrompt, model, tools, skills, ... }
-    Bob:  { ... }
+---                                      ← required separator
 
-  scenes:
-    - setup: "Anna's apartment, late evening. Bob has been waiting an hour."
-      present: [Anna, Bob]
-      objectives:
-        Anna:
-          want: "confront Bob about the affair"
-          signal: { acts: { Bob: [admit_knowledge] } }
-        Bob:
-          want: "avoid confessing without lying"
-          signal:
-            any_of:
-              - { status: { Anna: abandoned } }
-              - { acts:   { Bob:  [admit_knowledge] } }
+## Step <N> — <title>                    ← N is 1-based, sequential
+Goal: <one-line text>                    ← optional
+Roles:
+  <CastName> — <role1>; <role2>; ...     ← em-dash, en-dash, "--", or "-" all OK
+  <CastName> — <role>
 ```
 
-That is the entire authoring surface for the minimum scene.
+Cast names must match between `## Cast` and every step's `Roles:` block.
+Exactly one cast member must carry the `(starts)` marker — they speak
+first when the script begins. Step numbers must be contiguous from 1.
 
-### Cast
-Each cast member is a full Samsinn agent config — persona, model, tools, skills.
-Spawned at script start, despawned at script end. Entrances/exits between scenes
-are handled by a scene's `present` list; mid-scene cast changes are not allowed.
+A complete reference script is in `examples/scripts/quarterly-planning.md`.
 
-### Acts (speech-act glossary)
-A per-script dictionary of named acts. Each act has a one-line description.
-Characters declare which acts their dialogue performs (via `update_beat`).
-Author signals match against declared acts. Closed within a script,
-arbitrary across scripts. A starter library may be imported, but no act
-vocabulary is privileged by the system.
+## Runtime: the living document
 
-### Scenes
-Setup paragraph + cast list + per-character objectives. An objective is a
-`want` (free-text pursuit) + a `signal` (structural success criterion).
+When a script starts in a room, the runner:
 
-### Signals
-Composable predicates over two primitives:
+1. Spawns each cast member as a normal AI agent (scoped to the room).
+2. Switches the room to manual delivery (so cast members speak only when
+   activated by the runner).
+3. Posts a `Stage` card to the room marking the start of step 1.
+4. Activates the `(starts)` cast member.
 
-- `acts: { <character>: [<act>, …] }` — one of these acts was declared by
-  that character at any point in the scene.
-- `status: { <character>: met | abandoned }` — that character reached that
-  posture.
+After every cast post, the runner runs a small **whisper** classification:
+a one-shot JSON call to the same model asking the agent to flag whether
+its turn substantially served the step's goal. The whisper is recorded
+with the dialogue entry; when both cast members' last whispers say
+`ready_to_advance: true`, the step advances.
 
-Combinator: `any_of: [ … ]`. That's the whole signal grammar.
+A non-cast message (you typing in the room) resets readiness AND the
+"asked N×" pressure counters — new information restarts the clock.
 
-## How a turn runs
+## What the cast sees
 
-**Phase 1 — react.** Every present character receives a minimal context
-(scene setup + their objective + the latest message + peer mood tags) and
-calls a built-in `update_beat` tool only:
+Cast members do NOT receive the normal context-builder output (house
+prompt, room participants, artifacts, message history). Their entire
+system prompt IS the rendered living document for their viewing
+perspective:
 
-```
-update_beat(
-  status:        pursuing | met | abandoned,
-  intent:        speak | hold,
-  addressed_to?: <character>,
-  mood?:         <one word>
-)
-```
+- `(you)` marker on their own cast row
+- Persona one-liners for everyone (full personas live in the file but
+  are compacted in the rendered view)
+- All steps shown — past with `[COMPLETE]` and dialogue + the cast
+  member's own whisper notes; current with `[CURRENT]`, the Pressure
+  block, dialogue + their own whispers, and `← last` + `(your turn)`
+  cues; upcoming as title + goal + roles only
+- Their own whispers only — they cannot see peers' inner monologue
 
-No dialogue is produced in phase 1. Calls fan out in parallel.
+The user message that follows the system prompt is a single instruction:
+*"Speak your next line as <name>. Reply with dialogue only."*
 
-**Phase 2 — speak.** A selection rule picks one character to speak:
+## What you see (right-rail panel)
 
-1. Last turn's named addressee, if they bid `intent: speak`.
-2. Otherwise, longest-quiet character bidding `speak`.
-3. No one bids → record `(silence)` in the transcript and re-poll next turn.
+The same rendered document, but in **director view**: ALL whispers are
+visible. The panel:
 
-The selected character runs a normal full-context generation, producing
-dialogue plus a final `update_beat` call that includes
-`speech_acts: [<act>, …]` declaring what acts the dialogue performed.
+- Shows when a script is active in the selected room; hides otherwise
+- Drag-resizable (width persists in localStorage)
+- Re-renders on every WS event (`script_dialogue_appended`,
+  `script_readiness_changed`, `script_step_advanced`, `script_started`,
+  `script_completed`)
+- Closeable per-run (the room-header chip remains visible)
 
-## How a scene resolves
+## Pressure to proceed
 
-Signals are evaluated after each phase-2 turn against:
-- The growing list of speech-acts declared in the scene.
-- The current statuses of all present characters.
+The whisper schema produces one boolean per turn (`ready_to_advance`).
+The runner derives a `readyStreak` per cast member: how many consecutive
+turns they've been ready while waiting for peers. Surfaced as:
 
-When a character's signal matches, their status auto-advances to `met`.
-A character can also self-mark `abandoned` via `update_beat`.
+- `not ready` — `readyStreak = 0`
+- `ready (asked 1×)` — first ready signal
+- `ready (asked N×)` — has been waiting on a peer for N turns
 
-**Scene ends** when every present character is `met` or `abandoned`.
+When all cast members are ready, the step advances. Resets on step
+advance and on user interjection.
 
-**Resolved characters stay present** but become reactive: their phase-2
-context gains a flag (*"you have what you came for"* / *"you've stopped
-pursuing"*) so they no longer drive the scene.
-
-**Scene fizzles** if a stall condition holds: N consecutive turns with no
-status transitions and no new speech-acts declared. After M further stalled
-turns the scene auto-ends with status `fizzled`. UI surfaces the fizzle
-honestly. There is no save mechanism, no narration, no nudge.
-
-## What is deliberately absent
-
-- **Narrator.** The system never speaks in prose mid-scene. The only
-  engine-emitted text is the **setup card** at scene boundaries (sender
-  name `Stage`, bracket-prefixed `[Scene N] ...`) — a structural stage
-  direction the cast reads, not a voice in the scene. There is no
-  ambient narration, no pressure narration, no closing line.
-- **Director / judge.** No agent or rule decides scene-end on behalf of the
-  characters. Every status is either self-declared by a character or
-  structurally derived from declared acts.
-- **Turn caps.** No min, no max. Scenes run as long as productive movement
-  occurs.
-- **Pressure narration.** No prose injected mid-scene to nudge agents. If a
-  scene stalls, it stalls; if it keeps stalling, it fizzles.
-- **Director's notes / mid-scene authoring overrides.** None. If a scene
-  doesn't go where the author wanted, the author rewrites — or accepts the
-  divergence by editing the next scene's setup.
-- **Quorum or voting on scene-end.** Each character speaks for themselves
-  about themselves.
-
-## Inter-scene memory
-
-Each character is a real agent with their own message history. Their
-subjective record of past scenes *is* their history. Off-stage scenes
-(those a character was not `present` for) do not enter their context unless
-the next scene's setup explicitly summarizes what they would know.
-
-Characters may differ in what they remember, and that asymmetry is dramatic
-fuel rather than a bug.
-
-## Cost
-
-Per turn: N small phase-1 generations (parallel, minimal context) + 1
-full phase-2 generation. Roughly 1.5× a normal multi-agent broadcast turn.
-
-## Authoring guidance
-
-- **Objectives are wants, not lines.** `signal` references *acts*, never
-  dialogue strings. The closed glossary enforces this — there is no way to
-  match against specific words.
-- **Interlocking objectives create drama.** Anna's `met` should require
-  something Bob does. Bob's `met` should give him a way out that conflicts
-  with Anna's want. Scenes resolve when characters negotiate it out of each
-  other.
-- **Scenes that can't resolve will fizzle.** If both `met` paths are
-  impossible, the system tells you by fizzling. Rewrite.
-- **Stable persona, scene-scoped objective.** A character's `systemPrompt`
-  and skills carry across scenes. Only the `objective` changes per scene.
-
-## Replaces macros
-
-The existing macro system (`MacroStep`, `MacroRun`, macro artifact, macro
-overlay on delivery, macro UI panel/editor) is removed in full. Macros and
-scripts are not coexisting concepts; scripts are the successor.
-
-## Running a script
-
-Drop a script under `~/.samsinn/scripts/<name>/script.json` (or flat
-`~/.samsinn/scripts/<name>.json`). Reload the catalog and start a run in
-an existing room:
+## REST + WebSocket surface
 
 ```bash
-# Inspect the catalog
+# Catalog
 curl http://localhost:3000/api/scripts
-
-# Reload after editing files
 curl -X POST http://localhost:3000/api/scripts/reload
+curl http://localhost:3000/api/scripts/<name>      # full source
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"x","source":"# SCRIPT: …"}' \
+  http://localhost:3000/api/scripts                # upsert
+curl -X DELETE http://localhost:3000/api/scripts/<name>
 
-# Start a script in a room (the room must already exist)
-curl -X POST http://localhost:3000/api/rooms/<room>/script/start \
-  -H 'Content-Type: application/json' \
-  -d '{"scriptName": "the-accusation"}'
-
-# Inspect the live run
+# Per-room run
 curl http://localhost:3000/api/rooms/<room>/script
-
-# Stop early
+curl 'http://localhost:3000/api/rooms/<room>/script/document?viewer=director'
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"scriptName":"<name>"}' \
+  http://localhost:3000/api/rooms/<room>/script/start
 curl -X POST http://localhost:3000/api/rooms/<room>/script/stop
+curl -X POST http://localhost:3000/api/rooms/<room>/script/advance
 ```
 
-While a script is active the room is set to manual delivery. AI cast members
-are spawned under scoped names (`script-<roomId8>-<castName>`) and despawned
-on stop. WebSocket clients receive `script_started`, `script_scene_advanced`,
-`script_beat`, `script_completed` events.
+WebSocket events broadcast to room subscribers:
+`script_started`, `script_step_advanced`, `script_readiness_changed`,
+`script_dialogue_appended`, `script_completed`, `script_catalog_changed`.
 
-A complete reference script is in `examples/scripts/the-accusation.json`.
+## Authoring tips
+
+- **Persona is character + voice; role is what they push for in this step.**
+  A character's persona stays constant across steps; their role changes.
+- **Two cast members in v1.** The runner alternates activation between
+  them. N>2 cast is a future extension.
+- **Interlocking goals create movement.** Step 1's role for Alex should
+  imply something Sam needs to do for Alex to feel ready, and vice
+  versa.
+- **Stuck steps stall in the dialogue, not the engine.** If a step doesn't
+  advance, the Pressure block tells you which agent is holding back. Use
+  the operator force-advance button (▶▶) sparingly — it bypasses
+  readiness and may produce uneven scenes.

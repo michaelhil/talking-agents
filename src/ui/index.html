@@ -490,6 +490,9 @@
       <!-- Agent inspector area (inline, replaces chat when viewing an agent) -->
       <div id="agent-area" class="flex-1 overflow-y-auto p-4 hidden"></div>
 
+      <!-- Chat area + right-rail script document. Wrapper makes them siblings
+           so the rail sits beside the chat column without altering the section. -->
+      <div id="chat-and-rail" class="flex-1 flex flex-row min-h-0 overflow-hidden">
       <!-- Chat area (messages + chip row + input) -->
       <div id="chat-area" class="flex-1 flex flex-col min-h-0 overflow-hidden hidden">
         <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
@@ -510,6 +513,21 @@
             <button type="submit" id="btn-send" class="chat-send icon-btn" title="Send" aria-label="Send" disabled><span data-icon="corner-down-left"></span></button>
           </div>
         </form>
+      </div>
+
+      <!-- Right-rail: living-script document panel. Hidden until a script
+           is active in the selected room. Width persisted in localStorage. -->
+      <div id="script-doc-resize" class="w-1 cursor-col-resize bg-border hover:bg-border-strong shrink-0 hidden"></div>
+      <aside id="script-doc-rail" class="flex-col min-h-0 overflow-hidden bg-surface border-l border-border hidden" style="width: 360px;">
+        <div class="px-3 py-2 border-b border-border flex items-center justify-between shrink-0 gap-2">
+          <span class="text-xs font-semibold">Script document</span>
+          <div class="flex items-center gap-1">
+            <button id="btn-script-doc-source" class="text-xs text-text-muted hover:text-text-strong cursor-pointer underline" title="View raw script source">view source</button>
+            <button id="btn-script-doc-close" class="icon-btn" title="Hide" aria-label="Hide"><span data-icon="x"></span></button>
+          </div>
+        </div>
+        <pre id="script-doc-body" class="flex-1 overflow-auto px-3 py-2 text-xs whitespace-pre-wrap font-mono leading-relaxed"></pre>
+      </aside>
       </div>
 
       <!-- Workspace lives as a modal opened from #btn-workspace in the room toolbar. -->

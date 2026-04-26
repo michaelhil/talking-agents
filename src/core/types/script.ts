@@ -1,61 +1,47 @@
 // ============================================================================
-// Script types — multi-agent collaborative scripts (v2 — see docs/scripts.md).
+// Script types — multi-agent collaborative scripts (v3 — markdown-native).
 //
-// A script is a passive document. Definition lives on the filesystem under
-// $SAMSINN_HOME/scripts/<name>/script.json (or flat <name>.json). At start
-// time the runner spawns the cast as normal AI agents, sets the room to
-// manual, and reacts to each cast post by classifying a "whisper" (small
-// JSON-mode self-reflection) that drives step advancement.
+// Scripts are stored as markdown files (script.md) and parsed into the
+// shapes below. The same shape that's loaded from disk drives the runtime
+// state and the living-document view rendered into each cast member's
+// system prompt + the right-rail UI panel.
 //
-// No engine loop. No phase-1 fan-out. The runner is a reactive listener
-// over the room's existing onMessagePosted callback. See script-runner.ts.
+// See docs/scripts.md for the format.
 // ============================================================================
 
-// === Authored shape (what lives in script.json) ===
+import type { IncludePrompts, IncludeContext } from './agent.ts'
+
+// === Authored shape (parsed from script.md) ===
 
 export interface CastMember {
   readonly name: string                                 // unique within script; used as agent name
-  readonly persona: string
+  readonly persona: string                              // multiline; rendered as one block in the doc
   readonly model: string
   readonly starts?: boolean                             // exactly one cast member is true
-  readonly tools?: ReadonlyArray<string>                // optional regular tool list
+  readonly tools?: ReadonlyArray<string>                // optional tool list (always includes nothing extra by default)
+  readonly includePrompts?: IncludePrompts              // legacy passthrough for non-script-mode agents
+  readonly includeContext?: IncludeContext
+  readonly includeTools?: boolean
 }
 
 export interface Step {
+  readonly index: number                                // 0-based; assigned by parser
   readonly title: string
-  readonly description?: string
-  readonly roles: Readonly<Record<string, string>>      // castName → free-text role
-}
-
-export interface ContextOverrides {
-  readonly includePrompts?: {
-    readonly persona?: boolean
-    readonly room?: boolean
-    readonly house?: boolean
-    readonly responseFormat?: boolean
-    readonly skills?: boolean
-    readonly script?: boolean                           // gates the SCRIPT block (Phase E)
-  }
-  readonly includeContext?: {
-    readonly participants?: boolean
-    readonly artifacts?: boolean
-    readonly activity?: boolean
-    readonly knownAgents?: boolean
-  }
-  readonly includeTools?: boolean
+  readonly goal?: string
+  readonly roles: Readonly<Record<string, string>>      // castName → "role1; role2"
 }
 
 export interface Script {
   readonly id: string                                   // crypto.randomUUID() at load
   readonly name: string                                 // filesystem name
   readonly title: string
-  readonly prompt?: string                              // hint shown next to the start button
+  readonly premise?: string
   readonly cast: ReadonlyArray<CastMember>              // exactly 2 in v1
   readonly steps: ReadonlyArray<Step>                   // ≥1
-  readonly contextOverrides?: ContextOverrides
+  readonly source: string                               // raw .md text — for round-trip / debug
 }
 
-// === Runtime shapes (built in Phase B/C/D) ===
+// === Whisper (post-turn self-reflection, unchanged shape) ===
 
 export interface Whisper {
   readonly ready_to_advance: boolean
@@ -68,18 +54,37 @@ export interface WhisperRecord {
   readonly turn: number
   readonly whisper: Whisper
   readonly usedFallback: boolean
-  readonly rawResponse?: string                         // captured on failure (debug surface)
-  readonly errorReason?: string                         // captured on fallback
+  readonly rawResponse?: string
+  readonly errorReason?: string
 }
+
+// === Per-step dialogue accumulator ===
+
+export interface DialogueEntry {
+  readonly speaker: string                              // cast name OR non-cast sender name
+  readonly content: string
+  readonly messageId: string                            // for de-dup
+  readonly whispersByCast: Readonly<Record<string, WhisperRecord>>
+  // ↑ whispers attributed to THIS turn, keyed by cast name. Renderer picks
+  //   out only the viewer's own whisper when rendering a cast view.
+}
+
+export interface StepLog {
+  readonly entries: ReadonlyArray<DialogueEntry>
+  readonly advancedAt?: number                          // turn count at advance; undefined = current/upcoming
+}
+
+// === Runtime state ===
 
 export interface ScriptRun {
   readonly script: Script
   readonly roomId: string
-  currentStep: number
+  currentStep: number                                   // 0-based
   turn: number                                          // total turns within current step
   readiness: Record<string, boolean>                    // castName → ready_to_advance
+  readyStreak: Record<string, number>                   // castName → consecutive ready turns this step
   roleOverrides: Record<string, string>                 // castName → current role override
-  lastWhisper: Record<string, WhisperRecord>            // castName → most recent whisper record
+  stepLogs: StepLog[]                                   // index aligned with script.steps
   whisperFailures: number                               // consecutive failures, surfaced in UI
   priorMode?: 'broadcast' | 'manual'                    // restored on stop
   ended: boolean

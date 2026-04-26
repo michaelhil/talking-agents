@@ -1,13 +1,15 @@
 // ============================================================================
-// Script REST routes (v2).
+// Script REST routes (v3 — markdown-native).
 //
 // GET    /api/scripts                          → catalog
-// GET    /api/scripts/:name                    → full script
-// POST   /api/scripts                          → upsert (creates or overwrites)
+// GET    /api/scripts/:name                    → full script (with .md source)
+// POST   /api/scripts                          → upsert { name, source }
 // DELETE /api/scripts/:name                    → delete file
 // POST   /api/scripts/reload                   → rescan
 //
 // GET    /api/rooms/:name/script               → current run state
+// GET    /api/rooms/:name/script/document      → rendered living document
+//        ?viewer=<castName|director>
 // POST   /api/rooms/:name/script/start         → { scriptName }
 // POST   /api/rooms/:name/script/stop
 // POST   /api/rooms/:name/script/advance       → operator force-advance
@@ -15,6 +17,7 @@
 
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
+import { renderLivingScript } from '../../core/script-render.ts'
 
 export const scriptRoutes: ReadonlyArray<RouteEntry> = [
   // --- Catalog ---
@@ -27,7 +30,7 @@ export const scriptRoutes: ReadonlyArray<RouteEntry> = [
           id: s.id,
           name: s.name,
           title: s.title,
-          prompt: s.prompt,
+          premise: s.premise,
           cast: s.cast.map(c => ({ name: c.name, model: c.model, starts: !!c.starts })),
           steps: s.steps.length,
         })),
@@ -49,18 +52,28 @@ export const scriptRoutes: ReadonlyArray<RouteEntry> = [
       const name = decodeURIComponent(match[1]!)
       const script = system.scriptStore.get(name)
       if (!script) return errorResponse(`Script "${name}" not found`, 404)
-      return json(script)
+      return json({
+        id: script.id,
+        name: script.name,
+        title: script.title,
+        premise: script.premise,
+        source: script.source,
+        cast: script.cast.map(c => ({ name: c.name, model: c.model, starts: !!c.starts })),
+        steps: script.steps.length,
+      })
     },
   },
   {
     method: 'POST',
     pattern: /^\/api\/scripts$/,
     handler: async (req, _match, { system, broadcast }) => {
-      const body = await parseBody(req)
+      const body = await parseBody(req) as { name?: unknown; source?: unknown }
+      if (typeof body.name !== 'string') return errorResponse('name (string) required')
+      if (typeof body.source !== 'string') return errorResponse('source (markdown string) required')
       try {
-        const script = await system.scriptStore.upsert(body)
+        const script = await system.scriptStore.upsert(body.name, body.source)
         broadcast({ type: 'script_catalog_changed' })
-        return json({ ok: true, script })
+        return json({ ok: true, name: script.name, title: script.title })
       } catch (err) {
         return errorResponse(err instanceof Error ? err.message : 'invalid script', 400)
       }
@@ -98,11 +111,26 @@ export const scriptRoutes: ReadonlyArray<RouteEntry> = [
         stepTitle: run.script.steps[run.currentStep]?.title,
         turn: run.turn,
         readiness: run.readiness,
+        readyStreak: run.readyStreak,
         roleOverrides: run.roleOverrides,
-        lastWhisper: run.lastWhisper,
         whisperFailures: run.whisperFailures,
         ended: run.ended,
       })
+    },
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/rooms\/([^/]+)\/script\/document$/,
+    handler: (req, match, { system }) => {
+      const roomName = decodeURIComponent(match[1]!)
+      const room = system.house.getRoom(roomName)
+      if (!room) return errorResponse(`Room "${roomName}" not found`, 404)
+      const run = system.scriptRunner.getRun(room.profile.id)
+      if (!run) return json({ active: false })
+      const url = new URL(req.url)
+      const viewer = url.searchParams.get('viewer') ?? 'director'
+      const document = renderLivingScript(run, viewer === 'director' ? null : viewer)
+      return json({ active: true, viewer, document })
     },
   },
   {

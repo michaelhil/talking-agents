@@ -8,6 +8,7 @@
 import { $activeScriptByRoom, $scriptCatalog, $selectedRoomId } from './stores.ts'
 import { domRefs } from './app-dom.ts'
 import { showToast } from './toast.ts'
+import { showScriptDocPanel } from './script-doc-panel.ts'
 
 const POPOVER_HIDDEN_CLASS = 'hidden'
 
@@ -21,22 +22,43 @@ export const initScriptPanel = (deps: ScriptPanelDeps): void => {
     scriptRunningChip, scriptStartPopover,
   } = domRefs
 
+  // Make the chip clickable to re-open the document panel after dismissal.
+  scriptRunningChip.style.cursor = 'pointer'
+  scriptRunningChip.onclick = () => showScriptDocPanel()
+  scriptRunningChip.setAttribute('role', 'button')
+  scriptRunningChip.setAttribute('aria-label', 'Show script document')
+
   // --- Refresh chip state for the currently-selected room ---
   const refresh = (): void => {
     const roomId = $selectedRoomId.get()
     const active = roomId ? $activeScriptByRoom.get()[roomId] : undefined
     if (active) {
-      btnScriptStart.classList.add('hidden')
+      btnScriptStart.classList.remove('hidden')   // keep "+" visible so a new script can be started
       scriptRunningChip.classList.remove('hidden')
-      btnScriptAdvance.classList.remove('hidden')
-      btnScriptStop.classList.remove('hidden')
+      // Advance/Stop only make sense while running.
+      if (active.ended) {
+        btnScriptAdvance.classList.add('hidden')
+        btnScriptStop.classList.add('hidden')
+      } else {
+        btnScriptStart.classList.add('hidden')
+        btnScriptAdvance.classList.remove('hidden')
+        btnScriptStop.classList.remove('hidden')
+      }
       const total = active.totalSteps || (active.stepIndex + 1)
       const stepTitle = active.stepTitle || '…'
       const warn = active.whisperFailures >= 3 ? ' ⚠' : ''
-      scriptRunningChip.textContent = `${active.title} — Step ${active.stepIndex + 1}/${total}: ${stepTitle}${warn}`
-      scriptRunningChip.title = warn
-        ? `${active.whisperFailures} consecutive whisper failures — JSON parsing the model's reflection failed. Script continues with default beats.`
-        : `Active script: ${active.title}`
+      const completedTag = active.ended ? ' · complete' : ''
+      scriptRunningChip.textContent = `${active.title} — Step ${active.stepIndex + 1}/${total}: ${stepTitle}${warn}${completedTag}`
+      scriptRunningChip.title = active.ended
+        ? `Completed script: ${active.title} (click to view document)`
+        : warn
+          ? `${active.whisperFailures} consecutive whisper failures — JSON parsing the model's reflection failed.`
+          : `Active script: ${active.title} (click to view document)`
+      if (active.ended) {
+        scriptRunningChip.classList.add('opacity-60')
+      } else {
+        scriptRunningChip.classList.remove('opacity-60')
+      }
     } else {
       btnScriptStart.classList.remove('hidden')
       scriptRunningChip.classList.add('hidden')

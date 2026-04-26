@@ -135,7 +135,9 @@ const resolveAgentTools = async (
 export interface SpawnOptions {
   readonly overrideId?: string
   readonly getSkills?: (roomName: string) => string
-  readonly getScript?: (roomId: string, agentName: string) => string | undefined
+  readonly getScriptContext?: (roomId: string, agentName: string) =>
+    | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
+    | undefined
   readonly onEvalEvent?: (agentName: string, event: import('../core/types/agent-eval.ts').EvalEvent) => void
 }
 
@@ -215,7 +217,7 @@ export const spawnAIAgent = async (
       return profiles
     },
     getSkills: spawnOptions?.getSkills,
-    getScript: spawnOptions?.getScript,
+    getScriptContext: spawnOptions?.getScriptContext,
     onEvalEvent: spawnOptions?.onEvalEvent,
   }, spawnOptions?.overrideId)
 

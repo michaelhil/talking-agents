@@ -117,7 +117,18 @@ export interface BuildContextDeps {
   readonly responseFormat?: string
   readonly history: AgentHistory
   readonly getSkills?: (roomName: string) => string
-  readonly getScript?: (roomId: string, agentName: string) => string | undefined
+  // Script-mode bypass. When this returns a value (cast member in an
+  // active run), the agent's context is built ENTIRELY from these
+  // pieces — house prompt, room context, message history are suppressed.
+  //
+  // The systemDoc (structural document — header, cast, step list, current
+  // step's roles/goal/pressure) becomes the system prompt. The dialogue
+  // entries are rendered as proper user/assistant messages so the model
+  // treats them as conversation, not as a doc-to-continue. A final user
+  // turn says "speak your next line".
+  readonly getScriptContext?: (roomId: string, agentName: string) =>
+    | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
+    | undefined
   readonly historyLimit: number
   readonly resolveName: (senderId: string) => string
   readonly getArtifactsForScope?: (roomId: string) => ReadonlyArray<Artifact>
@@ -277,13 +288,14 @@ export const buildSystemSections = (
     optional: true,
   })
 
-  const ownName = deps.resolveName(deps.agentId)
-  const scriptText = deps.getScript ? (deps.getScript(triggerRoomId, ownName) ?? '') : ''
+  // SCRIPT section is no longer emitted as a side block. Cast members in an
+  // active script run get the full living document via the dedicated bypass
+  // path in buildContext (see below) — it replaces the entire system prompt.
   out.push({
     key: 'script',
     label: 'SCRIPT',
-    text: scriptText,
-    enabled: includes.script && !!scriptText,
+    text: '',
+    enabled: false,
     optional: true,
   })
 
@@ -463,6 +475,48 @@ export const buildContext = (
 ): ContextResult => {
   const maxContextTokens = deps.contextTokenBudget ?? DEFAULT_MAX_CONTEXT_TOKENS
   const flushIds = new Set<string>()
+
+  // === Script-mode bypass ===
+  // Cast members in an active script run get a custom context: a
+  // structural living-script document as system prompt + the current
+  // step's dialogue as proper user/assistant messages + a final user
+  // turn instructing the model to speak.
+  //
+  // Why split: when dialogue lives inside the system prompt as inline
+  // markdown, models tend to autocomplete from the most recent line
+  // (we observed Sam parroting Alex verbatim). Role-tagged messages
+  // make it unambiguous what's past dialogue vs. what's the request.
+  const ownName = deps.resolveName(deps.agentId)
+  const scriptCtx = deps.getScriptContext?.(triggerRoomId, ownName)
+  if (scriptCtx) {
+    const fresh = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
+    for (const m of fresh) flushIds.add(m.id)
+
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: scriptCtx.systemDoc },
+    ]
+    for (const entry of scriptCtx.dialogue) {
+      if (entry.speaker === ownName) {
+        messages.push({ role: 'assistant', content: entry.content })
+      } else {
+        // Plain-name prefix (no brackets) so the model doesn't mimic the
+        // pattern in its own reply. The user-role already tells it "this
+        // is something someone else said".
+        messages.push({ role: 'user', content: `${entry.speaker} said: ${entry.content}` })
+      }
+    }
+    messages.push({
+      role: 'user',
+      content: `It is your turn. Speak your next line as ${ownName}. Reply with dialogue only — no markdown, no narration, no stage directions. Stay in character. Do not repeat or continue any prior speaker's words.`,
+    })
+
+    return {
+      messages,
+      flushInfo: { ids: flushIds, triggerRoomId },
+      warnings: [],
+      systemBlocks: [{ text: scriptCtx.systemDoc, cacheable: false }],
+    }
+  }
 
   const systemBlocks = buildSystemBlocks(deps, triggerRoomId)
   const systemContent = systemBlocks.map(b => b.text).filter(Boolean).join('\n\n')

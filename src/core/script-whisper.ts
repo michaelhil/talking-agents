@@ -52,15 +52,24 @@ const buildPrompt = (args: ClassifyArgs, retryNote?: string): string => {
   ].filter(Boolean).join('\n')
 }
 
+// Soft-cap caps for free-text fields. Models routinely overshoot these
+// when feeling expressive; truncating is preferable to rejecting the
+// whole whisper (rejection forces a fallback that flips ready→false and
+// can stall the script in a "no one is ever ready" loop).
+const NOTES_MAX = 200
+const ROLE_UPDATE_MAX = 200
+
+const truncate = (s: string, max: number): string =>
+  s.length <= max ? s : s.slice(0, max - 1).trim() + '…'
+
 const validate = (parsed: unknown, presentCast: ReadonlyArray<string>): { whisper: Whisper } | { error: string } => {
   if (!parsed || typeof parsed !== 'object') return { error: 'not an object' }
   const p = parsed as Record<string, unknown>
   if (typeof p.ready_to_advance !== 'boolean') return { error: 'ready_to_advance must be a boolean' }
   const w: { -readonly [K in keyof Whisper]: Whisper[K] } = { ready_to_advance: p.ready_to_advance }
-  if (p.notes !== undefined) {
+  if (p.notes !== undefined && p.notes !== null) {
     if (typeof p.notes !== 'string') return { error: 'notes must be a string' }
-    if (p.notes.length > 200) return { error: 'notes must be ≤200 chars' }
-    if (p.notes.length > 0) w.notes = p.notes
+    if (p.notes.length > 0) w.notes = truncate(p.notes, NOTES_MAX)
   }
   if (p.addressing !== undefined && p.addressing !== null && p.addressing !== '') {
     if (typeof p.addressing !== 'string') return { error: 'addressing must be a string' }
@@ -69,8 +78,7 @@ const validate = (parsed: unknown, presentCast: ReadonlyArray<string>): { whispe
   }
   if (p.role_update !== undefined && p.role_update !== null && p.role_update !== '') {
     if (typeof p.role_update !== 'string') return { error: 'role_update must be a string' }
-    if (p.role_update.length > 200) return { error: 'role_update must be ≤200 chars' }
-    w.role_update = p.role_update
+    w.role_update = truncate(p.role_update, ROLE_UPDATE_MAX)
   }
   return { whisper: w }
 }

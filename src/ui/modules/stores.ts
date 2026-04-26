@@ -187,16 +187,50 @@ export interface UIWhisperRecord {
   readonly errorReason?: string
 }
 
+export interface UIDialogueEntry {
+  readonly speaker: string
+  readonly content: string
+  readonly messageId: string
+  readonly whispersByCast: Readonly<Record<string, UIWhisperRecord>>
+}
+
+export interface UIScriptCastMember {
+  readonly id: string
+  readonly name: string
+  readonly model: string
+  readonly persona: string
+  readonly starts: boolean
+}
+
+export interface UIScriptStep {
+  readonly title: string
+  readonly goal?: string
+  readonly roles: Readonly<Record<string, string>>
+}
+
 export interface ActiveScript {
   readonly scriptId: string
   readonly scriptName: string
   readonly title: string
+  readonly premise?: string
   readonly stepIndex: number
   readonly totalSteps: number
   readonly stepTitle: string
   readonly readiness: Readonly<Record<string, boolean>>
+  readonly readyStreak: Readonly<Record<string, number>>
   readonly whisperFailures: number
   readonly lastWhisper: Readonly<Record<string, UIWhisperRecord>>
+  // Per-step dialogue, keyed by step index. Append-only.
+  readonly stepLogs: Readonly<Record<number, ReadonlyArray<UIDialogueEntry>>>
+  // Full script structure — sent with script_started so the panel can
+  // render the complete living document even after the run ends and the
+  // runner discards its state.
+  readonly cast: ReadonlyArray<UIScriptCastMember>
+  readonly steps: ReadonlyArray<UIScriptStep>
+  // True after script_completed. The entry stays in the store so the
+  // panel and per-message whisper badges can still display historical
+  // state. Cleared only when a NEW script starts in the same room.
+  readonly ended: boolean
 }
 // Keyed by roomId.
 export const $activeScriptByRoom = map<Record<string, ActiveScript>>({})

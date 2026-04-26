@@ -1,22 +1,24 @@
 // ============================================================================
 // Script runner — reactive listener (no engine loop).
 //
-// One handler per room hooked into onMessagePosted. When a cast member
-// posts:  classify whisper → update readiness → if all ready, advance step;
-//         otherwise activate the other cast member.
-// When a non-cast user posts:  reset readiness, activate the cast member who
-//         didn't speak last (or the starts-true agent if first turn).
+// One handler per room hooked into onMessagePosted. When a cast member posts:
+// classify whisper → record dialogue + whisper into the current step's
+// stepLog → bump readyStreak → if all ready, advance step; otherwise
+// activate the other cast member.
+// When a non-cast user posts: append to current step's log, reset readiness
+// AND readyStreak (new info means pressure clock restarts), activate the
+// cast member who didn't speak last (or the starts-true agent if first turn).
 //
 // State per room is a ScriptRun in an internal Map. Per-room serialization
-// queue (Promise<void> chain) prevents whisper races and out-of-order
-// state mutations.
+// queue (Promise<void> chain) prevents whisper races.
 // ============================================================================
 
 import type { System } from '../main.ts'
-import type { Script, ScriptRun, WhisperRecord, ContextOverrides } from './types/script.ts'
+import type { Script, ScriptRun, WhisperRecord, StepLog, DialogueEntry, CastMember } from './types/script.ts'
 import type { Message, DeliveryMode } from './types/messaging.ts'
-import type { AIAgentConfig, IncludePrompts, IncludeContext } from './types/agent.ts'
+import type { AIAgentConfig } from './types/agent.ts'
 import { classifyWhisper } from './script-whisper.ts'
+import { renderLivingScript } from './script-render.ts'
 import { SYSTEM_SENDER_ID } from './types/constants.ts'
 
 // === Public surface ===
@@ -28,13 +30,17 @@ export interface ScriptRunner {
   readonly getRun: (roomId: string) => ScriptRun | undefined
   readonly listRuns: () => ReadonlyArray<ScriptRun>
   readonly onRoomMessage: (roomId: string, message: Message) => void
-  readonly getScriptContextForAgent: (roomId: string, agentName: string) => string | undefined
+  readonly getScriptDocumentForAgent: (roomId: string, agentName: string) => string | undefined
+  readonly getScriptContextForAgent: (roomId: string, agentName: string) =>
+    | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
+    | undefined
 }
 
 export type ScriptEventName =
   | 'script_started'
   | 'script_step_advanced'
   | 'script_readiness_changed'
+  | 'script_dialogue_appended'
   | 'script_completed'
 
 export type ScriptEventEmitter = (
@@ -49,6 +55,12 @@ export interface ScriptRunnerDeps {
 }
 
 // === Implementation ===
+
+// After this many consecutive whisper-classification fallbacks the runner
+// auto-stops. Prevents an unending stuck-script loop when the LLM is degraded
+// (rate-limited, timing out, or the prompt is somehow broken). Hard-coded —
+// this is a safety net, not a tuning knob.
+const MAX_CONSECUTIVE_WHISPER_FAILURES = 5
 
 export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
   const { getSystem, emit } = deps
@@ -77,25 +89,13 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
   const isCastMember = (run: ScriptRun, senderName: string | undefined): boolean =>
     senderName !== undefined && run.script.cast.some(c => c.name === senderName)
 
-  const buildAgentConfig = (
-    member: Script['cast'][number],
-    overrides: ContextOverrides | undefined,
-  ): AIAgentConfig => {
+  const buildAgentConfig = (member: CastMember): AIAgentConfig => {
     const config: { -readonly [K in keyof AIAgentConfig]: AIAgentConfig[K] } = {
       name: member.name,
       model: member.model,
       persona: member.persona,
     }
     if (member.tools) (config as { tools?: ReadonlyArray<string> }).tools = member.tools
-    if (overrides?.includePrompts) {
-      (config as { includePrompts?: IncludePrompts }).includePrompts = overrides.includePrompts as IncludePrompts
-    }
-    if (overrides?.includeContext) {
-      (config as { includeContext?: IncludeContext }).includeContext = overrides.includeContext as IncludeContext
-    }
-    if (overrides?.includeTools !== undefined) {
-      (config as { includeTools?: boolean }).includeTools = overrides.includeTools
-    }
     return config
   }
 
@@ -110,6 +110,40 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     })
   }
 
+  const initialStepLogs = (script: Script): StepLog[] =>
+    script.steps.map(() => ({ entries: [] }))
+
+  const appendDialogue = (run: ScriptRun, entry: DialogueEntry): void => {
+    const log = run.stepLogs[run.currentStep]
+    if (!log) return
+    const next: StepLog = {
+      ...log,
+      entries: [...log.entries, entry],
+    }
+    run.stepLogs[run.currentStep] = next
+  }
+
+  // Returns the name of any cast member that's no longer in system.team, or
+  // undefined if all are present. Cast can be removed mid-run (manual delete,
+  // panic shutdown) — silently no-op'ing on missing agents would stall the
+  // script forever; aborting with a stage card keeps the room sane.
+  const findMissingCast = (run: ScriptRun): string | undefined => {
+    const system = getSystem()
+    for (const member of run.script.cast) {
+      if (!system.team.getAgent(member.name)) return member.name
+    }
+    return undefined
+  }
+
+  // Stop the script with a visible stage card explaining why. Uses the
+  // queued stop() so it cleans up properly even if called mid-handler.
+  const abortRun = (run: ScriptRun, reason: string): void => {
+    if (run.ended) return
+    run.ended = true
+    postStageCard(run.roomId, `[Script "${run.script.title}"] Aborted: ${reason}`)
+    setTimeout(() => { void stop(run.roomId) }, 50)
+  }
+
   // --- Lifecycle ---
 
   const start = async (roomId: string, scriptName: string): Promise<{ ok: boolean; reason?: string }> => {
@@ -120,26 +154,23 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     const script = system.scriptStore.get(scriptName)
     if (!script) return { ok: false, reason: `script "${scriptName}" not found` }
 
-    // Cast name collision check
     for (const member of script.cast) {
       if (system.team.getAgent(member.name)) {
         return { ok: false, reason: `agent name "${member.name}" already taken; pick a unique cast` }
       }
     }
 
-    // Sequence: pause → spawn → add → restore-pause → switch-to-manual → Stage card → activate.
     room.setPaused(true)
     const spawned: string[] = []
     const castInfo: Array<{ id: string; name: string; model: string; kind: 'ai' }> = []
     try {
       for (const member of script.cast) {
-        const agent = await system.spawnAIAgent(buildAgentConfig(member, script.contextOverrides))
+        const agent = await system.spawnAIAgent(buildAgentConfig(member))
         spawned.push(agent.id)
         castInfo.push({ id: agent.id, name: member.name, model: member.model, kind: 'ai' })
         await system.addAgentToRoom(agent.id, roomId, 'script-runner')
       }
     } catch (err) {
-      // Roll back any partial spawn
       for (const id of spawned) {
         try { system.removeAgent(id) } catch { /* best-effort */ }
       }
@@ -157,8 +188,9 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       currentStep: 0,
       turn: 0,
       readiness: Object.fromEntries(script.cast.map(c => [c.name, false])),
+      readyStreak: Object.fromEntries(script.cast.map(c => [c.name, 0])),
       roleOverrides: {},
-      lastWhisper: {},
+      stepLogs: initialStepLogs(script),
       whisperFailures: 0,
       priorMode,
       ended: false,
@@ -169,16 +201,30 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     const step = script.steps[0]!
     postStageCard(roomId, `[Script "${script.title}"] Starting. Step 1/${script.steps.length}: ${step.title}`)
 
+    // Send cast + step structure with the started event so the UI store
+    // can render the full living document even after the run ends and
+    // the runner discards its state.
+    const castFull = castInfo.map(ci => {
+      const member = script.cast.find(c => c.name === ci.name)!
+      return { ...ci, persona: member.persona, starts: !!member.starts }
+    })
+    const stepsForUi = script.steps.map(s => ({
+      title: s.title,
+      ...(s.goal ? { goal: s.goal } : {}),
+      roles: s.roles,
+    }))
+
     emit?.(roomId, 'script_started', {
       scriptId: script.id,
       scriptName: script.name,
       title: script.title,
+      ...(script.premise ? { premise: script.premise } : {}),
       totalSteps: script.steps.length,
       stepTitle: step.title,
-      cast: castInfo,
+      cast: castFull,
+      steps: stepsForUi,
     })
 
-    // Activate the starts:true cast member.
     const firstName = startsCastName(script)
     const firstAgent = system.team.getAgent(firstName)
     if (firstAgent) system.activateAgentInRoom(firstAgent.id, roomId)
@@ -190,14 +236,12 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     const run = runs.get(roomId)
     if (!run) return { ok: false, reason: 'no active script in this room' }
 
-    // Drain the queue — wait for any in-flight whisper / advance to finish.
     const pending = queues.get(roomId)
     if (pending) await pending
 
     const system = getSystem()
     const room = system.house.getRoom(roomId)
 
-    // Wait for cast to be idle, then despawn.
     for (const member of run.script.cast) {
       const agent = system.team.getAgent(member.name)
       if (!agent) continue
@@ -233,11 +277,17 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     const run = runs.get(roomId)
     if (!run || run.ended) return
     if (message.type !== 'chat') return
-    if (message.senderId === SYSTEM_SENDER_ID) return   // ignore Stage cards / system posts
+    if (message.senderId === SYSTEM_SENDER_ID) return
 
     enqueue(roomId, async () => {
       const liveRun = runs.get(roomId)
       if (!liveRun || liveRun.ended) return
+
+      const missing = findMissingCast(liveRun)
+      if (missing) {
+        abortRun(liveRun, `cast member "${missing}" is no longer in the room`)
+        return
+      }
 
       if (isCastMember(liveRun, message.senderName)) {
         await onCastPost(liveRun, message)
@@ -257,7 +307,7 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       llm: system.llm,
       model: run.script.cast.find(c => c.name === castName)!.model,
       message: message.content,
-      scriptContext: buildScriptContextString(run, castName),
+      scriptContext: renderLivingScript(run, castName),
       presentCast: run.script.cast.map(c => c.name),
     })
 
@@ -268,16 +318,46 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       ...(result.rawResponse !== undefined ? { rawResponse: result.rawResponse } : {}),
       ...(result.errorReason !== undefined ? { errorReason: result.errorReason } : {}),
     }
-    applyWhisper(run, castName, record)
+
+    // Apply whisper effects: readiness, streak, role override.
+    const wasReady = run.readiness[castName] === true
+    run.readiness[castName] = record.whisper.ready_to_advance
+    if (record.whisper.ready_to_advance) {
+      run.readyStreak[castName] = (run.readyStreak[castName] ?? 0) + 1
+    } else {
+      run.readyStreak[castName] = 0
+    }
+    if (record.whisper.role_update) run.roleOverrides[castName] = record.whisper.role_update
     if (result.usedFallback) run.whisperFailures += 1
     else run.whisperFailures = 0
 
+    if (run.whisperFailures >= MAX_CONSECUTIVE_WHISPER_FAILURES) {
+      abortRun(run, `whisper classification failed ${MAX_CONSECUTIVE_WHISPER_FAILURES} consecutive turns. Check LLM health and restart.`)
+      return
+    }
+
+    // Record dialogue + whisper into current step log.
+    const entry: DialogueEntry = {
+      speaker: castName,
+      content: message.content,
+      messageId: message.id,
+      whispersByCast: { [castName]: record },
+    }
+    appendDialogue(run, entry)
+
+    emit?.(run.roomId, 'script_dialogue_appended', {
+      scriptId: run.script.id,
+      stepIndex: run.currentStep,
+      entry,
+    })
     emit?.(run.roomId, 'script_readiness_changed', {
       scriptId: run.script.id,
       readiness: { ...run.readiness },
+      readyStreak: { ...run.readyStreak },
       whisperFailures: run.whisperFailures,
-      lastWhisper: { ...run.lastWhisper },
+      lastWhisper: collectLastWhispers(run),
     })
+    void wasReady
 
     const allReady = run.script.cast.every(c => run.readiness[c.name] === true)
     if (allReady) {
@@ -285,7 +365,6 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       return
     }
 
-    // Activate the OTHER cast member.
     const next = otherCast(run, castName)
     if (next) {
       const agent = system.team.getAgent(next)
@@ -293,16 +372,32 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     }
   }
 
-  const onUserPost = async (run: ScriptRun, _message: Message): Promise<void> => {
-    // Reset readiness — user introduced new info.
-    for (const c of run.script.cast) run.readiness[c.name] = false
+  const onUserPost = async (run: ScriptRun, message: Message): Promise<void> => {
+    // Reset readiness AND readyStreak — user introduced new info, pressure restarts.
+    for (const c of run.script.cast) {
+      run.readiness[c.name] = false
+      run.readyStreak[c.name] = 0
+    }
+    const entry: DialogueEntry = {
+      speaker: message.senderName ?? 'Director',
+      content: message.content,
+      messageId: message.id,
+      whispersByCast: {},
+    }
+    appendDialogue(run, entry)
+    emit?.(run.roomId, 'script_dialogue_appended', {
+      scriptId: run.script.id,
+      stepIndex: run.currentStep,
+      entry,
+    })
     emit?.(run.roomId, 'script_readiness_changed', {
       scriptId: run.script.id,
       readiness: { ...run.readiness },
+      readyStreak: { ...run.readyStreak },
       whisperFailures: run.whisperFailures,
+      lastWhisper: collectLastWhispers(run),
     })
 
-    // Activate the cast member who didn't speak last (or the starts agent).
     const last = lastSpeaker.get(run.roomId)
     const nextName = last ? otherCast(run, last) : startsCastName(run.script)
     if (nextName) {
@@ -312,20 +407,21 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     }
   }
 
-  const applyWhisper = (run: ScriptRun, castName: string, record: WhisperRecord): void => {
-    run.readiness[castName] = record.whisper.ready_to_advance
-    if (record.whisper.role_update) run.roleOverrides[castName] = record.whisper.role_update
-    run.lastWhisper[castName] = record
-  }
-
   const advance = async (run: ScriptRun, forced: boolean): Promise<void> => {
+    // Mark current step as advanced.
+    const cur = run.stepLogs[run.currentStep]
+    if (cur) {
+      run.stepLogs[run.currentStep] = { ...cur, advancedAt: run.turn }
+    }
     run.currentStep += 1
     run.turn = 0
-    for (const c of run.script.cast) run.readiness[c.name] = false
+    for (const c of run.script.cast) {
+      run.readiness[c.name] = false
+      run.readyStreak[c.name] = 0
+    }
     run.roleOverrides = {}
 
     if (run.currentStep >= run.script.steps.length) {
-      // End of script.
       run.ended = true
       postStageCard(run.roomId, `[Script "${run.script.title}"] Complete.`)
       emit?.(run.roomId, 'script_step_advanced', {
@@ -335,7 +431,6 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
         title: '(complete)',
         forced,
       })
-      // Defer despawn to a follow-up tick so the Stage card lands first.
       setTimeout(() => {
         void stop(run.roomId)
       }, 50)
@@ -352,7 +447,6 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       forced,
     })
 
-    // Activate whoever didn't speak last in the previous step.
     const last = lastSpeaker.get(run.roomId)
     const nextName = last ? otherCast(run, last) : startsCastName(run.script)
     if (nextName) {
@@ -362,13 +456,37 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     }
   }
 
-  // --- Context injection (consumed by context-builder.ts via getScript) ---
-
-  const getScriptContextForAgent = (roomId: string, agentName: string): string | undefined => {
+  // --- Document accessor consumed by context-builder bypass ---
+  //
+  // Returns both the structural document (suitable for system prompt — no
+  // dialogue inline) AND the current step's dialogue as proper user/
+  // assistant messages keyed by speaker. The context-builder bypass uses
+  // these together: system = structural, messages = dialogue + final
+  // "speak your next line" instruction.
+  //
+  // Splitting into role-tagged messages stops the model from treating the
+  // most-recent dialogue line as a continuation prompt — a real bug we
+  // saw where Sam parroted Alex's prior turn verbatim.
+  const getScriptContextForAgent = (
+    roomId: string,
+    agentName: string,
+  ): { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> } | undefined => {
     const run = runs.get(roomId)
     if (!run || run.ended) return undefined
     if (!run.script.cast.some(c => c.name === agentName)) return undefined
-    return buildScriptContextString(run, agentName)
+    const systemDoc = renderLivingScript(run, agentName, { includeDialogue: false })
+    const log = run.stepLogs[run.currentStep]
+    const dialogue = (log?.entries ?? []).map(e => ({ speaker: e.speaker, content: e.content }))
+    return { systemDoc, dialogue }
+  }
+
+  // For UI panel + per-agent inspection — the full unified document with
+  // dialogue inline.
+  const getScriptDocumentForAgent = (roomId: string, agentName: string): string | undefined => {
+    const run = runs.get(roomId)
+    if (!run || run.ended) return undefined
+    if (!run.script.cast.some(c => c.name === agentName)) return undefined
+    return renderLivingScript(run, agentName)
   }
 
   return {
@@ -378,36 +496,22 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     getRun: (roomId) => runs.get(roomId),
     listRuns: () => [...runs.values()],
     onRoomMessage,
+    getScriptDocumentForAgent,
     getScriptContextForAgent,
   }
 }
 
-// === Pure: script context block string ===
-
-const buildScriptContextString = (run: ScriptRun, castName: string): string => {
-  const step = run.script.steps[run.currentStep]!
-  const role = run.roleOverrides[castName] ?? step.roles[castName]
-  const peers = run.script.cast
-    .filter(c => c.name !== castName)
-    .map(c => {
-      const ready = run.readiness[c.name] === true
-      return `${c.name} — ${ready ? 'ready' : 'not ready'}`
-    })
-    .join(', ')
-
-  const own = run.lastWhisper[castName]?.whisper
-  const lastNotes = own?.notes ? `Your last whisper notes: ${own.notes}` : ''
-
-  const lines = [
-    `Script: "${run.script.title}"`,
-    `Step ${run.currentStep + 1} of ${run.script.steps.length}: "${step.title}"`,
-    step.description ? `Goal: ${step.description}` : '',
-    `Your role: ${role}`,
-    `Peer readiness: ${peers}`,
-    lastNotes,
-    `Turn ${run.turn} in this step.`,
-  ]
-  return lines.filter(s => s.length > 0).join('\n')
+// Collect each cast member's most recent WhisperRecord across the current
+// step's entries — surfaced via the WS readiness event so the per-message
+// whisper badge can render without keeping its own derivation state.
+const collectLastWhispers = (run: ScriptRun): Record<string, WhisperRecord> => {
+  const out: Record<string, WhisperRecord> = {}
+  const log = run.stepLogs[run.currentStep]
+  if (!log) return out
+  for (const entry of log.entries) {
+    for (const [castName, record] of Object.entries(entry.whispersByCast)) {
+      out[castName] = record
+    }
+  }
+  return out
 }
-
-export const __test = { buildScriptContextString }

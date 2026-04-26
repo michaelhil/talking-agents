@@ -69,7 +69,9 @@ export interface AIAgentOptions {
   // whose messages it has already observed.
   readonly getRoomMembers?: (roomId: string) => ReadonlyArray<import('../core/types/messaging.ts').AgentProfile>
   readonly getSkills?: (roomName: string) => string
-  readonly getScript?: (roomId: string, agentName: string) => string | undefined
+  readonly getScriptContext?: (roomId: string, agentName: string) =>
+    | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
+    | undefined
   readonly onEvalEvent?: (agentName: string, event: EvalEvent) => void
 }
 
@@ -145,7 +147,7 @@ export const createAIAgent = (
   const getCompressedIds = options?.getCompressedIds
   const getRoomMembers = options?.getRoomMembers
   const getSkills = options?.getSkills
-  const getScript = options?.getScript
+  const getScriptContext = options?.getScriptContext
   const onEvalEvent = options?.onEvalEvent
 
   // Active abort controller for stream cancellation
@@ -172,7 +174,7 @@ export const createAIAgent = (
     getArtifactsForScope,
     getArtifactTypeDef,
     getSkills,
-    getScript,
+    getScriptContext,
     includePrompts: includePromptsState,
     includeContext: includeContextState,
     promptsEnabled,

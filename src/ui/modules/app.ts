@@ -45,6 +45,7 @@ import {
   initSummaryPanel,
 } from './summary-panel.ts'
 import { initScriptPanel } from './script-panel.ts'
+import { initScriptDocPanel } from './script-doc-panel.ts'
 import {
   $myAgentId,
   $myName,
@@ -572,6 +573,7 @@ btnModeToggle.onclick = () => {
 
 initSummaryPanel({ onRefreshRoomControls: refreshRoomControls })
 initScriptPanel({ onRefreshRoomControls: refreshRoomControls })
+initScriptDocPanel()
 void import('./reset-button.ts').then(m => m.initResetPanel())
 
 roomForm.onsubmit = (e) => {

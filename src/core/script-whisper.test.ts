@@ -36,9 +36,13 @@ describe('validate', () => {
     expect('error' in r && r.error).toMatch(/Stranger/)
   })
 
-  test('rejects notes > 200 chars', () => {
-    const r = __test.validate({ ready_to_advance: true, notes: 'x'.repeat(201) }, present)
-    expect('error' in r).toBe(true)
+  test('truncates notes > 200 chars instead of rejecting', () => {
+    const r = __test.validate({ ready_to_advance: true, notes: 'x'.repeat(500) }, present)
+    expect('whisper' in r).toBe(true)
+    if ('whisper' in r) {
+      expect(r.whisper.notes!.length).toBeLessThanOrEqual(200)
+      expect(r.whisper.notes!.endsWith('…')).toBe(true)
+    }
   })
 
   test('drops empty-string addressing without error', () => {

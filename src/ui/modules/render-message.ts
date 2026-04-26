@@ -166,9 +166,10 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     div.appendChild(header)
     div.appendChild(content)
 
-    // If a script is active in this room, append the most recent whisper
-    // for this sender as a small badge (no-op when no active script).
-    appendWhisperBadge(div, msg.senderName, msg.roomId, msg.timestamp)
+    // If a script is active in this room, append the whisper attached to
+    // THIS specific message (looked up by messageId in stepLogs). No-op
+    // when no script is active or no whisper has been classified yet.
+    appendWhisperBadge(div, msg.senderName, msg.roomId, msg.id)
   }
 
   container.appendChild(div)

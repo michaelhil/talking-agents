@@ -1,11 +1,20 @@
 // Whisper badge — appended after a cast member's message bubble when a
-// script is active. Reactive: a single subscriber updates ALL badges in
-// the DOM keyed by cast name when readiness changes (whispers arrive
-// ~1s after the message lands, so static rendering misses them).
+// script is active. Each badge looks up the whisper attached to ITS OWN
+// message (by messageId in stepLogs), not the most-recent whisper from
+// that cast member. This avoids two prior bugs:
+//
+//   - "flicker": badge initially showed the previous turn's whisper, then
+//     repainted to the current one when classification finished.
+//   - "all whispers identical": every message from one agent showed the
+//     same most-recent whisper instead of the per-message reflection.
+//
+// A badge stays blank until the whisper for ITS messageId arrives via
+// the script_dialogue_appended WS event.
 
 import { $activeScriptByRoom, type UIWhisperRecord } from './stores.ts'
 
-const ATTR = 'data-cast-whisper'                        // value = castName
+const ATTR_MSG = 'data-cast-whisper-msg'                // value = messageId
+const ATTR_CAST = 'data-cast-whisper-cast'              // value = castName
 const ATTR_ROOM = 'data-cast-whisper-room'              // value = roomId
 
 let subscribed = false
@@ -14,35 +23,51 @@ export const appendWhisperBadge = (
   parent: HTMLElement,
   senderName: string | undefined,
   roomId: string,
-  _msgTurn: number | undefined,
+  messageId: string,
 ): void => {
   if (!senderName) return
-  // Only attach a placeholder if a script is active in this room AND the
-  // sender is a cast member. Else no-op.
   const active = $activeScriptByRoom.get()[roomId]
   if (!active) return
 
   const badge = document.createElement('div')
-  badge.className = 'mt-1 text-xs flex items-start gap-2'
-  badge.setAttribute(ATTR, senderName)
+  badge.className = 'mt-1 text-xs flex items-start gap-2 hidden'
+  badge.setAttribute(ATTR_MSG, messageId)
+  badge.setAttribute(ATTR_CAST, senderName)
   badge.setAttribute(ATTR_ROOM, roomId)
   parent.appendChild(badge)
 
-  // Initial paint (in case the whisper has already been recorded).
-  paint(badge, senderName, roomId)
-
-  // One global subscription, lazily armed.
+  paint(badge, senderName, roomId, messageId)
   ensureSubscribed()
 }
 
-const paint = (el: HTMLElement, castName: string, roomId: string): void => {
+const findWhisperForMessage = (
+  roomId: string,
+  castName: string,
+  messageId: string,
+): UIWhisperRecord | undefined => {
   const active = $activeScriptByRoom.get()[roomId]
-  const record: UIWhisperRecord | undefined = active?.lastWhisper[castName]
+  if (!active) return undefined
+  for (const entries of Object.values(active.stepLogs)) {
+    for (const entry of entries) {
+      if (entry.messageId === messageId) {
+        return entry.whispersByCast[castName]
+      }
+    }
+  }
+  return undefined
+}
+
+const paint = (
+  el: HTMLElement,
+  castName: string,
+  roomId: string,
+  messageId: string,
+): void => {
+  const record = findWhisperForMessage(roomId, castName, messageId)
   if (!record) {
-    // No whisper recorded for this cast yet, or the step just advanced and
-    // readiness was reset. Leave whatever was previously painted in place
-    // (stale-but-something is better than blanking the badge).
-    if (el.childNodes.length === 0) el.classList.add('hidden')
+    // Whisper for this message hasn't arrived yet (or never will, if the
+    // cast member has been removed). Stay hidden.
+    el.classList.add('hidden')
     return
   }
   el.innerHTML = ''
@@ -78,11 +103,11 @@ const ensureSubscribed = (): void => {
   if (subscribed) return
   subscribed = true
   $activeScriptByRoom.listen(() => {
-    // Repaint every visible badge.
-    document.querySelectorAll<HTMLElement>(`[${ATTR}]`).forEach(el => {
-      const castName = el.getAttribute(ATTR)
+    document.querySelectorAll<HTMLElement>(`[${ATTR_MSG}]`).forEach(el => {
+      const messageId = el.getAttribute(ATTR_MSG)
+      const castName = el.getAttribute(ATTR_CAST)
       const roomId = el.getAttribute(ATTR_ROOM)
-      if (castName && roomId) paint(el, castName, roomId)
+      if (messageId && castName && roomId) paint(el, castName, roomId, messageId)
     })
   })
 }

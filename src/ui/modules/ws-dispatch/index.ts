@@ -370,12 +370,18 @@ const handlers: Handlers = {
       scriptId: msg.scriptId,
       scriptName: msg.scriptName,
       title: msg.title,
+      ...(msg.premise ? { premise: msg.premise } : {}),
       stepIndex: 0,
       totalSteps: msg.totalSteps,
       stepTitle: msg.stepTitle,
       readiness: {},
+      readyStreak: {},
       whisperFailures: 0,
       lastWhisper: {},
+      stepLogs: {},
+      cast: msg.cast.map(c => ({ id: c.id, name: c.name, model: c.model, persona: c.persona, starts: c.starts })),
+      steps: msg.steps.map(s => ({ title: s.title, ...(s.goal ? { goal: s.goal } : {}), roles: s.roles })),
+      ended: false,
     })
   },
 
@@ -390,6 +396,7 @@ const handlers: Handlers = {
       totalSteps: msg.totalSteps,
       stepTitle: msg.title,
       readiness: {},                              // resets on advance
+      readyStreak: {},                            // resets on advance
       lastWhisper: {},                            // resets on advance
     })
   },
@@ -402,17 +409,33 @@ const handlers: Handlers = {
     $activeScriptByRoom.setKey(roomId, {
       ...cur,
       readiness: msg.readiness,
+      readyStreak: msg.readyStreak,
       whisperFailures: msg.whisperFailures,
       lastWhisper: msg.lastWhisper,
     })
   },
 
+  script_dialogue_appended(msg) {
+    const roomId = roomNameToId(msg.roomName)
+    if (!roomId) return
+    const cur = $activeScriptByRoom.get()[roomId]
+    if (!cur) return
+    const prev = cur.stepLogs[msg.stepIndex] ?? []
+    // De-dup by messageId in case the WS fires twice (resilience).
+    if (prev.some(e => e.messageId === msg.entry.messageId)) return
+    const nextStepLogs = { ...cur.stepLogs, [msg.stepIndex]: [...prev, msg.entry] }
+    $activeScriptByRoom.setKey(roomId, { ...cur, stepLogs: nextStepLogs })
+  },
+
   script_completed(msg) {
     const roomId = roomNameToId(msg.roomName)
     if (!roomId) return
-    const remaining = { ...$activeScriptByRoom.get() }
-    delete remaining[roomId]
-    $activeScriptByRoom.set(remaining)
+    const cur = $activeScriptByRoom.get()[roomId]
+    if (!cur) return
+    // Keep the entry around (with ended:true) so the panel and per-message
+    // whisper badges can still render the historical state. Cleared only
+    // when a NEW script starts in the same room.
+    $activeScriptByRoom.setKey(roomId, { ...cur, ended: true })
   },
 
   script_catalog_changed(_msg) {

@@ -1,7 +1,6 @@
 // Settings > Scripts modal — master/detail.
 // Left: list of scripts + a "New" button.
-// Right: JSON textarea editor (raw JSON; live parse-error indicator;
-// server validates on save).
+// Right: markdown source editor; server validates on save (line-precise errors).
 
 import { createMasterDetailModal, createButton, createInput } from './detail-modal.ts'
 import { icon } from './icon.ts'
@@ -10,9 +9,15 @@ interface ScriptListItem {
   readonly id: string
   readonly name: string
   readonly title: string
-  readonly prompt?: string
+  readonly premise?: string
   readonly cast: ReadonlyArray<{ name: string; model: string; starts: boolean }>
   readonly steps: number
+}
+
+interface ScriptDetail {
+  readonly name: string
+  readonly title: string
+  readonly source: string
 }
 
 const fetchCatalog = async (): Promise<ScriptListItem[]> => {
@@ -24,28 +29,43 @@ const fetchCatalog = async (): Promise<ScriptListItem[]> => {
   } catch { return [] }
 }
 
-const fetchScript = async (name: string): Promise<unknown | null> => {
+const fetchScript = async (name: string): Promise<ScriptDetail | null> => {
   try {
     const res = await fetch(`/api/scripts/${encodeURIComponent(name)}`)
     if (!res.ok) return null
-    return await res.json()
+    return await res.json() as ScriptDetail
   } catch { return null }
 }
 
-const TEMPLATE = {
-  name: 'my-script',
-  title: 'My Script',
-  prompt: 'Optional starter hint shown to the user.',
-  cast: [
-    { name: 'Alex', persona: 'A senior PM, decisive.', model: 'gemini:gemini-2.5-flash', starts: true },
-    { name: 'Sam',  persona: 'An eng lead, asks hard questions.', model: 'gemini:gemini-2.5-flash' },
-  ],
-  steps: [
-    { title: 'Scan',   roles: { Alex: 'facilitator', Sam: 'challenger' } },
-    { title: 'Narrow', roles: { Alex: 'decision-maker', Sam: 'reality-checker' } },
-    { title: 'Commit', roles: { Alex: 'set owners', Sam: 'name a deadline' } },
-  ],
-}
+const TEMPLATE = `# SCRIPT: My Script
+Premise: One-line premise shown to the user.
+
+## Cast
+
+### Alex (starts)
+- model: gemini:gemini-2.5-flash
+- persona: |
+    You are Alex, a senior PM. Decisive, focused on impact and shipping.
+
+### Sam
+- model: gemini:gemini-2.5-flash
+- persona: |
+    You are Sam, the eng lead. Asks hard questions about feasibility.
+
+---
+
+## Step 1 — Scan
+Goal: Surface candidate options.
+Roles:
+  Alex — facilitator
+  Sam — challenger
+
+## Step 2 — Narrow
+Goal: Pick top 1-2.
+Roles:
+  Alex — decision-maker
+  Sam — reality-checker
+`
 
 export const openScriptsListModal = async (): Promise<void> => {
   const modal = createMasterDetailModal({ title: 'Scripts' })
@@ -140,36 +160,35 @@ export const openScriptsListModal = async (): Promise<void> => {
     detailInner.innerHTML = '<div class="text-xs text-text-muted">Select a script to edit, or click + to create.</div>'
   }
 
-  const renderEditor = (initialJson: string, mode: 'edit' | 'new'): void => {
+  const renderEditor = (initialName: string, initialSource: string, mode: 'edit' | 'new'): void => {
     detailInner.innerHTML = ''
     const status = document.createElement('div')
     status.className = 'text-xs text-text-muted mb-2'
-    status.textContent = mode === 'new' ? 'New script' : `Editing — server validates on save`
+    status.textContent = mode === 'new' ? 'New script — markdown format (see docs/scripts.md)' : 'Editing — server validates on save'
     detailInner.appendChild(status)
+
+    const nameRow = document.createElement('div')
+    nameRow.className = 'flex items-center gap-2 mb-2'
+    const nameLabel = document.createElement('label')
+    nameLabel.className = 'text-xs text-text-muted'
+    nameLabel.textContent = 'Name:'
+    const nameInput = document.createElement('input')
+    nameInput.type = 'text'
+    nameInput.className = 'input text-xs'
+    nameInput.value = initialName
+    nameInput.disabled = mode === 'edit'
+    nameInput.placeholder = 'lowercase-with-dashes'
+    nameRow.appendChild(nameLabel)
+    nameRow.appendChild(nameInput)
+    detailInner.appendChild(nameRow)
 
     const ta = document.createElement('textarea')
     ta.spellcheck = false
     ta.className = 'w-full font-mono text-xs p-2 border border-border rounded bg-surface'
     ta.style.flex = '1 1 0'
     ta.style.minHeight = '300px'
-    ta.value = initialJson
+    ta.value = initialSource
     detailInner.appendChild(ta)
-
-    const parseStatus = document.createElement('div')
-    parseStatus.className = 'text-xs mt-1'
-    detailInner.appendChild(parseStatus)
-    const updateParseStatus = (): void => {
-      try {
-        JSON.parse(ta.value)
-        parseStatus.textContent = '✓ valid JSON'
-        parseStatus.className = 'text-xs mt-1 text-success'
-      } catch (err) {
-        parseStatus.textContent = `✗ ${err instanceof Error ? err.message : 'invalid JSON'}`
-        parseStatus.className = 'text-xs mt-1 text-danger'
-      }
-    }
-    ta.oninput = updateParseStatus
-    updateParseStatus()
 
     const errBox = document.createElement('div')
     errBox.className = 'text-xs mt-2 text-danger hidden'
@@ -181,12 +200,10 @@ export const openScriptsListModal = async (): Promise<void> => {
     cancelBtn.onclick = () => { selectedName = null; renderEmpty(); renderList() }
     const saveBtn = createButton({ label: 'Save', variant: 'primary' })
     saveBtn.onclick = async () => {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(ta.value)
-      } catch (err) {
+      const name = nameInput.value.trim()
+      if (!name) {
         errBox.classList.remove('hidden')
-        errBox.textContent = `Invalid JSON: ${err instanceof Error ? err.message : err}`
+        errBox.textContent = 'Name is required'
         return
       }
       errBox.classList.add('hidden')
@@ -195,7 +212,7 @@ export const openScriptsListModal = async (): Promise<void> => {
         const res = await fetch('/api/scripts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(parsed),
+          body: JSON.stringify({ name, source: ta.value }),
         })
         if (!res.ok) {
           const data = await res.json().catch(() => ({ error: 'unknown error' }))
@@ -203,10 +220,10 @@ export const openScriptsListModal = async (): Promise<void> => {
           errBox.textContent = `Save failed: ${(data as { error?: string }).error ?? `HTTP ${res.status}`}`
           return
         }
-        const result = await res.json() as { script: { name: string; title: string } }
-        selectedName = result.script.name
+        const result = await res.json() as { name: string; title: string }
+        selectedName = result.name
         await loadCatalog()
-        await selectScript(result.script.name)
+        await selectScript(result.name)
       } finally {
         saveBtn.disabled = false
       }
@@ -225,17 +242,14 @@ export const openScriptsListModal = async (): Promise<void> => {
       detailInner.innerHTML = `<div class="text-xs text-danger">Failed to load "${name}"</div>`
       return
     }
-    // Strip server-assigned id from the editor view (it's regenerated on reload).
-    const { id: _id, ...editable } = script as Record<string, unknown>
-    void _id
-    renderEditor(JSON.stringify(editable, null, 2), 'edit')
+    renderEditor(script.name, script.source, 'edit')
   }
 
   const createNew = (): void => {
     selectedName = null
     setTitle('Create Script')
     renderList()
-    renderEditor(JSON.stringify(TEMPLATE, null, 2), 'new')
+    renderEditor('', TEMPLATE, 'new')
   }
 
   searchInput.oninput = renderList
