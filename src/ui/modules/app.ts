@@ -32,7 +32,7 @@ import { roomNameToId, roomIdToName, agentIdToName } from './identity-lookups.ts
 import { populateModelSelect, getShowAllModels, setShowAllModels } from './model-select.ts'
 import { safeFetchJson } from './fetch-helpers.ts'
 import {
-  updateOllamaHealthUI, updateOllamaMetricsUI,
+  updateOllamaHealthUI,
   wireOllamaDashboard,
   type OllamaDashboardElements,
 } from './ollama-dashboard.ts'
@@ -70,7 +70,6 @@ import {
   $roomPaused,
   $turnInfo,
   $ollamaHealth,
-  $ollamaMetrics,
   $agentContexts,
   $agentWarnings,
   $messageContexts,
@@ -487,12 +486,9 @@ $connected.listen((connected) => {
 // --- Sidebar resize (drag handle on right edge; drag-to-left collapses) ---
 void import('./sidebar-resize.ts').then(m => m.initSidebarResize())
 
-// --- Ollama health/metrics ---
+// --- Ollama health (metrics now polled by ollama-dashboard.ts directly via REST) ---
 $ollamaHealth.listen((health) => {
   if (health) updateOllamaHealthUI(health, ollamaStatusDot)
-})
-$ollamaMetrics.listen((metrics) => {
-  if (metrics) updateOllamaMetricsUI(metrics)
 })
 
 // ============================================================================
