@@ -57,6 +57,7 @@ export interface InstancePaths {
 }
 
 export const instancePaths = (id: string): InstancePaths => {
+  assertValidInstanceId(id)
   const root = join(samsinnHome(), 'instances', id)
   return {
     root,
@@ -68,11 +69,22 @@ export const instancePaths = (id: string): InstancePaths => {
 
 // Trash path for an evicted/reset instance. Timestamp suffix prevents
 // collisions if the same id is reset multiple times.
-export const trashPath = (id: string, now: number = Date.now()): string =>
-  join(samsinnHome(), 'instances', '.trash', `${id}-${now}`)
+export const trashPath = (id: string, now: number = Date.now()): string => {
+  assertValidInstanceId(id)
+  return join(samsinnHome(), 'instances', '.trash', `${id}-${now}`)
+}
 
 // Validate an instance ID — 16 chars, lowercase alphanumeric. Used at the
 // boundary (cookie, ?join=, ?instance=) to refuse anything else before it
 // reaches the filesystem.
 const ID_PATTERN = /^[a-z0-9]{16}$/
 export const isValidInstanceId = (id: string): boolean => ID_PATTERN.test(id)
+
+// Defense-in-depth: throws if a caller bypassed the boundary check. Cheap
+// guard that prevents accidental path traversal if any future call site
+// forgets to validate before passing into instancePaths/trashPath.
+export const assertValidInstanceId = (id: string): void => {
+  if (!isValidInstanceId(id)) {
+    throw new Error(`invalid instance id: ${JSON.stringify(id)} (expected 16-char lowercase alphanumeric)`)
+  }
+}

@@ -68,7 +68,7 @@ Samsinn is a multi-agent room-based chat system with two delivery modes (`broadc
 - `house.ts` — the root singleton owning all rooms and agents; every request goes through it
 - `room.ts` — membership, messages, mute/pause state; `addressing.ts` resolves `[[AgentName]]` mentions
 - `delivery.ts` + `delivery-modes.ts` — decides which agents receive each posted message. Modes: `broadcast` (all eligible) and `manual` (humans + sender only; AI peers activated explicitly). `[[AgentName]]` / `[[tag:X]]` addressing overrides in all modes.
-- `snapshot.ts` — persistence (load/save to `data/snapshot.json`). Current `SNAPSHOT_VERSION = 12`. Bumping is a clean break — no migration ladder
+- `snapshot.ts` — persistence (load/save to `data/snapshot.json`). Current `SNAPSHOT_VERSION = 13`. Bumping is a clean break — no migration ladder
 - `summary-engine.ts` + `summary-scheduler.ts` — per-room running summary + compression. Two independent schedules (time and message-count) per target (`summary` vs `compression`). Compression keeps last X fresh and folds older Y into a single evolving `room_summary` at the top of history; IDs tracked in `room.compressedIds`. Surfaced via 🗜 room-header control, `/api/rooms/:name/summary-config|summary|summary/regenerate`, and `summary_run_*` WS events. This replaced the earlier message-cap pruning and per-agent history compression
 - `artifact-store.ts` + `artifact-type-registry.ts` + `artifact-types/*` — pluggable per-room artifacts (task-list, document, poll, mermaid). New artifact types register themselves via the registry pattern
 - `types/` — split into domain modules (`agent.ts`, `room.ts`, `artifact.ts`, `llm.ts`, `ws-protocol.ts`, etc). **Import from the specific submodule**, not a barrel

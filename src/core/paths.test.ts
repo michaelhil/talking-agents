@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { samsinnHome, sharedPaths, instancePaths, trashPath, isValidInstanceId } from './paths.ts'
+import { samsinnHome, sharedPaths, instancePaths, trashPath, isValidInstanceId, assertValidInstanceId } from './paths.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -65,6 +65,21 @@ describe('instancePaths', () => {
     expect(p.snapshot).toBe('/tmp/x/instances/abc123def456ghij/snapshot.json')
     expect(p.logs).toBe('/tmp/x/instances/abc123def456ghij/logs')
     expect(p.memory).toBe('/tmp/x/instances/abc123def456ghij/memory')
+  })
+
+  it('throws on invalid id (defense-in-depth)', () => {
+    process.env.SAMSINN_HOME = '/tmp/x'
+    expect(() => instancePaths('../etc')).toThrow(/invalid instance id/)
+    expect(() => instancePaths('')).toThrow(/invalid instance id/)
+    expect(() => instancePaths('UPPERCASE12345678')).toThrow(/invalid instance id/)
+  })
+})
+
+describe('assertValidInstanceId', () => {
+  it('throws on invalid; passes on valid', () => {
+    expect(() => assertValidInstanceId('abc123def456ghij')).not.toThrow()
+    expect(() => assertValidInstanceId('../foo')).toThrow(/invalid instance id/)
+    expect(() => trashPath('foo/bar')).toThrow(/invalid instance id/)
   })
 })
 

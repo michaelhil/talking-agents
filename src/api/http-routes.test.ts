@@ -320,3 +320,77 @@ describe('HTTP Routes', () => {
     expect(res).toBeNull()
   })
 })
+
+// === Auth gate (deploy mode) ===
+//
+// When SAMSINN_TOKEN is set, every route except /api/auth and /api/system/info
+// must reject requests without a valid session cookie. This is enforced by a
+// single check in handleAPI() at the top of the dispatcher; if a future
+// refactor moves routes around the gate, this regression test fails loudly.
+
+describe('HTTP Routes — auth gate (deploy mode)', () => {
+  let system: System
+  let originalToken: string | undefined
+
+  beforeEach(() => {
+    system = makeSystem()
+    originalToken = process.env.SAMSINN_TOKEN
+    process.env.SAMSINN_TOKEN = 'test-token-deployment'
+  })
+
+  // Restore env after each test so other suites are unaffected.
+  // (afterEach not imported; reset inline at end of each test.)
+
+  const restoreToken = (): void => {
+    if (originalToken === undefined) delete process.env.SAMSINN_TOKEN
+    else process.env.SAMSINN_TOKEN = originalToken
+  }
+
+  test('GET /api/system/info exempt — no cookie → 200', async () => {
+    const res = await call(system, req('GET', '/api/system/info'), '/api/system/info')
+    expect(res?.status).toBe(200)
+    restoreToken()
+  })
+
+  test('POST /api/auth exempt — handler runs even without cookie (correct token → 200)', async () => {
+    const res = await call(system, req('POST', '/api/auth', { token: 'test-token-deployment' }), '/api/auth')
+    expect(res?.status).toBe(200)
+    restoreToken()
+  })
+
+  test('POST /api/system/shutdown without cookie → 401 (audit regression)', async () => {
+    const res = await call(system, req('POST', '/api/system/shutdown'), '/api/system/shutdown')
+    expect(res?.status).toBe(401)
+    restoreToken()
+  })
+
+  test('GET /api/providers without cookie → 401 (audit regression)', async () => {
+    const res = await call(system, req('GET', '/api/providers'), '/api/providers')
+    expect(res?.status).toBe(401)
+    restoreToken()
+  })
+
+  test('PUT /api/providers/openrouter without cookie → 401', async () => {
+    const res = await call(system, req('PUT', '/api/providers/openrouter', { apiKey: 'malicious' }), '/api/providers/openrouter')
+    expect(res?.status).toBe(401)
+    restoreToken()
+  })
+
+  test('POST /api/providers/openrouter/test without cookie → 401', async () => {
+    const res = await call(system, req('POST', '/api/providers/openrouter/test', {}), '/api/providers/openrouter/test')
+    expect(res?.status).toBe(401)
+    restoreToken()
+  })
+
+  test('GET /api/rooms without cookie → 401', async () => {
+    const res = await call(system, req('GET', '/api/rooms'), '/api/rooms')
+    expect(res?.status).toBe(401)
+    restoreToken()
+  })
+
+  test('POST /api/instances without cookie → 401', async () => {
+    const res = await call(system, req('POST', '/api/instances'), '/api/instances')
+    expect(res?.status).toBe(401)
+    restoreToken()
+  })
+})
