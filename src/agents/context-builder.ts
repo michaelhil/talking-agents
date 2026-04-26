@@ -151,7 +151,6 @@ const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePromp
   house: inc?.house ?? true,
   responseFormat: inc?.responseFormat ?? true,
   skills: inc?.skills ?? true,
-  script: inc?.script ?? true,
 })
 
 const resolveIncludeContext = (inc: IncludeContext | undefined): Required<IncludeContext> => ({
@@ -222,7 +221,7 @@ export interface SystemSection {
 }
 
 export type SystemSectionKey =
-  | 'house' | 'room' | 'persona' | 'responseFormat' | 'skills' | 'script'
+  | 'house' | 'room' | 'persona' | 'responseFormat' | 'skills'
   | 'ctx_intro'           // "You are in room X" — always emitted
   | 'ctx_flow'
   | 'ctx_participants'
@@ -248,7 +247,7 @@ export const buildSystemSections = (
   const contextEnabled = deps.contextEnabled ?? true
   const includes = promptsEnabled
     ? resolveIncludes(deps.includePrompts)
-    : { persona: false, room: false, house: false, responseFormat: false, skills: false, script: false }
+    : { persona: false, room: false, house: false, responseFormat: false, skills: false }
   const ctxIncludes = contextEnabled
     ? resolveIncludeContext(deps.includeContext)
     : { participants: false, artifacts: false, activity: false, knownAgents: false }
@@ -288,16 +287,8 @@ export const buildSystemSections = (
     optional: true,
   })
 
-  // SCRIPT section is no longer emitted as a side block. Cast members in an
-  // active script run get the full living document via the dedicated bypass
-  // path in buildContext (see below) — it replaces the entire system prompt.
-  out.push({
-    key: 'script',
-    label: 'SCRIPT',
-    text: '',
-    enabled: false,
-    optional: true,
-  })
+  // (Dialogue for cast members in an active script run is handled by
+  // ScriptStrategy in buildContext, NOT as a SystemSection here.)
 
   // CONTEXT sub-sections. `ctx_intro` and `ctx_newHint` are always-on
   // scaffolding. The other four are toggleable.
@@ -469,121 +460,192 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 // Remaining budget covers native tool definitions (~2000) + generation output (~2000).
 const DEFAULT_MAX_CONTEXT_TOKENS = 8000
 
-export const buildContext = (
+// === Strategy interface ===
+//
+// Two paths feed an agent's eval loop today: the standard multi-section
+// system prompt + windowed history (Normal), and the script-runner bypass
+// where cast members get a structural living document + role-tagged
+// dialogue (Script). Each path owns three responsibilities — system blocks,
+// history messages, and a trailing instruction. They share NO logic;
+// splitting them here lets buildContext be a thin orchestrator and lets
+// future modes (rehearsal, playback, prompt-eval harness) plug in without
+// adding another `if (foo) return …` early fork.
+//
+// Known limitation — strategies are MONOLITHIC. A hypothetical mode that
+// wanted "scripted with persona section enabled" would need a third
+// strategy that selectively calls buildSystemSections(). Don't solve
+// speculatively; the trigger to revisit is a real partial-overlap mode.
+export interface ContextStrategy {
+  readonly buildSystemBlocks: () => ReadonlyArray<{ text: string; cacheable: boolean }>
+  readonly buildHistoryMessages: () => {
+    messages: ReadonlyArray<ChatRequest['messages'][number]>
+    flushIds: Set<string>                        // mutable; orchestrator transfers ownership
+    warnings: ReadonlyArray<string>
+  }
+  readonly buildTrailingInstruction: () => ChatRequest['messages'][number] | null
+}
+
+// === Strategy: Normal — standard agent eval ===
+
+const createNormalStrategy = (
   deps: BuildContextDeps,
   triggerRoomId: string,
-): ContextResult => {
-  const maxContextTokens = deps.contextTokenBudget ?? DEFAULT_MAX_CONTEXT_TOKENS
-  const flushIds = new Set<string>()
+): ContextStrategy => {
+  const buildSystemBlocksFn = (): ReadonlyArray<{ text: string; cacheable: boolean }> =>
+    buildSystemBlocks(deps, triggerRoomId)
 
-  // === Script-mode bypass ===
-  // Cast members in an active script run get a custom context: a
-  // structural living-script document as system prompt + the current
-  // step's dialogue as proper user/assistant messages + a final user
-  // turn instructing the model to speak.
-  //
-  // Why split: when dialogue lives inside the system prompt as inline
-  // markdown, models tend to autocomplete from the most recent line
-  // (we observed Sam parroting Alex verbatim). Role-tagged messages
-  // make it unambiguous what's past dialogue vs. what's the request.
-  const ownName = deps.resolveName(deps.agentId)
-  const scriptCtx = deps.getScriptContext?.(triggerRoomId, ownName)
-  if (scriptCtx) {
+  const buildHistoryMessagesFn = (): {
+    messages: ReadonlyArray<ChatRequest['messages'][number]>
+    flushIds: Set<string>
+    warnings: ReadonlyArray<string>
+  } => {
+    const maxContextTokens = deps.contextTokenBudget ?? DEFAULT_MAX_CONTEXT_TOKENS
+    const flushIds = new Set<string>()
+    const warnings: string[] = []
+
+    const ctx = deps.history.rooms.get(triggerRoomId)
+    const all = ctx?.history ?? []
+    const old = all.length > deps.historyLimit ? all.slice(-deps.historyLimit) : all
     const fresh = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
-    for (const m of fresh) flushIds.add(m.id)
+    const roomCompressedIds = deps.getCompressedIds?.(triggerRoomId)
 
-    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-      { role: 'system', content: scriptCtx.systemDoc },
-    ]
+    const formattedOld: ChatRequest['messages'][number][] = []
+    for (const msg of old) {
+      const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds)
+      if (formatted) formattedOld.push(formatted)
+    }
+
+    const formattedFresh: Array<{ formatted: ChatRequest['messages'][number]; id: string }> = []
+    for (const msg of fresh) {
+      const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds)
+      if (formatted) formattedFresh.push({ formatted, id: msg.id })
+    }
+
+    // Trim layers: (1) historyLimit count slice above; (2) token budget below.
+    // System + fresh are mandatory; trim old messages from the front to fit.
+    const systemContent = buildSystemBlocksFn().map(b => b.text).filter(Boolean).join('\n\n')
+    const systemTokens = estimateTokens(systemContent)
+    const freshTokens = formattedFresh.reduce((sum, f) => sum + estimateTokens(f.formatted.content), 0)
+    const budgetForOld = maxContextTokens - systemTokens - freshTokens
+
+    let trimmedOld = formattedOld
+    if (budgetForOld > 0) {
+      let oldTokens = formattedOld.reduce((sum, m) => sum + estimateTokens(m.content), 0)
+      while (trimmedOld.length > 0 && oldTokens > budgetForOld) {
+        const removed = trimmedOld.shift()
+        if (removed) oldTokens -= estimateTokens(removed.content)
+      }
+      if (trimmedOld.length < formattedOld.length) {
+        const dropped = formattedOld.length - trimmedOld.length
+        warnings.push(`Context trimmed: dropped ${dropped} old messages to fit ${maxContextTokens} token budget`)
+      }
+    } else {
+      trimmedOld = []
+      if (formattedOld.length > 0) {
+        warnings.push(`Context budget exceeded by system+fresh alone — all old messages dropped`)
+      }
+    }
+
+    const messages: ChatRequest['messages'][number][] = [...trimmedOld]
+    for (const f of formattedFresh) {
+      messages.push(f.formatted)
+      flushIds.add(f.id)
+    }
+    return { messages, flushIds, warnings }
+  }
+
+  return {
+    buildSystemBlocks: buildSystemBlocksFn,
+    buildHistoryMessages: buildHistoryMessagesFn,
+    buildTrailingInstruction: () => null,
+  }
+}
+
+// === Strategy: Script — cast member in an active script run ===
+//
+// The system prompt is the structural living-script document (header, cast,
+// step list with current step's roles+goal+pressure — NO dialogue inline).
+// Per-step dialogue is rendered as role-tagged user/assistant messages so
+// the model treats it as conversation, not as a doc to autocomplete from.
+// A trailing user turn explicitly says "speak your next line".
+//
+// Why split dialogue out of the system prompt: when it lived inline as
+// markdown, models autocompleted from the most recent line (we saw Sam
+// parrot Alex's prior turn verbatim). Role-tagged messages make it
+// unambiguous what's past dialogue vs. what's the request.
+
+const createScriptStrategy = (
+  deps: BuildContextDeps,
+  triggerRoomId: string,
+  ownName: string,
+  scriptCtx: { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> },
+): ContextStrategy => ({
+  buildSystemBlocks: () => [{ text: scriptCtx.systemDoc, cacheable: false }],
+
+  buildHistoryMessages: () => {
+    const flushIds = new Set<string>()
+    for (const m of deps.history.incoming) {
+      if (m.roomId === triggerRoomId) flushIds.add(m.id)
+    }
+    const messages: ChatRequest['messages'][number][] = []
     for (const entry of scriptCtx.dialogue) {
       if (entry.speaker === ownName) {
         messages.push({ role: 'assistant', content: entry.content })
       } else {
-        // Plain-name prefix (no brackets) so the model doesn't mimic the
-        // pattern in its own reply. The user-role already tells it "this
-        // is something someone else said".
+        // not a system block — see strategy header for the "Sam parroted Alex" rationale.
+        // Plain "{name} said:" prefix; user-role already conveys "someone else spoke".
         messages.push({ role: 'user', content: `${entry.speaker} said: ${entry.content}` })
       }
     }
-    messages.push({
-      role: 'user',
-      content: `It is your turn. Speak your next line as ${ownName}. Reply with dialogue only — no markdown, no narration, no stage directions. Stay in character. Do not repeat or continue any prior speaker's words.`,
-    })
+    return { messages, flushIds, warnings: [] }
+  },
 
-    return {
-      messages,
-      flushInfo: { ids: flushIds, triggerRoomId },
-      warnings: [],
-      systemBlocks: [{ text: scriptCtx.systemDoc, cacheable: false }],
-    }
-  }
+  // Final user turn instructing the model to speak — see strategy header
+  // for why this is needed alongside role-tagged dialogue.
+  buildTrailingInstruction: () => ({
+    role: 'user',
+    content: `It is your turn. Speak your next line as ${ownName}. Reply with dialogue only — no markdown, no narration, no stage directions. Stay in character. Do not repeat or continue any prior speaker's words.`,
+  }),
+})
 
-  const systemBlocks = buildSystemBlocks(deps, triggerRoomId)
+// === Strategy selector — single decision point ===
+
+const selectStrategy = (deps: BuildContextDeps, triggerRoomId: string): ContextStrategy => {
+  const ownName = deps.resolveName(deps.agentId)
+  // getScriptContextForAgent is read-only but invokes renderLivingScript;
+  // call once and stash the result on the strategy closure so a future
+  // change to ScriptStrategy doesn't accidentally re-render.
+  const scriptCtx = deps.getScriptContext?.(triggerRoomId, ownName)
+  return scriptCtx
+    ? createScriptStrategy(deps, triggerRoomId, ownName, scriptCtx)
+    : createNormalStrategy(deps, triggerRoomId)
+}
+
+// === Orchestrator — picks a strategy, runs the three stages, assembles ===
+
+export const buildContext = (
+  deps: BuildContextDeps,
+  triggerRoomId: string,
+): ContextResult => {
+  const strategy = selectStrategy(deps, triggerRoomId)
+  const systemBlocks = strategy.buildSystemBlocks()
+  const { messages: historyMessages, flushIds, warnings } = strategy.buildHistoryMessages()
+  const trailing = strategy.buildTrailingInstruction()
+
   const systemContent = systemBlocks.map(b => b.text).filter(Boolean).join('\n\n')
-
-  const chatMessages: ChatRequest['messages'][number][] = [
-    { role: 'system' as const, content: systemContent },
+  const messages: ChatRequest['messages'][number][] = [
+    { role: 'system', content: systemContent },
+    ...historyMessages,
+    ...(trailing ? [trailing] : []),
   ]
-
-  const ctx = deps.history.rooms.get(triggerRoomId)
-  const all = ctx?.history ?? []
-  const old = all.length > deps.historyLimit ? all.slice(-deps.historyLimit) : all
-  const fresh = deps.history.incoming.filter(m => m.roomId === triggerRoomId)
-  const roomCompressedIds = deps.getCompressedIds?.(triggerRoomId)
-
-  // Format all candidate messages
-  const formattedOld: ChatRequest['messages'][number][] = []
-  for (const msg of old) {
-    const formatted = formatMessage(msg, '', deps.agentId, deps.resolveName, roomCompressedIds)
-    if (formatted) formattedOld.push(formatted)
-  }
-
-  const formattedFresh: Array<{ formatted: ChatRequest['messages'][number]; id: string }> = []
-  for (const msg of fresh) {
-    const formatted = formatMessage(msg, '[NEW] ', deps.agentId, deps.resolveName, roomCompressedIds)
-    if (formatted) formattedFresh.push({ formatted, id: msg.id })
-  }
-
-  const warnings: string[] = []
-
-  // Trim layers (in order):
-  //   1. historyLimit (count) — slice above
-  //   2. contextTokenBudget (derived from model window) — below
-  // Context budget: system + fresh messages are mandatory; trim old messages to fit
-  const systemTokens = estimateTokens(systemContent)
-  const freshTokens = formattedFresh.reduce((sum, f) => sum + estimateTokens(f.formatted.content), 0)
-  const budgetForOld = maxContextTokens - systemTokens - freshTokens
-
-  let trimmedOld = formattedOld
-  if (budgetForOld > 0) {
-    // Trim from oldest (front) until within budget
-    let oldTokens = formattedOld.reduce((sum, m) => sum + estimateTokens(m.content), 0)
-    while (trimmedOld.length > 0 && oldTokens > budgetForOld) {
-      const removed = trimmedOld.shift()
-      if (removed) oldTokens -= estimateTokens(removed.content)
-    }
-    if (trimmedOld.length < formattedOld.length) {
-      const dropped = formattedOld.length - trimmedOld.length
-      warnings.push(`Context trimmed: dropped ${dropped} old messages to fit ${maxContextTokens} token budget`)
-    }
-  } else {
-    // System + fresh alone exceed budget — skip all old messages
-    trimmedOld = []
-    if (formattedOld.length > 0) {
-      warnings.push(`Context budget exceeded by system+fresh alone — all old messages dropped`)
-    }
-  }
-
-  chatMessages.push(...trimmedOld)
-  for (const f of formattedFresh) {
-    chatMessages.push(f.formatted)
-    flushIds.add(f.id)
-  }
-
   return {
-    messages: chatMessages,
+    messages,
     flushInfo: { ids: flushIds, triggerRoomId },
     warnings,
     systemBlocks,
   }
 }
+
+// Test seam — exported so tests can construct strategies directly without
+// going through the orchestrator. Not part of the public agent surface.
+export const __strategyTestSeam = { createNormalStrategy, createScriptStrategy, selectStrategy }

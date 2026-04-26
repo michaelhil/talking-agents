@@ -111,7 +111,6 @@ export const createAIAgent = (
     house: config.includePrompts?.house ?? true,
     responseFormat: config.includePrompts?.responseFormat ?? true,
     skills: config.includePrompts?.skills ?? true,
-    script: config.includePrompts?.script ?? true,
   }
   const includeContextState: Required<IncludeContext> = {
     participants: config.includeContext?.participants ?? true,

@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import { buildContext, buildSystemSections, type BuildContextDeps } from './context-builder.ts'
+import { buildContext, buildSystemSections, __strategyTestSeam, type BuildContextDeps } from './context-builder.ts'
 import type { AgentHistory, Message, RoomProfile } from '../core/types/messaging.ts'
 
 const mkProfile = (id: string, name: string, roomPrompt?: string): RoomProfile => ({
@@ -176,6 +176,151 @@ describe('context-builder skills + context-data toggles', () => {
       includeContext: { knownAgents: false },
     }), 'room-1')
     expect(result.messages[0]!.content).not.toContain('Known agents:')
+  })
+})
+
+// ============================================================================
+// Strategy split — see ContextStrategy in context-builder.ts.
+// These tests guard the regression class that motivated the split: dialogue
+// inside a system prompt makes models autocomplete from it (the "Sam parroted
+// Alex" bug). Structural tests alone wouldn't catch a future change that
+// re-inlined dialogue into the system block.
+// ============================================================================
+
+const SCRIPT_DOC = `# SCRIPT: Test\n\n## Cast\n### Alex\n- persona: lead\n### Sam\n- persona: critic\n\n## Step 1 — Open\nRoles:\n  Alex — propose\n  Sam — challenge`
+const dialogueFixture = [
+  { speaker: 'Alex', content: 'I think we should ship.' },
+  { speaker: 'Sam', content: 'What about the migration risk?' },
+]
+
+const mkScriptDeps = (overrides: Partial<BuildContextDeps> = {}): BuildContextDeps => mkDeps({
+  agentId: 'agent-alex',
+  resolveName: (id) => id === 'agent-alex' ? 'Alex' : id,
+  getScriptContext: (_roomId, agentName) =>
+    agentName === 'Alex'
+      ? { systemDoc: SCRIPT_DOC, dialogue: dialogueFixture }
+      : undefined,
+  ...overrides,
+})
+
+describe('selectStrategy — routing', () => {
+  test('returns Script strategy when getScriptContext returns a value', () => {
+    const deps = mkScriptDeps()
+    const strategy = __strategyTestSeam.selectStrategy(deps, 'room-1')
+    // Script: trailing instruction is non-null and contains the speak prompt.
+    const trailing = strategy.buildTrailingInstruction()
+    expect(trailing).not.toBeNull()
+    expect(trailing!.content).toContain('Speak your next line as Alex')
+  })
+
+  test('returns Normal strategy when getScriptContext is absent', () => {
+    const deps = mkDeps()  // no getScriptContext
+    const strategy = __strategyTestSeam.selectStrategy(deps, 'room-1')
+    expect(strategy.buildTrailingInstruction()).toBeNull()
+  })
+
+  test('returns Normal strategy when getScriptContext returns undefined for this agent', () => {
+    const deps = mkScriptDeps({
+      agentId: 'agent-bystander',
+      resolveName: (id) => id === 'agent-bystander' ? 'Bystander' : id,
+    })
+    const strategy = __strategyTestSeam.selectStrategy(deps, 'room-1')
+    expect(strategy.buildTrailingInstruction()).toBeNull()
+  })
+})
+
+describe('createScriptStrategy — content regression guards', () => {
+  // The "Sam parroted Alex" bug: dialogue inside a system block causes
+  // autocompletion. These assertions guarantee dialogue lives in user/
+  // assistant messages, NOT in the system block.
+
+  test('system block contains script structure but NONE of the dialogue contents', () => {
+    const deps = mkScriptDeps()
+    const strategy = __strategyTestSeam.selectStrategy(deps, 'room-1')
+    const sysText = strategy.buildSystemBlocks().map(b => b.text).join('\n')
+    expect(sysText).toContain('SCRIPT: Test')
+    expect(sysText).toContain('Roles:')
+    for (const entry of dialogueFixture) {
+      expect(sysText).not.toContain(entry.content)
+    }
+  })
+
+  test('own-speaker dialogue is rendered as assistant role', () => {
+    const deps = mkScriptDeps()
+    const strategy = __strategyTestSeam.selectStrategy(deps, 'room-1')
+    const { messages } = strategy.buildHistoryMessages()
+    const ownEntries = messages.filter(m => m.role === 'assistant')
+    expect(ownEntries).toHaveLength(1)
+    expect(ownEntries[0]!.content).toBe('I think we should ship.')
+  })
+
+  test('other-speaker dialogue is rendered as user role with "{speaker} said:" prefix', () => {
+    const deps = mkScriptDeps()
+    const strategy = __strategyTestSeam.selectStrategy(deps, 'room-1')
+    const { messages } = strategy.buildHistoryMessages()
+    const others = messages.filter(m => m.role === 'user')
+    expect(others).toHaveLength(1)
+    expect(others[0]!.content).toBe('Sam said: What about the migration risk?')
+  })
+
+  test('all fresh incoming messages are added to flushIds', () => {
+    const incoming: Message[] = [
+      { id: 'inc-1', roomId: 'room-1', senderId: 'other', senderName: 'Other', content: 'hi', type: 'chat', timestamp: Date.now() },
+      { id: 'inc-2', roomId: 'room-1', senderId: 'other', senderName: 'Other', content: 'hi2', type: 'chat', timestamp: Date.now() },
+      { id: 'inc-skip', roomId: 'room-other', senderId: 'other', senderName: 'Other', content: 'wrong room', type: 'chat', timestamp: Date.now() },
+    ]
+    const history: AgentHistory = {
+      rooms: new Map([['room-1', { profile: mkProfile('room-1', 'General'), history: [], lastActiveAt: Date.now() }]]),
+      incoming,
+      agentProfiles: new Map(),
+    }
+    const deps = mkScriptDeps({ history })
+    const strategy = __strategyTestSeam.selectStrategy(deps, 'room-1')
+    const { flushIds } = strategy.buildHistoryMessages()
+    expect(flushIds.has('inc-1')).toBe(true)
+    expect(flushIds.has('inc-2')).toBe(true)
+    expect(flushIds.has('inc-skip')).toBe(false)  // wrong room — must NOT be flushed
+  })
+})
+
+describe('buildContext — end-to-end snapshots (wire-format parity guard)', () => {
+  test('Normal path: full message array shape', () => {
+    const incoming: Message[] = [
+      { id: 'in-1', roomId: 'room-1', senderId: 'b', senderName: 'Bob', content: 'morning', type: 'chat', timestamp: 1 },
+    ]
+    const old: Message[] = [
+      { id: 'old-1', roomId: 'room-1', senderId: 'b', senderName: 'Bob', content: 'evening', type: 'chat', timestamp: 0 },
+    ]
+    const history: AgentHistory = {
+      rooms: new Map([['room-1', { profile: mkProfile('room-1', 'General'), history: old, lastActiveAt: Date.now() }]]),
+      incoming,
+      agentProfiles: new Map([['b', { id: 'b', name: 'Bob', kind: 'ai' }]]),
+    }
+    const result = buildContext(mkDeps({
+      history,
+      resolveName: (id) => id === 'b' ? 'Bob' : id,
+    }), 'room-1')
+    expect(result.messages.map(m => m.role)).toEqual(['system', 'user', 'user'])
+    // First user message is the OLD one (no [NEW] tag); second is the fresh incoming.
+    expect(result.messages[1]!.content).toContain('[Bob]: evening')
+    expect(result.messages[1]!.content).not.toContain('[NEW]')
+    expect(result.messages[2]!.content).toContain('[NEW]')
+    expect(result.messages[2]!.content).toContain('[Bob]: morning')
+    expect(result.flushInfo.ids.has('in-1')).toBe(true)
+    expect(result.flushInfo.ids.has('old-1')).toBe(false)
+  })
+
+  test('Script path: full message array shape with trailing instruction', () => {
+    const result = buildContext(mkScriptDeps(), 'room-1')
+    // system + dialogue (1 assistant + 1 user) + trailing user instruction.
+    expect(result.messages.map(m => m.role)).toEqual(['system', 'assistant', 'user', 'user'])
+    expect(result.messages[0]!.content).toContain('SCRIPT: Test')
+    expect(result.messages[1]!.content).toBe('I think we should ship.')
+    expect(result.messages[2]!.content).toBe('Sam said: What about the migration risk?')
+    expect(result.messages[3]!.content).toContain('Speak your next line as Alex')
+    // Single non-cacheable system block — see ScriptStrategy.buildSystemBlocks.
+    expect(result.systemBlocks).toHaveLength(1)
+    expect(result.systemBlocks![0]!.cacheable).toBe(false)
   })
 })
 
