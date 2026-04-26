@@ -368,6 +368,9 @@ export const providersRoutes: RouteEntry[] = [
         const elapsedMs = Math.round(performance.now() - t0)
         let reason = err instanceof Error ? err.message : String(err)
         if (apiKey) reason = reason.split(apiKey).join('•••REDACTED•••')
+        // Cap the error body so a chatty 5xx (which can include arbitrary
+        // upstream content) doesn't get echoed back to the client wholesale.
+        if (reason.length > 500) reason = reason.slice(0, 500) + '… [truncated]'
         const code = isCloudProviderError(err) ? err.code : 'error'
         return json({ ok: false, error: reason, code, elapsedMs })
       }

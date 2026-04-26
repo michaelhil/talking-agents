@@ -19,6 +19,11 @@ import { createCloudProviderError, parseRetryAfterMs } from './errors.ts'
 const DEFAULT_CHAT_TIMEOUT_MS = 300_000
 const DEFAULT_MODELS_TIMEOUT_MS = 10_000
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000
+// Hard cap on the SSE re-assembly buffer. Frames are normally a few KB; a
+// runaway provider sending one giant unterminated `data:` line would otherwise
+// grow this buffer without bound. 10 MB is well above any legitimate frame
+// and small enough to fail loud rather than OOM the process.
+const MAX_SSE_BUFFER_BYTES = 10 * 1024 * 1024
 
 // === Config ===
 
@@ -459,6 +464,16 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
+
+        // Bound the unframed buffer. Treat as a recoverable provider issue
+        // (fallbackable) so the router can try the next provider.
+        if (buffer.length > MAX_SSE_BUFFER_BYTES) {
+          throw createCloudProviderError({
+            code: 'provider_down',
+            provider: config.name,
+            message: `${config.name} stream: buffer exceeded ${MAX_SSE_BUFFER_BYTES} bytes without a frame boundary`,
+          })
+        }
 
         // SSE: split on double-newline frames.
         let sep = buffer.indexOf('\n\n')

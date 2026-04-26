@@ -85,18 +85,25 @@ export const isFallbackable = (err: CloudProviderError): boolean =>
   err.code === 'rate_limit' || err.code === 'quota' || err.code === 'provider_down'
 
 // Parse Retry-After header: HTTP spec allows delta-seconds (integer) or HTTP-date.
-// Returns ms from now, or undefined if absent/unparseable.
+// Returns ms from now, or undefined if absent/unparseable/already-elapsed.
+//
+// Returning 0 for past dates would collapse the cooldown — callers use
+// `err.retryAfterMs ?? defaultMs` and `0 ?? defaultMs` is `0` (the nullish
+// coalesce only triggers on null/undefined). A zero cooldown causes immediate
+// re-attempt on the same provider, defeating the failover. Past dates and
+// zero deltas therefore map to undefined so the default cooldown applies.
 export const parseRetryAfterMs = (header: string | null, now: () => number = Date.now): number | undefined => {
   if (!header) return undefined
   const trimmed = header.trim()
   if (/^\d+$/.test(trimmed)) {
     const seconds = Number.parseInt(trimmed, 10)
+    if (seconds <= 0) return undefined
     return seconds * 1000
   }
   const dateMs = Date.parse(trimmed)
   if (Number.isFinite(dateMs)) {
     const delta = dateMs - now()
-    return delta > 0 ? delta : 0
+    return delta > 0 ? delta : undefined
   }
   return undefined
 }

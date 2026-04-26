@@ -103,6 +103,18 @@ export interface OllamaProviderExtended extends LLMProvider {
   readonly setBaseUrl: (url: string) => void
 }
 
+// Ollama doesn't honor OpenAI-style `tool_choice`. We surface this once per
+// (model, choice) pair via console.warn so callers expecting forced tool
+// invocation aren't silently disappointed.
+const warnedToolChoice = new Set<string>()
+const warnIgnoredToolChoice = (model: string, choice: ChatRequest['toolChoice']): void => {
+  if (choice === undefined || choice === 'auto') return
+  const key = `${model}::${typeof choice === 'string' ? choice : `name:${choice.name}`}`
+  if (warnedToolChoice.has(key)) return
+  warnedToolChoice.add(key)
+  console.warn(`[ollama] toolChoice ${JSON.stringify(choice)} ignored for model "${model}" (Ollama does not support tool_choice; behaves as 'auto')`)
+}
+
 export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExtended => {
   let baseUrl = initialBaseUrl
   const chat = async (request: ChatRequest): Promise<ChatResponse> => {
@@ -137,6 +149,7 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
 
     if (request.tools && request.tools.length > 0) {
       body.tools = request.tools
+      warnIgnoredToolChoice(request.model, request.toolChoice)
     }
     if (request.think !== undefined) body.think = request.think
 
@@ -194,6 +207,7 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
     // Pass tool definitions for native tool calling in streaming mode
     if (request.tools && request.tools.length > 0) {
       body.tools = request.tools.map(t => t)
+      warnIgnoredToolChoice(request.model, request.toolChoice)
     }
     const streamOpts: Record<string, unknown> = {
       num_ctx: request.numCtx ?? DEFAULT_NUM_CTX,
