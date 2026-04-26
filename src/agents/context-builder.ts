@@ -117,6 +117,7 @@ export interface BuildContextDeps {
   readonly responseFormat?: string
   readonly history: AgentHistory
   readonly getSkills?: (roomName: string) => string
+  readonly getScript?: (roomId: string, agentName: string) => string | undefined
   readonly historyLimit: number
   readonly resolveName: (senderId: string) => string
   readonly getArtifactsForScope?: (roomId: string) => ReadonlyArray<Artifact>
@@ -139,6 +140,7 @@ const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePromp
   house: inc?.house ?? true,
   responseFormat: inc?.responseFormat ?? true,
   skills: inc?.skills ?? true,
+  script: inc?.script ?? true,
 })
 
 const resolveIncludeContext = (inc: IncludeContext | undefined): Required<IncludeContext> => ({
@@ -209,7 +211,7 @@ export interface SystemSection {
 }
 
 export type SystemSectionKey =
-  | 'house' | 'room' | 'persona' | 'responseFormat' | 'skills'
+  | 'house' | 'room' | 'persona' | 'responseFormat' | 'skills' | 'script'
   | 'ctx_intro'           // "You are in room X" — always emitted
   | 'ctx_flow'
   | 'ctx_participants'
@@ -235,7 +237,7 @@ export const buildSystemSections = (
   const contextEnabled = deps.contextEnabled ?? true
   const includes = promptsEnabled
     ? resolveIncludes(deps.includePrompts)
-    : { persona: false, room: false, house: false, responseFormat: false, skills: false }
+    : { persona: false, room: false, house: false, responseFormat: false, skills: false, script: false }
   const ctxIncludes = contextEnabled
     ? resolveIncludeContext(deps.includeContext)
     : { participants: false, artifacts: false, activity: false, knownAgents: false }
@@ -272,6 +274,16 @@ export const buildSystemSections = (
     label: 'SKILLS',
     text: skillsText,
     enabled: includes.skills && !!skillsText,
+    optional: true,
+  })
+
+  const ownName = deps.resolveName(deps.agentId)
+  const scriptText = deps.getScript ? (deps.getScript(triggerRoomId, ownName) ?? '') : ''
+  out.push({
+    key: 'script',
+    label: 'SCRIPT',
+    text: scriptText,
+    enabled: includes.script && !!scriptText,
     optional: true,
   })
 

@@ -28,15 +28,24 @@ export interface ScriptStore {
   readonly reload: () => Promise<ReadonlyArray<string>>   // returns names loaded
   readonly upsert: (raw: unknown) => Promise<Script>      // write file + reload + return parsed
   readonly remove: (name: string) => Promise<boolean>     // returns false if not found
+  readonly onChange: (fn: () => void) => () => void       // catalog-mutation listener (returns unsubscribe)
 }
 
 export const createScriptStore = (baseDir: string): ScriptStore => {
   const scripts = new Map<string, Script>()
+  const listeners = new Set<() => void>()
+
+  const fireChange = (): void => {
+    for (const fn of listeners) {
+      try { fn() } catch { /* listener errors must not break the store */ }
+    }
+  }
 
   const reload = async (): Promise<ReadonlyArray<string>> => {
     scripts.clear()
     const loaded = await scanScriptDir(baseDir)
     for (const s of loaded) scripts.set(s.name, s)
+    fireChange()
     return loaded.map(s => s.name)
   }
 
@@ -47,14 +56,12 @@ export const createScriptStore = (baseDir: string): ScriptStore => {
       throw new Error(`script name must match ${VALID_NAME} (got "${String(obj.name)}")`)
     }
     const name = obj.name
-    // Validate by parsing first so we never write garbage.
     const json = JSON.stringify(obj, null, 2)
-    parseScript(name, json)
-    // Write to dir-form (consistent with skills layout).
+    parseScript(name, json)   // validate before write
     const dir = join(baseDir, name)
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'script.json'), json, 'utf-8')
-    await reload()
+    await reload()            // also fires change
     const reloaded = scripts.get(name)
     if (!reloaded) throw new Error(`upsert: script "${name}" did not reload`)
     return reloaded
@@ -71,12 +78,18 @@ export const createScriptStore = (baseDir: string): ScriptStore => {
     return scripts.get(name) === undefined && removed
   }
 
+  const onChange = (fn: () => void): (() => void) => {
+    listeners.add(fn)
+    return () => { listeners.delete(fn) }
+  }
+
   return {
     get: (name) => scripts.get(name),
     list: () => [...scripts.values()],
     reload,
     upsert,
     remove,
+    onChange,
   }
 }
 

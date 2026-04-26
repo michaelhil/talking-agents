@@ -65,6 +65,29 @@ export const wireSystemEvents = (
     sched()
   })
 
+  system.scriptStore.onChange(() => {
+    broadcast({ type: 'script_catalog_changed' })
+    sched()
+  })
+
+  system.setOnScriptEvent((roomId, event, detail) => {
+    const roomName = roomNameFor(roomId)
+    if (event === 'script_started') {
+      const d = detail as { scriptId: string; scriptName: string; title: string }
+      broadcast({ type: 'script_started', roomName, ...d })
+    } else if (event === 'script_step_advanced') {
+      const d = detail as { scriptId: string; stepIndex: number; totalSteps: number; title: string; forced?: boolean }
+      broadcast({ type: 'script_step_advanced', roomName, ...d })
+    } else if (event === 'script_readiness_changed') {
+      const d = detail as { scriptId: string; readiness: Record<string, boolean>; whisperFailures: number }
+      broadcast({ type: 'script_readiness_changed', roomName, ...d })
+    } else if (event === 'script_completed') {
+      const d = detail as { scriptId: string }
+      broadcast({ type: 'script_completed', roomName, ...d })
+    }
+    sched()
+  })
+
   // Bookmarks: REST-driven, no WS broadcast (single-user surface; UI refetches).
   system.setOnBookmarksChanged(() => { sched() })
 

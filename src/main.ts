@@ -58,6 +58,8 @@ import { mermaidArtifactType } from './core/artifact-types/mermaid.ts'
 // Native-only tool calling — no capability probing needed
 import { createSkillStore, type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/script-store.ts'
+import { createScriptRunner, type ScriptRunner, type ScriptEventEmitter } from './core/script-runner.ts'
+import { createWriteScriptTool } from './tools/built-in/script-codegen.ts'
 import { sharedPaths } from './core/paths.ts'
 
 import { createOllamaUrlRegistry, type OllamaUrlRegistry } from './core/ollama-urls.ts'
@@ -99,6 +101,8 @@ export interface System {
   readonly skillsDir: string
   readonly scriptStore: ScriptStore
   readonly scriptsDir: string
+  readonly scriptRunner: ScriptRunner
+  readonly setOnScriptEvent: (cb: ScriptEventEmitter) => void
   readonly packsDir: string
   readonly knowledgeDir: string
   readonly providersStorePath: string
@@ -250,6 +254,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const summaryRunDelta = lateBinding<(roomId: string, target: SummaryTarget, delta: string) => void>()
   const summaryRunCompleted = lateBinding<(roomId: string, target: SummaryTarget, text: string) => void>()
   const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>()
+  const scriptHook = lateBinding<(roomId: string, message: import('./core/types/messaging.ts').Message) => void>()
+  const scriptEvent = lateBinding<ScriptEventEmitter>()
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
@@ -270,6 +276,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     onMessagePosted: (roomId, message) => {
       messagePosted.proxy(roomId, message)
       schedulerRef?.onMessagePosted(roomId, message)
+      scriptHook.proxy(roomId, message)
     },
     onTurnChanged: turnChanged.proxy,
     onDeliveryModeChanged: deliveryModeChanged.proxy,
@@ -555,6 +562,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // doesn't make these unsafe.
   toolRegistry.register(createTestToolTool(toolRegistry))
   toolRegistry.register(createListSkillsTool(skillStore))
+  // write_script is always on — scripts are pure data (different threat
+  // model from write_skill / write_tool). The store's onChange listener
+  // (wired in wire-system-events.ts) broadcasts script_catalog_changed.
+  toolRegistry.register(createWriteScriptTool(scriptStore, () => { /* onChange already broadcasts */ }))
 
   // write_skill / write_tool / install_pack / update_pack / uninstall_pack /
   // list_packs all let an agent drop arbitrary TS into ~/.samsinn/ and have
@@ -569,10 +580,19 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     }))
   }
 
+  // Forward-ref so the runner can call System.* without a build-order cycle.
+  const systemRef: { current: System | undefined } = { current: undefined }
+  const scriptRunner = createScriptRunner({
+    getSystem: () => systemRef.current as System,
+    emit: (roomId, event, detail) => scriptEvent.proxy(roomId, event, detail),
+  })
+  scriptHook.set((roomId, message) => scriptRunner.onRoomMessage(roomId, message))
+
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
     spawnAIAgent(config, llm, house, team, routeMessage, toolRegistry, {
       ...options,
       getSkills: getSkillsForRoom,
+      getScript: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
       onEvalEvent: evalEvent.proxy,
     })
 
@@ -700,6 +720,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     llm, ollama, providerConfig, providerKeys, gateways,
     toolRegistry, refreshAllAgentTools, skillStore, skillsDir,
     scriptStore, scriptsDir,
+    scriptRunner,
+    setOnScriptEvent: scriptEvent.set,
     packsDir,
     knowledgeDir: sharedPaths.knowledge(),
     providersStorePath: sharedPaths.providers(),
@@ -743,6 +765,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     addEventObserver: (observer) => addEventObserver(observer, loggingState.sessionRef),
     logging,
   }
+  systemRef.current = system
   return system
 }
 

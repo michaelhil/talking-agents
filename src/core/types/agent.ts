@@ -46,7 +46,7 @@ export interface Agent {
 //   UI "System prompt"   → `house`          (global housePrompt — NOT the LLM `role:'system'`)
 //   UI "Response format" → `responseFormat` (global responseFormat)
 // All default true; undefined at load → preserve current behavior.
-export type PromptSection = 'persona' | 'room' | 'house' | 'responseFormat' | 'skills'
+export type PromptSection = 'persona' | 'room' | 'house' | 'responseFormat' | 'skills' | 'script'
 export type IncludePrompts = Partial<Record<PromptSection, boolean>>
 
 // Sub-sections inside the generated CONTEXT block. Default all true; undefined
