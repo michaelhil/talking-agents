@@ -174,6 +174,19 @@ export interface ScriptCatalogEntry {
 }
 export const $scriptCatalog = atom<ReadonlyArray<ScriptCatalogEntry>>([])
 
+export interface UIWhisperRecord {
+  readonly turn: number
+  readonly whisper: {
+    readonly ready_to_advance: boolean
+    readonly notes?: string
+    readonly addressing?: string
+    readonly role_update?: string
+  }
+  readonly usedFallback: boolean
+  readonly rawResponse?: string
+  readonly errorReason?: string
+}
+
 export interface ActiveScript {
   readonly scriptId: string
   readonly scriptName: string
@@ -183,6 +196,7 @@ export interface ActiveScript {
   readonly stepTitle: string
   readonly readiness: Readonly<Record<string, boolean>>
   readonly whisperFailures: number
+  readonly lastWhisper: Readonly<Record<string, UIWhisperRecord>>
 }
 // Keyed by roomId.
 export const $activeScriptByRoom = map<Record<string, ActiveScript>>({})

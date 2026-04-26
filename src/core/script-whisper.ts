@@ -24,6 +24,8 @@ export interface ClassifyArgs {
 export interface ClassifyResult {
   readonly whisper: Whisper
   readonly usedFallback: boolean
+  readonly rawResponse?: string                         // last raw model output (captured on failure)
+  readonly errorReason?: string                         // why we fell back
 }
 
 const buildPrompt = (args: ClassifyArgs, retryNote?: string): string => {
@@ -74,6 +76,7 @@ const validate = (parsed: unknown, presentCast: ReadonlyArray<string>): { whispe
 }
 
 export const classifyWhisper = async (args: ClassifyArgs): Promise<ClassifyResult> => {
+  let lastRaw: string | undefined
   const attempt = async (retryNote?: string): Promise<{ whisper: Whisper } | { error: string }> => {
     let raw: string
     try {
@@ -81,18 +84,32 @@ export const classifyWhisper = async (args: ClassifyArgs): Promise<ClassifyResul
         model: args.model,
         messages: [{ role: 'user', content: buildPrompt(args, retryNote) }],
         temperature: 0,
-        maxTokens: 300,
+        // Generous cap for whisper output. Thinking-mode models (Gemini 2.5
+        // Pro, Claude 4 with thinking) burn budget before producing output;
+        // a small cap can leave the response empty. The actual JSON we expect
+        // is ~80 tokens — the slack covers reasoning.
+        maxTokens: 2000,
         jsonMode: true,
       })
       raw = response.content.trim()
+      lastRaw = raw
     } catch (err) {
       return { error: `chat failed: ${err instanceof Error ? err.message : String(err)}` }
     }
+    const cleaned = stripMarkdownFences(raw)
     let parsed: unknown
     try {
-      parsed = JSON.parse(raw)
+      parsed = JSON.parse(cleaned)
     } catch {
-      return { error: `parse failed: response was not valid JSON: ${raw.slice(0, 120)}` }
+      const extracted = extractJsonObject(cleaned)
+      if (extracted === null) {
+        return { error: `parse failed: response was not valid JSON: ${raw.slice(0, 200)}` }
+      }
+      try {
+        parsed = JSON.parse(extracted)
+      } catch {
+        return { error: `parse failed: extracted block was not valid JSON: ${extracted.slice(0, 200)}` }
+      }
     }
     return validate(parsed, args.presentCast)
   }
@@ -103,9 +120,48 @@ export const classifyWhisper = async (args: ClassifyArgs): Promise<ClassifyResul
   const second = await attempt(`Your previous reply was rejected: ${first.error}. Reply ONLY with the JSON object.`)
   if ('whisper' in second) return { whisper: second.whisper, usedFallback: false }
 
-  console.warn(`[script-whisper] both attempts failed: ${second.error} — falling back to ready_to_advance:false`)
-  return { whisper: { ready_to_advance: false }, usedFallback: true }
+  console.warn(`[script-whisper] both attempts failed: ${second.error} — falling back. raw response: ${(lastRaw ?? '').slice(0, 300)}`)
+  return {
+    whisper: { ready_to_advance: false },
+    usedFallback: true,
+    rawResponse: lastRaw,
+    errorReason: second.error,
+  }
+}
+
+// Strip markdown code fences if the model wrapped the JSON in ```json ... ```
+const stripMarkdownFences = (s: string): string => {
+  const trimmed = s.trim()
+  // Common shape: ```json\n...\n``` or ```\n...\n```
+  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/m.exec(trimmed)
+  if (fence && fence[1]) return fence[1].trim()
+  return trimmed
+}
+
+// Extract the first balanced top-level JSON object from a longer string.
+const extractJsonObject = (s: string): string | null => {
+  const start = s.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inStr = false
+  let escape = false
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i]!
+    if (inStr) {
+      if (escape) { escape = false; continue }
+      if (ch === '\\') { escape = true; continue }
+      if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') { inStr = true; continue }
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return s.slice(start, i + 1)
+    }
+  }
+  return null
 }
 
 // Export internals for testing (not part of the runtime contract).
-export const __test = { buildPrompt, validate }
+export const __test = { buildPrompt, validate, stripMarkdownFences, extractJsonObject }

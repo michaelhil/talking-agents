@@ -99,6 +99,7 @@ export const scriptRoutes: ReadonlyArray<RouteEntry> = [
         turn: run.turn,
         readiness: run.readiness,
         roleOverrides: run.roleOverrides,
+        lastWhisper: run.lastWhisper,
         whisperFailures: run.whisperFailures,
         ended: run.ended,
       })

@@ -68,9 +68,9 @@ export type WSOutbound =
   | { readonly type: 'activation_result'; readonly roomName: string; readonly agentName: string; readonly ok: boolean; readonly queued: boolean; readonly reason?: string }
   | { readonly type: 'mode_auto_switched'; readonly roomName: string; readonly toMode: DeliveryMode; readonly reason: 'second-ai-joined' }
   // Script runner events (v2)
-  | { readonly type: 'script_started'; readonly roomName: string; readonly scriptId: string; readonly scriptName: string; readonly title: string }
+  | { readonly type: 'script_started'; readonly roomName: string; readonly scriptId: string; readonly scriptName: string; readonly title: string; readonly totalSteps: number; readonly stepTitle: string; readonly cast: ReadonlyArray<{ readonly id: string; readonly name: string; readonly model: string; readonly kind: 'ai' }> }
   | { readonly type: 'script_step_advanced'; readonly roomName: string; readonly scriptId: string; readonly stepIndex: number; readonly totalSteps: number; readonly title: string; readonly forced?: boolean }
-  | { readonly type: 'script_readiness_changed'; readonly roomName: string; readonly scriptId: string; readonly readiness: Readonly<Record<string, boolean>>; readonly whisperFailures: number }
+  | { readonly type: 'script_readiness_changed'; readonly roomName: string; readonly scriptId: string; readonly readiness: Readonly<Record<string, boolean>>; readonly whisperFailures: number; readonly lastWhisper: Readonly<Record<string, { readonly turn: number; readonly whisper: { readonly ready_to_advance: boolean; readonly notes?: string; readonly addressing?: string; readonly role_update?: string }; readonly usedFallback: boolean; readonly rawResponse?: string; readonly errorReason?: string }>> }
   | { readonly type: 'script_completed'; readonly roomName: string; readonly scriptId: string }
   | { readonly type: 'script_catalog_changed' }
   // Directed reply to the client that sent add_artifact with a requestId.

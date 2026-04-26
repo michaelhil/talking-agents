@@ -73,13 +73,13 @@ export const wireSystemEvents = (
   system.setOnScriptEvent((roomId, event, detail) => {
     const roomName = roomNameFor(roomId)
     if (event === 'script_started') {
-      const d = detail as { scriptId: string; scriptName: string; title: string }
+      const d = detail as { scriptId: string; scriptName: string; title: string; totalSteps: number; stepTitle: string; cast: ReadonlyArray<{ id: string; name: string; model: string; kind: 'ai' }> }
       broadcast({ type: 'script_started', roomName, ...d })
     } else if (event === 'script_step_advanced') {
       const d = detail as { scriptId: string; stepIndex: number; totalSteps: number; title: string; forced?: boolean }
       broadcast({ type: 'script_step_advanced', roomName, ...d })
     } else if (event === 'script_readiness_changed') {
-      const d = detail as { scriptId: string; readiness: Record<string, boolean>; whisperFailures: number }
+      const d = detail as { scriptId: string; readiness: Record<string, boolean>; whisperFailures: number; lastWhisper: Record<string, { turn: number; whisper: { ready_to_advance: boolean; notes?: string; addressing?: string; role_update?: string }; usedFallback: boolean; rawResponse?: string; errorReason?: string }> }
       broadcast({ type: 'script_readiness_changed', roomName, ...d })
     } else if (event === 'script_completed') {
       const d = detail as { scriptId: string }

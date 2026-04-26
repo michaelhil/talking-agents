@@ -64,6 +64,14 @@ export interface Whisper {
   readonly role_update?: string                         // self-update for current step's role
 }
 
+export interface WhisperRecord {
+  readonly turn: number
+  readonly whisper: Whisper
+  readonly usedFallback: boolean
+  readonly rawResponse?: string                         // captured on failure (debug surface)
+  readonly errorReason?: string                         // captured on fallback
+}
+
 export interface ScriptRun {
   readonly script: Script
   readonly roomId: string
@@ -71,7 +79,7 @@ export interface ScriptRun {
   turn: number                                          // total turns within current step
   readiness: Record<string, boolean>                    // castName → ready_to_advance
   roleOverrides: Record<string, string>                 // castName → current role override
-  lastWhisper: Record<string, Whisper>                  // castName → most recent whisper
+  lastWhisper: Record<string, WhisperRecord>            // castName → most recent whisper record
   whisperFailures: number                               // consecutive failures, surfaced in UI
   priorMode?: 'broadcast' | 'manual'                    // restored on stop
   ended: boolean

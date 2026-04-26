@@ -4,6 +4,7 @@
 import type { UIMessage, AgentInfo } from './render-types.ts'
 import { renderMermaidBlocks } from './mermaid/index.ts'
 import { icon } from './icon.ts'
+import { appendWhisperBadge } from './whisper-badge.ts'
 
 // Render Markdown content safely. Falls back to textContent if libraries not loaded.
 // Post-processes mermaid code blocks into rendered diagrams.
@@ -164,6 +165,10 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
 
     div.appendChild(header)
     div.appendChild(content)
+
+    // If a script is active in this room, append the most recent whisper
+    // for this sender as a small badge (no-op when no active script).
+    appendWhisperBadge(div, msg.senderName, msg.roomId, msg.timestamp)
   }
 
   container.appendChild(div)

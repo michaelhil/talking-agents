@@ -13,7 +13,7 @@
 // ============================================================================
 
 import type { System } from '../main.ts'
-import type { Script, ScriptRun, Whisper, ContextOverrides } from './types/script.ts'
+import type { Script, ScriptRun, WhisperRecord, ContextOverrides } from './types/script.ts'
 import type { Message, DeliveryMode } from './types/messaging.ts'
 import type { AIAgentConfig, IncludePrompts, IncludeContext } from './types/agent.ts'
 import { classifyWhisper } from './script-whisper.ts'
@@ -130,10 +130,12 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     // Sequence: pause → spawn → add → restore-pause → switch-to-manual → Stage card → activate.
     room.setPaused(true)
     const spawned: string[] = []
+    const castInfo: Array<{ id: string; name: string; model: string; kind: 'ai' }> = []
     try {
       for (const member of script.cast) {
         const agent = await system.spawnAIAgent(buildAgentConfig(member, script.contextOverrides))
         spawned.push(agent.id)
+        castInfo.push({ id: agent.id, name: member.name, model: member.model, kind: 'ai' })
         await system.addAgentToRoom(agent.id, roomId, 'script-runner')
       }
     } catch (err) {
@@ -171,6 +173,9 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       scriptId: script.id,
       scriptName: script.name,
       title: script.title,
+      totalSteps: script.steps.length,
+      stepTitle: step.title,
+      cast: castInfo,
     })
 
     // Activate the starts:true cast member.
@@ -256,7 +261,14 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       presentCast: run.script.cast.map(c => c.name),
     })
 
-    applyWhisper(run, castName, result.whisper)
+    const record: WhisperRecord = {
+      turn: run.turn,
+      whisper: result.whisper,
+      usedFallback: result.usedFallback,
+      ...(result.rawResponse !== undefined ? { rawResponse: result.rawResponse } : {}),
+      ...(result.errorReason !== undefined ? { errorReason: result.errorReason } : {}),
+    }
+    applyWhisper(run, castName, record)
     if (result.usedFallback) run.whisperFailures += 1
     else run.whisperFailures = 0
 
@@ -264,6 +276,7 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       scriptId: run.script.id,
       readiness: { ...run.readiness },
       whisperFailures: run.whisperFailures,
+      lastWhisper: { ...run.lastWhisper },
     })
 
     const allReady = run.script.cast.every(c => run.readiness[c.name] === true)
@@ -299,10 +312,10 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     }
   }
 
-  const applyWhisper = (run: ScriptRun, castName: string, whisper: Whisper): void => {
-    run.readiness[castName] = whisper.ready_to_advance
-    if (whisper.role_update) run.roleOverrides[castName] = whisper.role_update
-    run.lastWhisper[castName] = whisper
+  const applyWhisper = (run: ScriptRun, castName: string, record: WhisperRecord): void => {
+    run.readiness[castName] = record.whisper.ready_to_advance
+    if (record.whisper.role_update) run.roleOverrides[castName] = record.whisper.role_update
+    run.lastWhisper[castName] = record
   }
 
   const advance = async (run: ScriptRun, forced: boolean): Promise<void> => {
@@ -382,7 +395,7 @@ const buildScriptContextString = (run: ScriptRun, castName: string): string => {
     })
     .join(', ')
 
-  const own = run.lastWhisper[castName]
+  const own = run.lastWhisper[castName]?.whisper
   const lastNotes = own?.notes ? `Your last whisper notes: ${own.notes}` : ''
 
   const lines = [

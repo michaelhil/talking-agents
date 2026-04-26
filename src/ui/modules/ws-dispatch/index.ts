@@ -360,15 +360,22 @@ const handlers: Handlers = {
   script_started(msg) {
     const roomId = roomNameToId(msg.roomName)
     if (!roomId) return
+    // Seed $agents with the cast — script-runner spawns them server-side
+    // but doesn't fire the per-agent agent_joined event, so the UI's
+    // agents store needs to learn about them here.
+    for (const c of msg.cast) {
+      $agents.setKey(c.id, { id: c.id, name: c.name, kind: c.kind, model: c.model, state: 'idle' })
+    }
     $activeScriptByRoom.setKey(roomId, {
       scriptId: msg.scriptId,
       scriptName: msg.scriptName,
       title: msg.title,
       stepIndex: 0,
-      totalSteps: 0,                              // filled by step_advanced or by REST fetch
-      stepTitle: '',
+      totalSteps: msg.totalSteps,
+      stepTitle: msg.stepTitle,
       readiness: {},
       whisperFailures: 0,
+      lastWhisper: {},
     })
   },
 
@@ -383,6 +390,7 @@ const handlers: Handlers = {
       totalSteps: msg.totalSteps,
       stepTitle: msg.title,
       readiness: {},                              // resets on advance
+      lastWhisper: {},                            // resets on advance
     })
   },
 
@@ -395,6 +403,7 @@ const handlers: Handlers = {
       ...cur,
       readiness: msg.readiness,
       whisperFailures: msg.whisperFailures,
+      lastWhisper: msg.lastWhisper,
     })
   },
 
