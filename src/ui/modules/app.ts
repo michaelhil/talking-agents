@@ -44,6 +44,7 @@ import {
   isSummaryGroupExpanded,
   initSummaryPanel,
 } from './summary-panel.ts'
+import { initScriptPanel } from './script-panel.ts'
 import {
   $myAgentId,
   $myName,
@@ -570,6 +571,7 @@ btnModeToggle.onclick = () => {
 //     Wired once below via initSummaryPanel. ---
 
 initSummaryPanel({ onRefreshRoomControls: refreshRoomControls })
+initScriptPanel({ onRefreshRoomControls: refreshRoomControls })
 void import('./reset-button.ts').then(m => m.initResetPanel())
 
 roomForm.onsubmit = (e) => {

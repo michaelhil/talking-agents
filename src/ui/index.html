@@ -386,6 +386,7 @@
           <button data-settings-row="providers" class="w-full text-left text-xs text-text py-1.5 px-3 hover:bg-surface-muted cursor-pointer interactive">Providers</button>
           <button data-settings-row="tools"     class="w-full text-left text-xs text-text py-1.5 px-3 hover:bg-surface-muted cursor-pointer interactive">Tools</button>
           <button data-settings-row="skills"    class="w-full text-left text-xs text-text py-1.5 px-3 hover:bg-surface-muted cursor-pointer interactive">Skills</button>
+          <button data-settings-row="scripts"   class="w-full text-left text-xs text-text py-1.5 px-3 hover:bg-surface-muted cursor-pointer interactive">Scripts</button>
           <button data-settings-row="packs"     class="w-full text-left text-xs text-text py-1.5 px-3 hover:bg-surface-muted cursor-pointer interactive">Packs</button>
           <button data-settings-row="logging"   class="w-full text-left text-xs text-text py-1.5 px-3 hover:bg-surface-muted cursor-pointer interactive flex items-center justify-between">
             <span>Logging</span>
@@ -462,6 +463,14 @@
             <!-- Popover anchors to the cluster's right edge (which == eye's
                  right edge since eye is the last child) and grows leftward. -->
             <div id="icon-visibility-popover" class="hidden absolute z-30 bg-surface border rounded shadow-lg py-1 text-sm" style="right: 0; top: 100%; margin-top: 4px; min-width: 260px;"></div>
+          </div>
+          <!-- Cluster B: scripts (start chip OR running indicator + controls) -->
+          <div id="script-group" class="toolbar-group toolbar-divider relative">
+            <button id="btn-script-start" class="mode-btn icon-btn" data-room-icon-id="script" data-room-icon-label="Scripts" title="Start a script" aria-label="Start a script"><span data-icon="clapperboard"></span></button>
+            <span id="script-running-chip" class="hidden text-xs px-2 py-1 rounded bg-surface-muted text-text border border-border" style="white-space: nowrap;"></span>
+            <button id="btn-script-advance" class="mode-btn icon-btn hidden" title="Force-advance to next step" aria-label="Force-advance"><span data-icon="skip-forward"></span></button>
+            <button id="btn-script-stop" class="mode-btn icon-btn hidden" title="Stop script" aria-label="Stop script"><span data-icon="square"></span></button>
+            <div id="script-start-popover" class="hidden absolute z-30 bg-surface border rounded shadow-lg py-1 text-sm" style="right: 0; top: 100%; margin-top: 4px; min-width: 260px; max-height: 50vh; overflow-y: auto;"></div>
           </div>
           <!-- Cluster C: summary / compression -->
           <div id="summary-group" class="toolbar-group toolbar-divider">

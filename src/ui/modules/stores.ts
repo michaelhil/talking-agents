@@ -162,6 +162,31 @@ export interface TurnInfo {
 }
 export const $turnInfo = atom<TurnInfo | null>(null)
 
+// === Scripts ===
+
+export interface ScriptCatalogEntry {
+  readonly id: string
+  readonly name: string
+  readonly title: string
+  readonly prompt?: string
+  readonly cast: ReadonlyArray<{ name: string; model: string; starts: boolean }>
+  readonly steps: number
+}
+export const $scriptCatalog = atom<ReadonlyArray<ScriptCatalogEntry>>([])
+
+export interface ActiveScript {
+  readonly scriptId: string
+  readonly scriptName: string
+  readonly title: string
+  readonly stepIndex: number
+  readonly totalSteps: number
+  readonly stepTitle: string
+  readonly readiness: Readonly<Record<string, boolean>>
+  readonly whisperFailures: number
+}
+// Keyed by roomId.
+export const $activeScriptByRoom = map<Record<string, ActiveScript>>({})
+
 // === Ollama dashboard ===
 
 export const $ollamaHealth = atom<Record<string, unknown> | null>(null)

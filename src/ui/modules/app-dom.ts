@@ -29,6 +29,12 @@ export const domRefs = {
   btnSummarySettings: $('#btn-summary-settings') as HTMLButtonElement,
   btnSummaryInspect: $('#btn-summary-inspect') as HTMLButtonElement,
   btnSummaryRegenerate: $('#btn-summary-regenerate') as HTMLButtonElement,
+  // Scripts group
+  btnScriptStart: $('#btn-script-start') as HTMLButtonElement,
+  scriptRunningChip: $('#script-running-chip') as HTMLElement,
+  btnScriptAdvance: $('#btn-script-advance') as HTMLButtonElement,
+  btnScriptStop: $('#btn-script-stop') as HTMLButtonElement,
+  scriptStartPopover: $('#script-start-popover') as HTMLElement,
   roomModeInfo: $('#room-mode-info') as HTMLElement,
   nameModal: $('#name-modal') as HTMLDialogElement,
   nameForm: $('#name-form') as HTMLFormElement,

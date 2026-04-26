@@ -20,6 +20,8 @@ import {
   $currentDeliveryMode,
   $roomPaused,
   $turnInfo,
+  $scriptCatalog,
+  $activeScriptByRoom,
   $artifacts,
   $thinkingPreviews,
   $thinkingTools,
@@ -36,6 +38,7 @@ import {
 } from '../stores.ts'
 import type { WSOutbound } from '../../../core/types/ws-protocol.ts'
 import { showToast } from '../toast.ts'
+import { roomNameToId } from '../identity-lookups.ts'
 import {
   handleSummaryRunStarted,
   handleSummaryRunDelta,
@@ -352,16 +355,68 @@ const handlers: Handlers = {
     )
   },
 
-  next_result(msg) {
-    if (!msg.advanced) {
-      if (msg.reason) showToast(document.body, `Next: ${msg.reason}`, { type: 'error', position: 'fixed' })
-      return
-    }
-    if (msg.activatedAgentName) {
-      const note = msg.queued ? ' (queued)' : ''
-      showToast(document.body, `Activated ${msg.activatedAgentName}${note}`, { position: 'fixed', durationMs: 2500 })
-    }
+  // --- Scripts ---
+
+  script_started(msg) {
+    const roomId = roomNameToId(msg.roomName)
+    if (!roomId) return
+    $activeScriptByRoom.setKey(roomId, {
+      scriptId: msg.scriptId,
+      scriptName: msg.scriptName,
+      title: msg.title,
+      stepIndex: 0,
+      totalSteps: 0,                              // filled by step_advanced or by REST fetch
+      stepTitle: '',
+      readiness: {},
+      whisperFailures: 0,
+    })
   },
+
+  script_step_advanced(msg) {
+    const roomId = roomNameToId(msg.roomName)
+    if (!roomId) return
+    const cur = $activeScriptByRoom.get()[roomId]
+    if (!cur) return
+    $activeScriptByRoom.setKey(roomId, {
+      ...cur,
+      stepIndex: msg.stepIndex,
+      totalSteps: msg.totalSteps,
+      stepTitle: msg.title,
+      readiness: {},                              // resets on advance
+    })
+  },
+
+  script_readiness_changed(msg) {
+    const roomId = roomNameToId(msg.roomName)
+    if (!roomId) return
+    const cur = $activeScriptByRoom.get()[roomId]
+    if (!cur) return
+    $activeScriptByRoom.setKey(roomId, {
+      ...cur,
+      readiness: msg.readiness,
+      whisperFailures: msg.whisperFailures,
+    })
+  },
+
+  script_completed(msg) {
+    const roomId = roomNameToId(msg.roomName)
+    if (!roomId) return
+    const remaining = { ...$activeScriptByRoom.get() }
+    delete remaining[roomId]
+    $activeScriptByRoom.set(remaining)
+  },
+
+  script_catalog_changed(_msg) {
+    // Lazy-refetch catalog so any open consumers see the new state.
+    void fetch('/api/scripts')
+      .then(r => r.ok ? r.json() : { scripts: [] })
+      .then(data => {
+        const scripts = (data as { scripts?: unknown }).scripts
+        if (Array.isArray(scripts)) $scriptCatalog.set(scripts as never)
+      })
+      .catch(() => { /* ignore */ })
+  },
+
 
   // --- Artifacts ---
 
