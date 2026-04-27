@@ -130,12 +130,28 @@ const parseYAMLArrayField = (
   return { value: items, nextIdx: i }
 }
 
+// Strip surrounding double or single quotes (one matching pair only).
+// Lets authors opt into colon-bearing values without relying on the fact
+// that the unquoted form already works because we slice on the FIRST colon.
+const unquote = (raw: string): string => {
+  const t = raw.trim()
+  if (t.length >= 2 && ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))) {
+    return t.slice(1, -1)
+  }
+  return t
+}
+
 export const parseFrontmatter = (content: string): { frontmatter: Frontmatter; body: string } => {
   const lines = content.split('\n')
   if (lines[0]?.trim() !== '---') return { frontmatter: {}, body: content }
 
   const endIdx = lines.indexOf('---', 1)
-  if (endIdx === -1) return { frontmatter: {}, body: content }
+  if (endIdx === -1) {
+    // Loud failure: opening fence with no closing fence is almost always a
+    // typo that would silently swallow the whole file as body. Better to
+    // tell the author than to register a nameless skill.
+    throw new Error('parseFrontmatter: opening "---" fence found but no closing "---" — fix the SKILL.md file')
+  }
 
   const frontmatter: Frontmatter = {}
   let i = 1
@@ -147,10 +163,10 @@ export const parseFrontmatter = (content: string): { frontmatter: Frontmatter; b
     const rawValue = line.slice(colonIdx + 1)
 
     if (key === 'name') {
-      frontmatter.name = rawValue.trim()
+      frontmatter.name = unquote(rawValue)
       i++
     } else if (key === 'description') {
-      frontmatter.description = rawValue.trim()
+      frontmatter.description = unquote(rawValue)
       i++
     } else if (key === 'scope') {
       const { value, nextIdx } = parseYAMLArrayField(lines, i, rawValue, endIdx)
@@ -223,7 +239,17 @@ export const loadSkills = async (
       continue
     }
 
-    const { frontmatter, body } = parseFrontmatter(content)
+    let frontmatter: Frontmatter
+    let body: string
+    try {
+      ({ frontmatter, body } = parseFrontmatter(content))
+    } catch (err) {
+      // Malformed fence (parseFrontmatter throws on opening-without-closing).
+      // Skip the skill but record an explicit error so the operator sees it.
+      const msg = err instanceof Error ? err.message : String(err)
+      errors.push(`${entry}: ${msg}`)
+      continue
+    }
 
     if (!frontmatter.name?.trim() || !frontmatter.description?.trim()) {
       skipped.push(`${entry}: SKILL.md missing required frontmatter (name, description)`)

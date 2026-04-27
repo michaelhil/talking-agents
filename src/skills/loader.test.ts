@@ -260,3 +260,76 @@ body`)
     }
   })
 })
+
+describe('parseFrontmatter — fence + quoted values', () => {
+  test('throws on opening fence without closing fence', () => {
+    expect(() => parseFrontmatter(`---
+name: foo
+description: missing closing fence
+
+body content here`)).toThrow(/no closing/)
+  })
+
+  test('passes through when there is no opening fence (treats whole file as body)', () => {
+    const { frontmatter, body } = parseFrontmatter('just markdown body, no frontmatter')
+    expect(frontmatter).toEqual({})
+    expect(body).toBe('just markdown body, no frontmatter')
+  })
+
+  test('strips matching double quotes from value', () => {
+    const { frontmatter } = parseFrontmatter(`---
+name: foo
+description: "value with: embedded colon"
+---
+body`)
+    expect(frontmatter.description).toBe('value with: embedded colon')
+  })
+
+  test('strips matching single quotes from value', () => {
+    const { frontmatter } = parseFrontmatter(`---
+name: foo
+description: 'single-quoted'
+---
+body`)
+    expect(frontmatter.description).toBe('single-quoted')
+  })
+
+  test('preserves unquoted value with colon (slice-on-first-colon was already correct)', () => {
+    const { frontmatter } = parseFrontmatter(`---
+name: foo
+description: Use when calling https://example.com/api
+---
+body`)
+    expect(frontmatter.description).toBe('Use when calling https://example.com/api')
+  })
+
+  test('does not strip mismatched quotes', () => {
+    const { frontmatter } = parseFrontmatter(`---
+name: foo
+description: "starts double, ends single'
+---
+body`)
+    // Mismatched quotes left intact (no spec violation; just don't lie about it).
+    expect(frontmatter.description).toBe(`"starts double, ends single'`)
+  })
+})
+
+describe('loadSkills — malformed fence surfaces in errors', () => {
+  test('SKILL.md with opening fence but no closing fence is recorded as an error, not silently skipped', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'samsinn-skills-fence-'))
+    try {
+      await mkdir(join(base, 'broken'))
+      await writeFile(
+        join(base, 'broken', 'SKILL.md'),
+        `---\nname: broken\ndescription: never closes\n\nbody`,
+      )
+      const store = createSkillStore()
+      const reg = createToolRegistry()
+      const result = await loadSkills(base, store, reg)
+      expect(result.errors.some(e => e.includes('broken') && e.includes('no closing'))).toBe(true)
+      expect(store.get('broken')).toBeUndefined()
+    } finally {
+      await rm(base, { recursive: true })
+    }
+  })
+})
