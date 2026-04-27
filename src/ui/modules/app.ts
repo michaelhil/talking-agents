@@ -86,7 +86,7 @@ import { createThinkingController } from './app-thinking.ts'
 
 const {
   roomList, roomHeader, roomNameEl, roomInfoBar, roomsToggle, roomsHeader,
-  agentList, roomMembers, noRoomState, agentArea, chatArea,
+  agentList, roomMembers, noRoomState, chatArea,
   messagesDiv, chatForm, chatInput,
   roomStatusDot, btnModeToggle, btnWorkspace,
   btnSummaryToggle, btnSummarySettings, btnSummaryInspect, btnSummaryRegenerate,
@@ -245,6 +245,8 @@ $roomListView.subscribe(({ rooms, selectedRoomId, pausedRooms, unreadCounts, gen
     unreadCounts,
     generatingRoomIds,
     onSelect: (id) => {
+      // Selecting a room dismisses any open agent modal (and clears the
+      // sidebar agent-selection highlight).
       $selectedAgentId.set(null)
       $selectedRoomId.set(id)
     },
@@ -267,7 +269,8 @@ $agentListView.subscribe(({ agents, myAgentId, selectedAgentId, selectedRoomId, 
     roomMemberIds,
     hasSelectedRoom: selectedRoomId !== null,
     onInspect: (agentId) => {
-      $selectedRoomId.set(null)
+      // Inspector is a modal — keep the user in the room (no
+      // $selectedRoomId.set(null)) so the modal layers over the room view.
       $selectedAgentId.set(agentId)
     },
     onDelete: (agentName) => {
@@ -293,8 +296,9 @@ mountRoomMembers({
   container: roomMembers,
   send,
   openCreateAgentModal: () => void openCreateAgentModalShared(),
+  // Inspector is a modal — keep the user in the room (no $selectedRoomId.set(null))
+  // so the modal layers over the room view rather than replacing it.
   inspectAgent: (agentId) => {
-    $selectedRoomId.set(null)
     $selectedAgentId.set(agentId)
   },
 })
@@ -325,7 +329,6 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
   if (roomId) {
     const room = $rooms.get()[roomId]
     if (!room) return
-    agentArea.classList.add('hidden')
     noRoomState.classList.add('hidden')
     roomHeader.classList.remove('hidden')
     roomInfoBar.classList.remove('hidden')
@@ -368,7 +371,9 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
     // Apply room-specific state
     refreshRoomControls()
     workspace.show()
-  } else if (!$selectedAgentId.get()) {
+  } else {
+    // No room selected — show the empty-state. Agent inspector is now a
+    // modal, so it doesn't compete with chat-area visibility anymore.
     noRoomState.classList.remove('hidden')
     roomHeader.classList.add('hidden')
     roomInfoBar.classList.add('hidden')
@@ -377,22 +382,20 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
   }
 })
 
-// --- Agent selection (inspector) ---
+// --- Agent selection — opens the detail modal ---
+// Both the sidebar agent list and the room-members chip row set
+// $selectedAgentId; this listener routes both to the modal. The modal's
+// own close handler clears $selectedAgentId so the sidebar drops its
+// highlight when the user dismisses the dialog.
 $selectedAgentId.listen(async (agentId) => {
   if (agentId) {
-    roomHeader.classList.add('hidden')
-    roomInfoBar.classList.add('hidden')
-    chatArea.classList.add('hidden')
-    workspace.hide()
-    noRoomState.classList.add('hidden')
-    agentArea.classList.remove('hidden')
-
     const agent = $agents.get()[agentId]
     if (!agent) return
-    const { renderAgentInspector } = await import('./agent-inspector.ts')
-    renderAgentInspector(agentArea, agent.name)
+    const { openAgentDetailModal } = await import('./agent-detail-modal.ts')
+    openAgentDetailModal(agent.name)
   } else {
-    agentArea.classList.add('hidden')
+    const { closeAgentDetailModal } = await import('./agent-detail-modal.ts')
+    closeAgentDetailModal()
   }
 })
 

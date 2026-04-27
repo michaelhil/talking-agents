@@ -12,7 +12,9 @@ export const domRefs = {
   roomsHeader: $('#rooms-header') as HTMLElement,
   agentList: $('#agent-list') as HTMLElement,
   noRoomState: $('#no-room-state') as HTMLElement,
-  agentArea: $('#agent-area') as HTMLElement,
+  // (Agent inspector is now a modal — see #agent-detail-modal and
+  // src/ui/modules/agent-detail-modal.ts. The previous inline #agent-area
+  // div was removed.)
   chatArea: $('#chat-area') as HTMLElement,
   messagesDiv: $('#messages') as HTMLElement,
   chatForm: $('#chat-form') as HTMLFormElement,
