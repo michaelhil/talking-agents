@@ -20,10 +20,21 @@ import { toolsToDefinitions } from '../llm/tool-capability.ts'
 
 // --- Tool executor ---
 
+// Optional per-room whitelist resolver. Returns the set of tool names that
+// active skills permit in `roomId`, or null when no skill in scope declares
+// a whitelist (= unrestricted, today's behavior). When non-null, the
+// executor intersects this with the agent's spawn-time `allowedTools`.
+//
+// Why per-room and per-call: skills are room-scoped (skillStore.forScope)
+// but agents can be members of multiple rooms. A spawn-time intersection
+// would freeze the whitelist to whichever room the agent first joined.
+export type GetAllowedToolsForRoom = (roomId: string) => ReadonlySet<string> | null
+
 const createToolExecutor = (
   registry: ToolRegistry,
   allowedTools: ReadonlyArray<string>,
   context: ToolContext,
+  getAllowedToolsForRoom?: GetAllowedToolsForRoom,
 ): ToolExecutor => {
   const allowed = new Set(allowedTools)
 
@@ -31,10 +42,25 @@ const createToolExecutor = (
     const results: ToolResult[] = []
     const callContext: ToolContext = roomId ? { ...context, roomId } : context
 
+    // Resolve the per-room skill whitelist once per executor invocation.
+    // Null = unrestricted (no skill in this room declared allowed-tools).
+    const skillWhitelist = roomId && getAllowedToolsForRoom ? getAllowedToolsForRoom(roomId) : null
+
     for (const call of calls) {
       if (!allowed.has(call.tool)) {
         results.push({ success: false, error: `Tool "${call.tool}" is not available` })
         continue
+      }
+      if (skillWhitelist && !skillWhitelist.has(call.tool)) {
+        // Pass is always permitted — agents must be able to decline.
+        if (call.tool !== 'pass') {
+          const allowedList = [...skillWhitelist].sort().join(', ')
+          results.push({
+            success: false,
+            error: `Tool "${call.tool}" not allowed by active skills in this room. Allowed: ${allowedList}.`,
+          })
+          continue
+        }
       }
 
       const tool = registry.get(call.tool)
@@ -57,6 +83,11 @@ const createToolExecutor = (
     return results
   }
 }
+
+// Test seam — executor isn't part of the public spawn API but is the
+// load-bearing piece for per-room allowed-tools enforcement. Exported so
+// tests can construct an executor directly without standing up an agent.
+export const __testSeam = { createToolExecutor }
 
 // --- Tool support resolution ---
 // Extracted so it is independently named and testable.
@@ -85,6 +116,7 @@ export const buildToolSupport = async (
   llmProvider: LLMProvider,
   maxResultChars?: number,
   seed?: number,
+  getAllowedToolsForRoom?: GetAllowedToolsForRoom,
 ): Promise<AgentToolSupport> => {
   // Always include the pass tool (auto-injected for all agents)
   const allToolNames = toolNames.includes('pass') ? toolNames : [...toolNames, 'pass']
@@ -110,7 +142,7 @@ export const buildToolSupport = async (
     }),
     maxResultChars,
   }
-  const executor = createToolExecutor(registry, allToolNames, lazyContext)
+  const executor = createToolExecutor(registry, allToolNames, lazyContext, getAllowedToolsForRoom)
   return { toolExecutor: executor, toolDefinitions: toolsToDefinitions(availableTools) }
 }
 
@@ -119,6 +151,7 @@ const resolveAgentTools = async (
   llmProvider: LLMProvider,
   toolRegistry: ToolRegistry | undefined,
   agentRef: { id: string; name: string },
+  getAllowedToolsForRoom?: GetAllowedToolsForRoom,
 ): Promise<AgentToolSupport> => {
   const requestedTools = config.tools ?? toolRegistry?.list().map(t => t.name) ?? []
   if (!toolRegistry) return {}
@@ -127,7 +160,7 @@ const resolveAgentTools = async (
     warnMissingTools(config.name, requestedTools, toolRegistry)
   }
 
-  return buildToolSupport(requestedTools, toolRegistry, agentRef, llmProvider, config.maxToolResultChars, config.seed)
+  return buildToolSupport(requestedTools, toolRegistry, agentRef, llmProvider, config.maxToolResultChars, config.seed, getAllowedToolsForRoom)
 }
 
 // --- Spawn AI Agent ---
@@ -139,6 +172,10 @@ export interface SpawnOptions {
     | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
     | undefined
   readonly onEvalEvent?: (agentName: string, event: import('../core/types/agent-eval.ts').EvalEvent) => void
+  // Per-room allowed-tools resolver. When provided, the tool executor
+  // intersects the agent's spawn-time toolset with this room's skill
+  // whitelist on every call. See createToolExecutor for semantics.
+  readonly getAllowedToolsForRoom?: GetAllowedToolsForRoom
 }
 
 export const spawnAIAgent = async (
@@ -197,7 +234,7 @@ export const spawnAIAgent = async (
 
   // Resolve tool support — agentRef filled after agent creation (lazy context)
   const agentRef = { id: '', name: '' }
-  const toolSupport = await resolveAgentTools(config, llmProvider, toolRegistry, agentRef)
+  const toolSupport = await resolveAgentTools(config, llmProvider, toolRegistry, agentRef, spawnOptions?.getAllowedToolsForRoom)
 
   const agent = createAIAgent(config, llmProvider, onDecision, {
     ...toolSupport,

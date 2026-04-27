@@ -548,6 +548,23 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     return skills.map(s => `[${s.name}] ${s.description}\n${s.body}`).join('\n\n---\n\n')
   }
 
+  // Per-room allowed-tools whitelist. Resolves from skillStore at every
+  // tool call (executor invokes it with the room ID) — agents that span
+  // multiple rooms see different whitelists per room.
+  //
+  // Semantics: union of `allowed-tools` across skills in scope. If NO skill
+  // in scope declares a non-empty `allowed-tools`, returns null (no
+  // restriction — today's behavior preserved). The room ID parameter
+  // matches roomId; we resolve to room name for skillStore.forScope.
+  const getAllowedToolsForRoom = (roomId: string): ReadonlySet<string> | null => {
+    const room = house.getRoom(roomId)
+    if (!room) return null
+    const skills = skillStore.forScope(room.profile.name)
+    const declaring = skills.filter(s => s.allowedToolNames.length > 0)
+    if (declaring.length === 0) return null
+    return new Set(declaring.flatMap(s => [...s.allowedToolNames]))
+  }
+
   const refreshAllAgentTools = async (): Promise<void> => {
     for (const agent of team.listByKind('ai')) {
       const ai = agent as AIAgent
@@ -599,6 +616,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       ...options,
       getSkills: getSkillsForRoom,
       getScriptContext: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
+      getAllowedToolsForRoom,
       onEvalEvent: evalEvent.proxy,
     })
 
