@@ -114,6 +114,55 @@ describe('parseScriptMd', () => {
   test('rejects bad cast name', () => {
     expect(() => parseScriptMd('Bad-NAME', VALID)).toThrow(/match/)
   })
+
+  test('rejects reserved cast name "Stage"', () => {
+    const src = VALID.replace('### Alex (starts)', '### Stage (starts)')
+    expect(() => parseScriptMd('x', src)).toThrow(/reserved sender name/)
+  })
+
+  test('rejects reserved cast name "Director"', () => {
+    const src = VALID.replace('### Alex (starts)', '### Director (starts)')
+    expect(() => parseScriptMd('x', src)).toThrow(/reserved sender name/)
+  })
+
+  test('rejects cast name with leading digit', () => {
+    const src = VALID.replace('### Alex (starts)', '### 1Alex (starts)')
+    expect(() => parseScriptMd('x', src)).toThrow(/VALID_CAST_NAME|alphanumeric/)
+  })
+
+  test('rejects cast name with whitespace', () => {
+    const src = VALID.replace('### Alex (starts)', '### Has Space (starts)')
+    expect(() => parseScriptMd('x', src)).toThrow(/VALID_CAST_NAME|alphanumeric/)
+  })
+
+  test('rejects cast name longer than 40 chars', () => {
+    const long = 'A'.repeat(41)
+    const src = VALID.replace('### Alex (starts)', `### ${long} (starts)`)
+    expect(() => parseScriptMd('x', src)).toThrow(/VALID_CAST_NAME|alphanumeric/)
+  })
+
+  test('accepts hyphen, underscore, digits in cast name', () => {
+    const src = `# SCRIPT: Test
+## Cast
+
+### Alex-Jr_99 (starts)
+- model: m
+- persona: lead
+
+### Sam2
+- model: m
+- persona: critic
+
+---
+
+## Step 1 — Open
+Roles:
+  Alex-Jr_99 — propose
+  Sam2 — challenge
+`
+    const s = parseScriptMd('x', src)
+    expect(s.cast.map(c => c.name)).toEqual(['Alex-Jr_99', 'Sam2'])
+  })
 })
 
 describe('ScriptStore.upsert size cap', () => {

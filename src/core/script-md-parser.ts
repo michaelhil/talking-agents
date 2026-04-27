@@ -29,6 +29,19 @@ import type { Script, CastMember, Step } from './types/script.ts'
 
 export const VALID_NAME = /^[a-z0-9][a-z0-9_-]*$/
 
+// Cast member names — alphanumeric, leading letter, ≤40 chars. Generous
+// for human display names while excluding whitespace, punctuation, and
+// path-traversal characters.
+export const VALID_CAST_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/
+
+// Sender names reserved by the runtime — Stage posts system cards
+// (script-runner.ts), Director is the default speaker label for non-cast
+// posters in dialogue logs. A cast member with either name would corrupt
+// message routing and badge rendering. Add NEW reserved names here only
+// when code actually uses them as sender labels — speculative reservation
+// is user-hostile.
+export const RESERVED_CAST_NAMES = new Set(['Stage', 'Director'])
+
 const CAST_BULLET_KEYS = new Set([
   'model', 'tools', 'persona', 'includePrompts', 'includeContext', 'includeTools',
 ])
@@ -107,6 +120,12 @@ export const parseScriptMd = (name: string, source: string): Script => {
   const seen = new Set<string>()
   for (const c of cast) {
     if (seen.has(c.name)) throw new Error(`cast: duplicate name "${c.name}"`)
+    if (RESERVED_CAST_NAMES.has(c.name)) {
+      throw new Error(`cast: "${c.name}" is a reserved sender name (used by the runtime)`)
+    }
+    if (!VALID_CAST_NAME.test(c.name)) {
+      throw new Error(`cast: "${c.name}" must match ${VALID_CAST_NAME} (alphanumeric, leading letter, ≤40 chars)`)
+    }
     seen.add(c.name)
   }
 

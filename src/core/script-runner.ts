@@ -80,8 +80,17 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
 
   // --- Helpers ---
 
-  const otherCast = (run: ScriptRun, name: string): string | undefined =>
-    run.script.cast.find(c => c.name !== name)?.name
+  // Pick the next cast member to activate. Delegates to the pure exported
+  // function below so the policy is unit-testable in isolation.
+  // Policy: honor whisper.addressing if it names a present peer (and is not
+  // self-addressing); otherwise round-robin by cast index. Round-robin
+  // generalizes binary "otherCast" to N≥2 members; for N=2 it returns the
+  // same answer as the previous binary helper.
+  const nextSpeaker = (
+    run: ScriptRun,
+    currentName: string,
+    addressing: string | undefined,
+  ): string | undefined => __testNextSpeaker(run.script.cast, currentName, addressing)
 
   const startsCastName = (script: Script): string =>
     script.cast.find(c => c.starts)?.name ?? script.cast[0]!.name
@@ -365,7 +374,8 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       return
     }
 
-    const next = otherCast(run, castName)
+    // Honor the LLM's `addressing` hint if present and valid; else round-robin.
+    const next = nextSpeaker(run, castName, record.whisper.addressing)
     if (next) {
       const agent = system.team.getAgent(next)
       if (agent) system.activateAgentInRoom(agent.id, run.roomId)
@@ -398,8 +408,9 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       lastWhisper: collectLastWhispers(run),
     })
 
+    // No whisper for user/director posts and step-advance — round-robin from the last speaker.
     const last = lastSpeaker.get(run.roomId)
-    const nextName = last ? otherCast(run, last) : startsCastName(run.script)
+    const nextName = last ? nextSpeaker(run, last, undefined) : startsCastName(run.script)
     if (nextName) {
       const system = getSystem()
       const agent = system.team.getAgent(nextName)
@@ -447,8 +458,9 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       forced,
     })
 
+    // No whisper for user/director posts and step-advance — round-robin from the last speaker.
     const last = lastSpeaker.get(run.roomId)
-    const nextName = last ? otherCast(run, last) : startsCastName(run.script)
+    const nextName = last ? nextSpeaker(run, last, undefined) : startsCastName(run.script)
     if (nextName) {
       const system = getSystem()
       const agent = system.team.getAgent(nextName)
@@ -499,6 +511,23 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     getScriptDocumentForAgent,
     getScriptContextForAgent,
   }
+}
+
+// Test seam — pure function lifted out of the factory closure for direct
+// unit testing of activation policy. Mirrors the closure version in
+// createScriptRunner above; see comment there for behavior.
+export const __testNextSpeaker = (
+  cast: ReadonlyArray<{ name: string }>,
+  currentName: string,
+  addressing: string | undefined,
+): string | undefined => {
+  if (addressing && addressing !== currentName) {
+    const target = cast.find(c => c.name === addressing)
+    if (target) return target.name
+  }
+  const idx = cast.findIndex(c => c.name === currentName)
+  if (idx === -1) return cast[0]?.name
+  return cast[(idx + 1) % cast.length]?.name
 }
 
 // Collect each cast member's most recent WhisperRecord across the current
