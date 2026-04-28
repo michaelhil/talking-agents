@@ -15,16 +15,17 @@
 # Manual trigger: GitHub Actions tab → Deploy → Run workflow. Useful when
 # you want to redeploy the latest master without making a no-op commit.
 #
-# Bypassing auto-deploy: prefix a commit message with "[skip deploy]" or
-# simply delete this file. The local fallback `bun run scripts/deploy.ts`
-# remains available either way.
+# Bypassing auto-deploy: delete this file (or temporarily disable it from
+# the Actions UI). The local fallback `bun run scripts/deploy.ts` remains
+# available either way.
 # ============================================================================
 
 name: Deploy
 
 on:
-  push:
-    branches: [master]
+  # Triggered AFTER the CI workflow completes on master. The conditional
+  # below skips the deploy when CI failed so we never push a broken
+  # commit. Use workflow_dispatch to redeploy without a new commit.
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -37,10 +38,8 @@ concurrency:
 
 jobs:
   deploy:
-    # Skip if pushed via [skip deploy], or if the triggering CI run failed.
-    if: |
-      !contains(github.event.head_commit.message, '[skip deploy]') &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    # Skip when CI failed. workflow_dispatch (manual) always runs.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
