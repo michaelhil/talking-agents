@@ -21,7 +21,10 @@ samsinn.example.com {
 		# pre-paint theme script in index.html. Move to a nonce later.
 		# jsdelivr is allowed for marked, DOMPurify, and the dynamic
 		# Mermaid ESM import.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss: ws: https://cdn.jsdelivr.net; font-src 'self' data:; frame-ancestors 'none'"
+		# script-src needs 'unsafe-eval' for Mermaid v11's ESM runtime (uses
+		# Function() to compile diagram parsers). worker-src 'self' blob:
+		# covers Mermaid's Web Worker for sequence/gantt rendering.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss: ws: https://cdn.jsdelivr.net; font-src 'self' data:; frame-ancestors 'none'"
 
 		# Strip Caddy's default Server header.
 		-Server

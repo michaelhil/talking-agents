@@ -15,6 +15,7 @@
 
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
+import { getAvailablePacks } from '../../packs/registry.ts'
 
 // Small helper: invoke a built-in pack tool and return its result as JSON.
 const invoke = async (
@@ -34,6 +35,24 @@ export const packsRoutes: RouteEntry[] = [
     method: 'GET',
     pattern: /^\/api\/packs$/,
     handler: async (_req, _match, { system }) => invoke(system, 'list_packs', {}),
+  },
+  {
+    // Browse view — pack registry merged with installed flag. Powers the
+    // "Available packs" section of the Packs modal. Cached 5 min server-side.
+    method: 'GET',
+    pattern: /^\/api\/packs\/registry$/,
+    handler: async (_req, _match, { system }) => {
+      const available = await getAvailablePacks()
+      // Get installed list to mark each available pack.
+      const listTool = system.toolRegistry.get('list_packs')
+      const installedRes = listTool
+        ? await listTool.execute({}, { callerId: 'api', callerName: 'api' })
+        : { success: false }
+      const installed = installedRes.success && Array.isArray(installedRes.data)
+        ? new Set((installedRes.data as Array<{ namespace: string }>).map(p => p.namespace))
+        : new Set<string>()
+      return json(available.map(p => ({ ...p, installed: installed.has(p.name) })))
+    },
   },
   {
     method: 'POST',

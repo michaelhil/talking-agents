@@ -20,6 +20,14 @@ interface InstalledPack {
   skills: string[]
 }
 
+interface RegistryPack {
+  name: string
+  source: string
+  repoUrl: string
+  description: string
+  installed: boolean
+}
+
 const fetchPacks = async (): Promise<InstalledPack[]> => {
   try {
     const res = await fetch('/api/packs')
@@ -28,12 +36,58 @@ const fetchPacks = async (): Promise<InstalledPack[]> => {
   } catch { return [] }
 }
 
+const fetchRegistry = async (): Promise<RegistryPack[]> => {
+  try {
+    const res = await fetch('/api/packs/registry')
+    if (!res.ok) return []
+    return await res.json() as RegistryPack[]
+  } catch { return [] }
+}
+
+const installFromBrowse = async (source: string, label: string): Promise<boolean> => {
+  showToast(document.body, `Installing ${label}…`, { position: 'fixed' })
+  const res = await fetch('/api/packs/install', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: 'install failed' })) as { error?: string }
+    showToast(document.body, `Install failed: ${body.error ?? 'unknown'}`, { type: 'error', position: 'fixed' })
+    return false
+  }
+  const data = await res.json() as { namespace: string; tools: string[]; skills: string[] }
+  showToast(
+    document.body,
+    `${data.namespace}: ${data.tools.length} tools, ${data.skills.length} skills`,
+    { type: 'success', position: 'fixed' },
+  )
+  return true
+}
+
+const escapeHtml = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c))
+
 export const renderPacksInto = async (container: HTMLElement): Promise<void> => {
-  const packs = await fetchPacks()
+  container.innerHTML = '<div class="text-xs text-text-muted px-3 py-2 italic">Loading…</div>'
+  // Fetch in parallel — installed list is local + fast; registry hits GitHub.
+  const [installed, registry] = await Promise.all([fetchPacks(), fetchRegistry()])
   container.innerHTML = ''
+  renderInstalledSection(container, installed)
+  renderBrowseSection(container, registry)
+}
+
+const renderInstalledSection = (container: HTMLElement, packs: InstalledPack[]): void => {
+  const header = document.createElement('div')
+  header.className = 'px-3 py-2 text-[11px] uppercase tracking-wide text-text-subtle border-b border-border bg-surface-muted'
+  header.textContent = `Installed (${packs.length})`
+  container.appendChild(header)
 
   if (packs.length === 0) {
-    container.innerHTML = '<div class="text-xs text-text-muted px-3 py-2">No packs installed</div>'
+    const empty = document.createElement('div')
+    empty.className = 'text-xs text-text-muted px-3 py-2 italic'
+    empty.textContent = 'No packs installed yet — see Available below.'
+    container.appendChild(empty)
     return
   }
 
@@ -67,6 +121,50 @@ export const renderPacksInto = async (container: HTMLElement): Promise<void> => 
       showToast(document.body, `${pack.namespace}: ${ok ? 'uninstalled' : 'uninstall failed'}`, {
         type: ok ? 'success' : 'error', position: 'fixed',
       })
+    })
+    container.appendChild(row)
+  }
+}
+
+const renderBrowseSection = (container: HTMLElement, registry: RegistryPack[]): void => {
+  const header = document.createElement('div')
+  header.className = 'px-3 py-2 text-[11px] uppercase tracking-wide text-text-subtle border-b border-t border-border bg-surface-muted flex items-center justify-between'
+  header.innerHTML = `<span>Available (${registry.length})</span><span class="text-[10px] normal-case tracking-normal text-text-muted">from configured registries</span>`
+  container.appendChild(header)
+
+  const notInstalled = registry.filter(p => !p.installed)
+  if (notInstalled.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'text-xs text-text-muted px-3 py-2 italic'
+    empty.textContent = registry.length === 0
+      ? 'Registry empty — set SAMSINN_PACK_SOURCES env var to discover packs.'
+      : 'All available packs are installed.'
+    container.appendChild(empty)
+    return
+  }
+
+  for (const pack of notInstalled) {
+    const row = document.createElement('div')
+    row.className = 'px-3 py-2 text-xs hover:bg-surface-muted flex items-center gap-2 border-b border-border'
+    const desc = pack.description || 'no description'
+    row.innerHTML = `
+      <div class="flex-1 min-w-0">
+        <div class="text-text-strong font-medium truncate">${escapeHtml(pack.name)}</div>
+        <div class="text-text-muted truncate" title="${escapeHtml(desc)}">${escapeHtml(desc)}</div>
+        <div class="text-text-subtle text-[10px]"><a href="${escapeHtml(pack.repoUrl)}" target="_blank" rel="noopener" class="hover:underline">${escapeHtml(pack.source)}</a></div>
+      </div>
+      <button class="pack-install px-2 py-1 text-xs bg-accent text-white rounded hover:opacity-90" title="Install">Install</button>
+    `
+    row.querySelector<HTMLButtonElement>('.pack-install')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement
+      btn.disabled = true
+      btn.textContent = 'Installing…'
+      const ok = await installFromBrowse(pack.source, pack.name)
+      if (!ok) {
+        btn.disabled = false
+        btn.textContent = 'Install'
+      }
+      // packs_changed WS event will trigger re-render; no manual refresh needed.
     })
     container.appendChild(row)
   }
