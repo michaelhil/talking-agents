@@ -186,6 +186,9 @@ export interface CreateSystemOptions {
   // Legacy: when shared is absent, build from these (preserves test API).
   readonly providerConfig?: ProviderConfig
   readonly providerSetup?: ProviderSetupResult
+  // Diagnostic label used in unsubscribed-callback warnings (lateBinding).
+  // Threaded by the registry; tests/headless paths can omit (becomes "?").
+  readonly instanceLabel?: string
 }
 
 export const createSystem = (options: CreateSystemOptions = {}): System => {
@@ -211,18 +214,30 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // each observer is wrapped in try/catch so one failing observer doesn't
   // stop the others. Observers iterate over a snapshot so unsubscribe
   // during dispatch is safe.
-  const lateBinding = <T extends (...args: never[]) => void>(): {
+  //
+  // Warn-once on missing subscriber: when `proxy(...)` fires before
+  // `set(...)` has been called AND no observers are registered, log one
+  // console.warn the first time per (slot name, instanceLabel) pair so a
+  // wiring miss is visible immediately. Subsequent dropped events stay
+  // silent. The bug fixed in 5d73a8e was invisible for three days because
+  // there was no signal at all when the wiring was skipped.
+  const instanceLabel = options.instanceLabel ?? '?'
+  const lateBinding = <T extends (...args: never[]) => void>(slotName: string): {
     proxy: T
     set: (cb: T) => void
     add: (cb: T) => () => void
   } => {
     let real: T | undefined
     const observers: T[] = []
+    let warnedNoSubscriber = false
     const proxy = ((...args: Parameters<T>) => {
       if (real) {
         try { real(...args) } catch (err) {
           console.error(`[lateBinding] primary callback threw: ${err instanceof Error ? err.message : String(err)}`)
         }
+      } else if (observers.length === 0 && !warnedNoSubscriber) {
+        warnedNoSubscriber = true
+        console.warn(`[lateBinding] ${slotName} has no subscriber for instance ${instanceLabel} — first event dropped, subsequent dropped silently`)
       }
       const snapshot = [...observers]
       for (const cb of snapshot) {
@@ -244,27 +259,27 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     }
   }
 
-  const messagePosted = lateBinding<OnMessagePosted>()
-  const turnChanged = lateBinding<OnTurnChanged>()
-  const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>()
-  const artifactChanged = lateBinding<OnArtifactChanged>()
-  const roomCreated = lateBinding<OnRoomCreated>()
-  const roomDeleted = lateBinding<OnRoomDeleted>()
-  const membershipChanged = lateBinding<OnMembershipChanged>()
-  const bookmarksChanged = lateBinding<OnBookmarksChanged>()
-  const modeAutoSwitched = lateBinding<OnModeAutoSwitched>()
-  const evalEvent = lateBinding<OnEvalEvent>()
-  const providerBound = lateBinding<OnProviderBound>()
-  const providerAllFailed = lateBinding<OnProviderAllFailed>()
-  const providerStreamFailed = lateBinding<OnProviderStreamFailed>()
-  const summaryConfigChanged = lateBinding<OnSummaryConfigChanged>()
-  const summaryUpdated = lateBinding<OnSummaryUpdated>()
-  const summaryRunStarted = lateBinding<(roomId: string, target: SummaryTarget) => void>()
-  const summaryRunDelta = lateBinding<(roomId: string, target: SummaryTarget, delta: string) => void>()
-  const summaryRunCompleted = lateBinding<(roomId: string, target: SummaryTarget, text: string) => void>()
-  const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>()
-  const scriptHook = lateBinding<(roomId: string, message: import('./core/types/messaging.ts').Message) => void>()
-  const scriptEvent = lateBinding<ScriptEventEmitter>()
+  const messagePosted = lateBinding<OnMessagePosted>('messagePosted')
+  const turnChanged = lateBinding<OnTurnChanged>('turnChanged')
+  const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>('deliveryModeChanged')
+  const artifactChanged = lateBinding<OnArtifactChanged>('artifactChanged')
+  const roomCreated = lateBinding<OnRoomCreated>('roomCreated')
+  const roomDeleted = lateBinding<OnRoomDeleted>('roomDeleted')
+  const membershipChanged = lateBinding<OnMembershipChanged>('membershipChanged')
+  const bookmarksChanged = lateBinding<OnBookmarksChanged>('bookmarksChanged')
+  const modeAutoSwitched = lateBinding<OnModeAutoSwitched>('modeAutoSwitched')
+  const evalEvent = lateBinding<OnEvalEvent>('evalEvent')
+  const providerBound = lateBinding<OnProviderBound>('providerBound')
+  const providerAllFailed = lateBinding<OnProviderAllFailed>('providerAllFailed')
+  const providerStreamFailed = lateBinding<OnProviderStreamFailed>('providerStreamFailed')
+  const summaryConfigChanged = lateBinding<OnSummaryConfigChanged>('summaryConfigChanged')
+  const summaryUpdated = lateBinding<OnSummaryUpdated>('summaryUpdated')
+  const summaryRunStarted = lateBinding<(roomId: string, target: SummaryTarget) => void>('summaryRunStarted')
+  const summaryRunDelta = lateBinding<(roomId: string, target: SummaryTarget, delta: string) => void>('summaryRunDelta')
+  const summaryRunCompleted = lateBinding<(roomId: string, target: SummaryTarget, text: string) => void>('summaryRunCompleted')
+  const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>('summaryRunFailed')
+  const scriptHook = lateBinding<(roomId: string, message: import('./core/types/messaging.ts').Message) => void>('scriptHook')
+  const scriptEvent = lateBinding<ScriptEventEmitter>('scriptEvent')
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)

@@ -74,3 +74,53 @@ describe('System.resetState', () => {
     expect(system.team.getAgent('solver')?.id).not.toBe(agent1.id)
   })
 })
+
+describe('lateBinding warn-once', () => {
+  test('warns once when a slot fires unsubscribed; stays silent after', () => {
+    const warnings: string[] = []
+    const origWarn = console.warn
+    console.warn = (...args: unknown[]) => { warnings.push(args.join(' ')) }
+
+    try {
+      const system = createSystem({ instanceLabel: 'test-instance' })
+      // Trigger evalEvent without setting a subscriber. mutateRoom: post a
+      // chat message via routeMessage so messagePosted fires too.
+      const room = system.house.createRoom({ name: 'lb-test', createdBy: SYSTEM_SENDER_ID })
+      const human = createHumanAgent({ name: 'Trigger' }, () => {})
+      system.team.addAgent(human)
+
+      // messagePosted is one of the slots. Without setOnMessagePosted called,
+      // the first proxy invocation should warn exactly once.
+      room.post({ senderId: human.id, content: 'hi', type: 'chat' })
+      room.post({ senderId: human.id, content: 'again', type: 'chat' })
+      room.post({ senderId: human.id, content: 'and again', type: 'chat' })
+
+      const messageWarnings = warnings.filter(w => w.includes('messagePosted'))
+      expect(messageWarnings.length).toBe(1)
+      expect(messageWarnings[0]).toContain('test-instance')
+      expect(messageWarnings[0]).toContain('first event dropped')
+    } finally {
+      console.warn = origWarn
+    }
+  })
+
+  test('stays silent once a subscriber is set', () => {
+    const warnings: string[] = []
+    const origWarn = console.warn
+    console.warn = (...args: unknown[]) => { warnings.push(args.join(' ')) }
+
+    try {
+      const system = createSystem({ instanceLabel: 'test-2' })
+      // Set the subscriber BEFORE any event — no warning should fire.
+      system.setOnMessagePosted(() => { /* ok */ })
+      const room = system.house.createRoom({ name: 'lb-test-2', createdBy: SYSTEM_SENDER_ID })
+      const human = createHumanAgent({ name: 'Trigger2' }, () => {})
+      system.team.addAgent(human)
+      room.post({ senderId: human.id, content: 'hi', type: 'chat' })
+
+      expect(warnings.filter(w => w.includes('messagePosted'))).toEqual([])
+    } finally {
+      console.warn = origWarn
+    }
+  })
+})

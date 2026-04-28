@@ -161,7 +161,7 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     const paths = instancePaths(id)
     await mkdir(dirname(paths.snapshot), { recursive: true })
 
-    const system = createSystem({ shared: opts.shared })
+    const system = createSystem({ shared: opts.shared, instanceLabel: id })
 
     // Restore snapshot if file exists. Corrupt snapshots get renamed
     // aside so the next save doesn't silently overwrite recoverable data.
