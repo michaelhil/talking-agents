@@ -43,11 +43,19 @@ await run('Pull + restart on box', remote(`set -e
   cd /opt/samsinn
   sudo -u samsinn git pull --ff-only
   systemctl restart samsinn
-  for i in 1 2 3 4 5 6 7 8 9 10; do
-    if [ "$(systemctl is-active samsinn)" = "active" ]; then break; fi
+  # systemctl is-active flips green the moment bun forks; HTTP listener
+  # is not up until pack/skill init finishes (~5 s). Poll the readiness
+  # probe so the smoke step does not race with startup.
+  for i in $(seq 1 30); do
+    if curl -fsS -o /dev/null http://127.0.0.1:3000/api/system/info; then
+      echo "samsinn HTTP up after \${i}s"
+      exit 0
+    fi
     sleep 1
   done
-  systemctl is-active samsinn
+  echo "samsinn HTTP did not come up within 30s" >&2
+  systemctl status samsinn --no-pager
+  exit 1
 `))
 
 if (!SKIP_SMOKE) {
