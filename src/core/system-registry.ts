@@ -84,7 +84,12 @@ export interface SystemRegistryOptions {
   readonly drainMs?: number                     // override default 5s
   // Hook called immediately after a fresh System is constructed (either
   // first load or post-eviction reload). Phase F wires WS broadcasts here.
-  readonly onSystemCreated?: (system: System, id: string) => void
+  // The autoSaver is passed in directly because the registry's map entry
+  // isn't set until AFTER this hook returns — so registry.autoSaverFor(id)
+  // would return null inside the hook. Subtle and was the source of a
+  // long-running bug where streaming events never reached cookie-bound
+  // instances.
+  readonly onSystemCreated?: (system: System, id: string, autoSaver: AutoSaver) => void
   // Hook called immediately before a System is dropped from memory.
   // Phase F removes the WS callback wiring here.
   readonly onSystemEvicted?: (system: System, id: string) => void
@@ -175,8 +180,11 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
 
     const autoSaver = buildAutoSaver(system, paths.snapshot)
 
-    // Notify the registry's caller (e.g. WS broadcast wiring).
-    opts.onSystemCreated?.(system, id)
+    // Notify the registry's caller (e.g. WS broadcast wiring). autoSaver
+    // is passed explicitly because the map entry isn't installed until
+    // buildSystem returns; an autoSaverFor(id) lookup inside the hook
+    // would return null.
+    opts.onSystemCreated?.(system, id, autoSaver)
 
     // First-run seeding: when no snapshot existed, drop in a demo room +
     // Helper agent so an invitee lands on something they can immediately

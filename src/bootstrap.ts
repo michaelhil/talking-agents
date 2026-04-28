@@ -187,7 +187,7 @@ export const bootstrap = async (): Promise<void> => {
   // === SystemRegistry ===
   const registry = createSystemRegistry({
     shared,
-    onSystemCreated: async (system, id) => {
+    onSystemCreated: async (system, id, autoSaver) => {
       // No per-instance FS scans: external tools, skills, packs and MCP
       // tools all live in shared.sharedToolRegistry (populated above before
       // the registry was built). Per-instance toolRegistry is a thin overlay
@@ -208,11 +208,11 @@ export const bootstrap = async (): Promise<void> => {
       if (system.house.listAllRooms().length === 0) {
         system.house.createRoomSafe({ name: 'general', createdBy: 'system' })
       }
-      // Wire WS broadcasts + autosave. wsManager must exist by now.
-      if (wsManager) {
-        const autoSaver = registry.autoSaverFor(id)
-        if (autoSaver) wireSystemEvents(system, wsManager, autoSaver, id)
-      }
+      // Wire WS broadcasts + autosave. autoSaver is passed in (registry
+      // map entry isn't set until buildSystem returns). wsManager only
+      // exists for the HTTP runtime — headless boots a system before
+      // wsManager is built and runs without WS.
+      if (wsManager) wireSystemEvents(system, wsManager, autoSaver, id)
     },
     onSystemEvicted: (system, id) => {
       // Close WS sessions for this instance — they hold dangling references.
