@@ -32,11 +32,25 @@ const VALID_NS = /^[a-zA-Z0-9_-]+$/
 
 type RefreshAllFn = () => Promise<void>
 
+// Optional callback the host wires up to broadcast a system note to every
+// room with AI agents whenever a pack's tools change. Without this, an
+// agent that previously logged "tool unavailable" before a fix went in keeps
+// its polluted chat history and pattern-matches against it on next turn,
+// even though the tool now exists. The system note in-history breaks the
+// pattern.
+export type NotifyPacksChanged = (info: {
+  readonly action: 'installed' | 'updated' | 'uninstalled'
+  readonly namespace: string
+  readonly tools: ReadonlyArray<string>
+  readonly skills: ReadonlyArray<string>
+}) => void
+
 export interface PackToolsDeps {
   readonly packsDir: string
   readonly toolRegistry: ToolRegistry
   readonly skillStore: SkillStore
   readonly refreshAllAgentTools: RefreshAllFn
+  readonly notifyPacksChanged?: NotifyPacksChanged
 }
 
 // --- URL + namespace resolution ---
@@ -176,6 +190,10 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
     } catch (err) {
       console.error(`[packs] refreshAllAgentTools failed after install "${namespace}":`, err)
     }
+    deps.notifyPacksChanged?.({
+      action: 'installed', namespace,
+      tools: result.tools, skills: result.skills,
+    })
 
     return {
       success: true,
@@ -236,6 +254,10 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
     } catch (err) {
       console.error(`[packs] refreshAllAgentTools failed after update "${namespace}":`, err)
     }
+    deps.notifyPacksChanged?.({
+      action: 'updated', namespace,
+      tools: result.tools, skills: result.skills,
+    })
 
     return {
       success: true,
@@ -281,6 +303,10 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
     } catch (err) {
       console.error(`[packs] refreshAllAgentTools failed after uninstall "${namespace}":`, err)
     }
+    deps.notifyPacksChanged?.({
+      action: 'uninstalled', namespace,
+      tools: removedTools, skills: removedSkills,
+    })
 
     const rm = await $`rm -rf ${dirPath}`.quiet().nothrow()
     if (rm.exitCode !== 0) {

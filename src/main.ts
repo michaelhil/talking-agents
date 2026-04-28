@@ -600,6 +600,25 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     toolRegistry.register(createWriteToolTool(toolRegistry, skillStore, refreshAllAgentTools))
     toolRegistry.registerAll(createPackTools({
       packsDir, toolRegistry, skillStore, refreshAllAgentTools,
+      // After a pack changes, drop a system note into every room with at
+      // least one AI agent. Without this the LLM keeps pattern-matching on
+      // its own earlier "tool unavailable" replies even after the install
+      // succeeds — a context-pollution bug, not a registry bug.
+      notifyPacksChanged: ({ action, namespace, tools, skills }) => {
+        const note = action === 'uninstalled'
+          ? `[admin] Pack "${namespace}" was uninstalled. ${tools.length} tools and ${skills.length} skills are no longer available.`
+          : `[admin] Pack "${namespace}" was ${action}. Tools available now: ${tools.join(', ') || '(none)'}. Skills: ${skills.join(', ') || '(none)'}. Disregard any earlier message claiming these were unavailable.`
+        for (const room of house.listAllRooms()) {
+          const hasAi = room.id && [...team.listByKind('ai')].some(a =>
+            house.getRoomsForAgent(a.id).some(r => r.profile.id === room.id),
+          )
+          if (!hasAi) continue
+          routeMessage({ rooms: [room.id] }, {
+            senderId: 'system', senderName: 'system',
+            content: note, type: 'system',
+          })
+        }
+      },
     }))
   }
 
