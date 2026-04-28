@@ -5,39 +5,65 @@ A **pack** is a GitHub-hosted bundle of domain-specific skills and tools, instal
 1. They let you equip Samsinn with domain knowledge (air traffic control, driving, research, whatever) without authoring each skill and tool by hand.
 2. They namespace their contents, so two packs can ship a tool called `plan` and coexist as `atc_plan` and `driving_plan` without collision.
 
+## Naming convention
+
+Pack repos on GitHub follow this convention so the registry can discover them:
+
+- **Repo name:** `samsinn-pack-<X>` (e.g. `samsinn-pack-vatsim`).
+- **`pack.json` `name` field:** `<X>` (e.g. `"name": "vatsim"`).
+- **Install namespace:** `<X>`. Tools register as `<X>_<tool>`, skills as `<X>/<skill>`.
+
+The single source of truth for the install namespace is **`pack.json`'s `name` field**. If `pack.json` is missing or has no `name`, the install falls back to the repo basename with `samsinn-pack-` stripped. The install flow clones to a temp dir, reads the manifest, and only then renames into the final `<packsDir>/<X>` location — so what's on disk always matches what's registered.
+
+A repo not following the prefix convention still works (use `user/repo` or full-URL form), it just won't appear in registry-driven `install_pack <bareName>` lookups.
+
+## Pack registry
+
+The "Browse" view in Settings → Packs and the agent-facing `list_available_packs` tool both read from a configured registry: GitHub orgs/users + specific repos that should appear as installable packs.
+
+```env
+# Comma-separated. Each entry is either an owner (lists owner/samsinn-pack-*
+# repos) or a specific owner/repo.
+SAMSINN_PACK_SOURCES=samsinn-packs,michaelhil/samsinn-pack-vatsim
+```
+
+Default: `samsinn-packs` — the canonical org. Set `SAMSINN_GH_TOKEN` to lift the unauthenticated rate limit (60 req/hr → 5000 req/hr).
+
 ## Installing a pack
 
 Three equivalent phrasings of the source:
 
-| Input                              | Resolves to                                  |
-| ---------------------------------- | -------------------------------------------- |
-| `atc`                              | `https://github.com/samsinn-packs/atc.git`   |
-| `alice/my-pack`                    | `https://github.com/alice/my-pack.git`       |
-| `https://github.com/foo/bar.git`   | as-is (any scheme: https/ssh/git/file://)    |
+| Input                              | Resolves to                                                                            |
+| ---------------------------------- | -------------------------------------------------------------------------------------- |
+| `atc`                              | First registry hit where the canonical name matches. **No "default org" guess** — if the registry has no match, install errors out. |
+| `alice/my-pack`                    | `https://github.com/alice/my-pack.git`                                                |
+| `https://github.com/foo/bar.git`   | as-is (any scheme: https/ssh/git/file://)                                              |
 
 From an agent:
 
-> *"install_pack atc"*
+> *"install_pack vatsim"*  (resolved via registry)
+> *"list_available_packs"*  (browse what's installable first)
 
-From the UI: click the **+** next to the Packs section in the sidebar and enter the source.
+From the UI: click the **+** next to the Packs section, or click **Install** on a row in the **Available** section.
 
 From REST:
 
 ```bash
 curl -X POST http://localhost:3000/api/packs/install \
   -H 'Content-Type: application/json' \
-  -d '{"source":"atc"}'
+  -d '{"source":"vatsim"}'
 ```
 
-Installation is immediate — new tools and skills reach every running agent without restart. `update_pack` runs `git pull --ff-only` and re-registers. `uninstall_pack` unregisters and deletes the directory.
+Installation is immediate — new tools and skills reach every running agent across every active instance without restart (process-wide shared registry). `update_pack` runs `git pull --ff-only` and re-registers. `uninstall_pack` unregisters and deletes the directory. Pack management is gated by `SAMSINN_ENABLE_PACKS` (default ON; set to `0` to lock the runtime to whatever's on disk at boot).
 
 ## Pack anatomy
 
 A pack is a git repo laid out like this:
 
 ```
-atc/                         ← directory basename is the canonical namespace
-├── pack.json                ← optional manifest (name, description)
+samsinn-pack-vatsim/         ← repo name (registry discovery)
+├── pack.json                ← canonical install namespace lives in `name`
+├── tools/                   ← optional; *.ts files, one tool per default export
 ├── tools/                   ← optional; *.ts files, one tool per default export
 │   ├── vatsim_connect.ts
 │   └── plan.ts

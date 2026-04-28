@@ -173,16 +173,16 @@ Skills are loaded at startup and injected into agent context as a dedicated `===
 
 ### Packs
 
-A **pack** is a GitHub-hosted bundle of domain-specific skills and tools installed with one command — `install_pack atc` pulls `github.com/samsinn-packs/atc` and registers its contents into the running session, no restart needed.
+A **pack** is a GitHub-hosted bundle of domain-specific skills and tools installed with one command — `install_pack vatsim` resolves the bare name against the configured registry and pulls the matching repo. Effective immediately; no restart needed.
 
-Packs namespace their contents: a tool named `plan` inside the `atc` pack is registered as `atc_plan`; the same-named tool inside `driving` is `driving_plan`. They coexist, and neither shadows a built-in `plan`. Skills get `<pack>/<name>` keys (`atc/chart-reader`).
+Packs namespace their contents from `pack.json`'s `name` field: a tool named `plan` inside the `vatsim` pack registers as `vatsim_plan`; the same-named tool inside `driving` becomes `driving_plan`. They coexist, and neither shadows a built-in `plan`. Skills get `<pack>/<name>` keys (`vatsim/atc-controller`).
 
-Three ways to install a pack:
-- `install_pack atc`                   → `github.com/samsinn-packs/atc`
-- `install_pack alice/my-pack`         → `github.com/alice/my-pack`
-- `install_pack https://github.com/...` → any full URL (https/ssh/git/file://)
+Three ways to install:
+- `install_pack vatsim`                  → resolved via the registry (call `list_available_packs` to browse)
+- `install_pack alice/my-pack`           → `github.com/alice/my-pack`
+- `install_pack https://github.com/...`   → any full URL (https/ssh/git/file://)
 
-From the UI, use the **Packs** section in the sidebar. `update_pack` fast-forwards an install; `uninstall_pack` removes it. See [docs/packs.md](docs/packs.md) for authoring, layout, and publishing.
+From the UI, **Settings → Packs** has an **Available** browse list (one-click install) and an **Installed** list with update/uninstall buttons. See [docs/packs.md](docs/packs.md) for the naming convention, authoring layout, and the registry env var (`SAMSINN_PACK_SOURCES`). Pack management is gated by `SAMSINN_ENABLE_PACKS` (default on).
 
 ### Tools
 

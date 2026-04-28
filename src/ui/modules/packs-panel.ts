@@ -173,7 +173,8 @@ const renderBrowseSection = (container: HTMLElement, registry: RegistryPack[]): 
 export const promptInstall = async (): Promise<void> => {
   const source = prompt(
     'Install pack from:\n\n' +
-    '  name                → github.com/samsinn-packs/<name>\n' +
+    '  name                → resolved via the pack registry\n' +
+    '                        (or click an entry in the Available list)\n' +
     '  user/repo           → github.com/user/repo\n' +
     '  https://...         → full URL',
     '',
