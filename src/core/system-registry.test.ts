@@ -22,6 +22,8 @@ describe('SystemRegistry', () => {
     process.env.SAMSINN_HOME = homeDir
     // PROVIDER=ollama keeps shared runtime quiet — no cloud gateways built.
     process.env.PROVIDER = 'ollama'
+    // Disable first-run seeding — these tests assert empty-House semantics.
+    process.env.SAMSINN_SEED_EXAMPLE = '0'
     const shared = createSharedRuntime()
     registry = createSystemRegistry({ shared, idleMs: 1_000_000 })  // long idle so no auto-evict in unit tests
   })
@@ -31,6 +33,7 @@ describe('SystemRegistry', () => {
     if (originalHome === undefined) delete process.env.SAMSINN_HOME
     else process.env.SAMSINN_HOME = originalHome
     delete process.env.PROVIDER
+    delete process.env.SAMSINN_SEED_EXAMPLE
     await rm(homeDir, { recursive: true, force: true })
   })
 

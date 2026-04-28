@@ -41,6 +41,7 @@ import { instancePaths, isValidInstanceId, sharedPaths, trashPath } from './path
 import { mkdir, readdir, rename, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { asAIAgent } from '../agents/shared.ts'
+import { seedFreshInstance } from './seed-example.ts'
 
 // --- Defaults & env ---
 
@@ -176,6 +177,19 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
 
     // Notify the registry's caller (e.g. WS broadcast wiring).
     opts.onSystemCreated?.(system, id)
+
+    // First-run seeding: when no snapshot existed, drop in a demo room +
+    // Helper agent so an invitee lands on something they can immediately
+    // try. Must run after onSystemCreated so the WS-broadcast wiring is in
+    // place — otherwise the seed posts/spawns wouldn't reach connected
+    // clients in race-condition cases. Failures are caught inside.
+    if (!snapshot) {
+      await seedFreshInstance(system)
+      // Persist the seed so a refresh keeps it (without waiting for the
+      // autosaver's debounce). Best-effort — autosaver will retry on its
+      // own schedule if this throws.
+      try { await autoSaver.flush() } catch { /* autosaver will retry */ }
+    }
 
     return { system, autoSaver }
   }

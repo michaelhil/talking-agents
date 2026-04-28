@@ -75,10 +75,21 @@ export const handleAPI = async (
     remoteAddress, resetInstance, broadcastToInstance, instances,
   }
 
-  // Auth gate. /api/auth itself is exempt so the UI can submit the token.
+  // Auth gate. Scoped to /api/* so static paths (/, /index.html, /dist.css,
+  // /favicon.ico) can load and the UI can boot to show the token prompt.
+  // Without this scope, the gate ran on every path (returning null fell
+  // through to serveStatic, but a 401 short-circuited the chain), so the
+  // root page returned "Unauthorized" plain text and invitees never saw
+  // the prompt.
+  // /api/auth itself is exempt so the UI can submit the token.
   // /api/system/info is exempt so the version banner can render at the
   // token-prompt screen without a session.
-  if (authEnabled() && pathname !== '/api/auth' && pathname !== '/api/system/info') {
+  if (
+    authEnabled() &&
+    pathname.startsWith('/api/') &&
+    pathname !== '/api/auth' &&
+    pathname !== '/api/system/info'
+  ) {
     if (!isValidSession(sessionFromRequest(req))) {
       return new Response('Unauthorized', { status: 401 })
     }

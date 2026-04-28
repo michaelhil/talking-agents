@@ -95,7 +95,7 @@ Create `/etc/samsinn/env` (mode 0600, owned by root):
 mkdir -p /etc/samsinn
 cat > /etc/samsinn/env <<'EOF'
 # Auth — required in deploy mode. Generate with `openssl rand -base64 32`.
-SAMSINN_AUTH_TOKEN=PASTE-GENERATED-TOKEN-HERE
+SAMSINN_TOKEN=PASTE-GENERATED-TOKEN-HERE
 
 # SAMSINN_HOME and SAMSINN_SECURE_COOKIES are set by the systemd unit;
 # override here only if you keep the old layout (option A above).

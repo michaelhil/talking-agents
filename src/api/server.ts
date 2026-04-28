@@ -11,7 +11,7 @@ import type { SystemRegistry } from '../core/system-registry.ts'
 import type { WSManager } from './ws-handler.ts'
 import { DEFAULTS } from '../core/types/constants.ts'
 import { ensureUniqueName } from '../core/names.ts'
-import { authEnabled, isValidSession, sessionFromRequest } from './auth.ts'
+import { authEnabled, isValidSession, sessionFromRequest, validateToken, issueSession, buildSessionCookie } from './auth.ts'
 import { handleAPI } from './http-routes.ts'
 import { handleWSMessage, type WSData } from './ws-handler.ts'
 import {
@@ -144,6 +144,28 @@ export const createServer = (config: ServerConfig) => {
       // Local alias so the wrap is one short call per return site.
       // WS upgrade returns undefined, so those paths skip wrapping.
       const sec = applySecurityHeaders
+
+      // === ?token=<X> redirect — single-click sandbox onboarding ===
+      // Lets the operator share `https://host/?token=ABC` with invitees;
+      // server validates, issues a session cookie, and 303s to a clean URL.
+      // Wrong / unset tokens fall through to the normal flow (UI shows the
+      // token prompt) so an outdated link doesn't lock anyone out.
+      if (authEnabled()) {
+        const tokenParam = url.searchParams.get('token')
+        if (tokenParam && validateToken(tokenParam)) {
+          const sessionId = issueSession()
+          const cleaned = new URL(url)
+          cleaned.searchParams.delete('token')
+          const target = cleaned.pathname + (cleaned.search || '')
+          return sec(new Response(null, {
+            status: 303,
+            headers: {
+              'Location': target,
+              'Set-Cookie': buildSessionCookie(sessionId),
+            },
+          }))
+        }
+      }
 
       // === ?join=<id> redirect — set cookie + 303 to a clean URL ===
       // Strip the join param and preserve the rest, so a shared link with

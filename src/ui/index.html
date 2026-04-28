@@ -624,6 +624,10 @@
           <label class="text-xs text-text-subtle">Description</label>
           <textarea id="bug-description" name="description" required maxlength="8000" rows="8" placeholder="What were you doing? What did you expect? What happened?" class="w-full mt-1 px-3 py-2 border rounded text-sm resize-vertical"></textarea>
         </div>
+        <div class="text-[11px] text-warning bg-warning-bg border border-warning-border rounded px-2 py-1 leading-snug">
+          ⚠ Issues are filed to a public GitHub repo. Don't paste secrets,
+          session tokens, or private conversation contents.
+        </div>
         <div id="bug-context" class="text-[11px] text-text-subtle leading-snug"></div>
       </div>
       <div class="px-4 py-3 border-t flex items-center justify-end gap-2">
