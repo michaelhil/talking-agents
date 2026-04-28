@@ -10,7 +10,9 @@
 #   DEPLOY_SSH_KEY  — private key (paired with the public key authorised on
 #                     the box's /root/.ssh/authorized_keys)
 #   DEPLOY_HOST     — IP or hostname of the Hetzner box (e.g. 178.104.229.113)
-#   DEPLOY_TOKEN    — SAMSINN_TOKEN, used by smoke-streaming.ts to auth
+#
+# SAMSINN_TOKEN is read on the BOX from /etc/samsinn/env (root-readable);
+# no need to duplicate it as a GitHub secret.
 #
 # Manual trigger: GitHub Actions tab → Deploy → Run workflow. Useful when
 # you want to redeploy the latest master without making a no-op commit.
@@ -67,11 +69,9 @@ jobs:
           '
 
       - name: Smoke test (broadcast wiring)
-        env:
-          SAMSINN_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
-          ssh -i ~/.ssh/deploy_key root@${{ secrets.DEPLOY_HOST }} "
+          ssh -i ~/.ssh/deploy_key root@${{ secrets.DEPLOY_HOST }} '
             set -a; source /etc/samsinn/env; set +a
             cd /opt/samsinn
-            bun run scripts/smoke-streaming.ts
-          "
+            /home/samsinn/.bun/bin/bun run scripts/smoke-streaming.ts
+          '

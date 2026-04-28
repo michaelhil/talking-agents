@@ -53,7 +53,7 @@ await run('Pull + restart on box', remote(`set -e
 if (!SKIP_SMOKE) {
   await run('Smoke test (broadcast wiring)', remote(`set -a; source /etc/samsinn/env; set +a
     cd /opt/samsinn
-    bun run scripts/smoke-streaming.ts
+    /home/samsinn/.bun/bin/bun run scripts/smoke-streaming.ts
   `))
 }
 
