@@ -38,6 +38,9 @@ UMask=0077
 # Defaults — override via /etc/samsinn/env (operator-edited, mode 0600).
 Environment=PORT=3000
 Environment=NODE_ENV=production
+# bunx (called from package.json scripts at startup, e.g. build:css) needs
+# the bun bin dir on PATH. Default systemd PATH doesn't include it.
+Environment=PATH=/home/samsinn/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=SAMSINN_HOME=/var/lib/samsinn
 Environment=SAMSINN_SECURE_COOKIES=1
 EnvironmentFile=-/etc/samsinn/env
@@ -50,7 +53,9 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/opt/samsinn /var/lib/samsinn
+# bunx writes to ~/.bun/install/cache while resolving runtime deps; ProtectHome=read-only
+# would otherwise block this and the service would crash-loop on startup.
+ReadWritePaths=/opt/samsinn /var/lib/samsinn /home/samsinn/.bun
 PrivateTmp=true
 
 [Install]
