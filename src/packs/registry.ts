@@ -9,16 +9,25 @@
 //
 // Default: `samsinn-packs` (the canonical org once it exists).
 //
+// The exposed `name` is the canonical install namespace — the repo basename
+// with any `samsinn-pack-` prefix stripped. This matches what install_pack
+// writes under packsDir (manifest.name first; stripped basename fallback —
+// for canonical packs the two agree). Downstream consumers can do straight
+// equality against installed-pack namespaces; no prefix-stripping shims.
+//
 // GitHub API is hit unauthenticated (60 req/hr) by default; set
 // SAMSINN_GH_TOKEN to lift to 5000/hr (the same token bug-reporting uses).
 // Results are cached for 5 min so the UI Browse view doesn't hammer the API.
 // ============================================================================
 
+import { stripPackPrefix } from './manifest.ts'
+
 const PREFIX = 'samsinn-pack-'
 const CACHE_TTL_MS = 5 * 60_000
 
 export interface RegistryPack {
-  readonly name: string         // canonical install namespace (= repo basename)
+  readonly name: string         // canonical install namespace (stripped repo basename)
+  readonly repoName: string     // unstripped GitHub repo name (for display + diagnostics)
   readonly source: string       // "owner/repo"
   readonly repoUrl: string      // https URL
   readonly description: string
@@ -59,7 +68,8 @@ interface GHRepo {
 }
 
 const repoToPack = (r: GHRepo): RegistryPack => ({
-  name: r.name,
+  name: stripPackPrefix(r.name),
+  repoName: r.name,
   source: r.full_name,
   repoUrl: r.html_url,
   description: r.description ?? '',

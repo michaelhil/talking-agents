@@ -43,7 +43,11 @@ export const packsRoutes: RouteEntry[] = [
     pattern: /^\/api\/packs\/registry$/,
     handler: async (_req, _match, { system }) => {
       const available = await getAvailablePacks()
-      // Get installed list to mark each available pack.
+      // Get installed list to mark each available pack. Registry names are
+      // canonical (registry strips `samsinn-pack-` from repo basenames before
+      // returning) and install_pack writes packs under the same canonical
+      // namespace (manifest.name first, stripped basename fallback). So a
+      // direct equality match is enough here — no prefix-stripping shim.
       const listTool = system.toolRegistry.get('list_packs')
       const installedRes = listTool
         ? await listTool.execute({}, { callerId: 'api', callerName: 'api' })
@@ -51,14 +55,7 @@ export const packsRoutes: RouteEntry[] = [
       const installed = installedRes.success && Array.isArray(installedRes.data)
         ? new Set((installedRes.data as Array<{ namespace: string }>).map(p => p.namespace))
         : new Set<string>()
-      // Match either by full repo name (e.g. samsinn-pack-vatsim) or by the
-      // stripped form (vatsim) — the latter is what install_pack uses by
-      // default for bare-name resolution.
-      const stripped = (s: string) => s.replace(/^samsinn-pack-/, '')
-      return json(available.map(p => ({
-        ...p,
-        installed: installed.has(p.name) || installed.has(stripped(p.name)),
-      })))
+      return json(available.map(p => ({ ...p, installed: installed.has(p.name) })))
     },
   },
   {

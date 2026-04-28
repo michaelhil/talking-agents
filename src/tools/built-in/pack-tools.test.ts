@@ -73,7 +73,7 @@ describe('install_pack', () => {
     if (parent) await rm(parent, { recursive: true, force: true })
   })
 
-  it('clones, namespaces, registers — and calls refreshAllAgentTools', async () => {
+  it('clones, namespaces from manifest, registers — and calls refreshAllAgentTools', async () => {
     const env = await makeDeps()
     parent = env.parent
     const url = await buildRepo(env.parent, 'atc')
@@ -83,12 +83,14 @@ describe('install_pack', () => {
 
     expect(result.success).toBe(true)
     const data = result.data as { namespace: string; tools: string[]; skills: string[] }
-    // namespace defaults to "<name>-src" because that's the source dir basename
-    expect(data.namespace).toBe('atc-src')
-    expect(data.tools).toEqual(['atc-src_ping'])
-    expect(data.skills).toEqual(['atc-src/demo'])
-    expect(env.deps.toolRegistry.has('atc-src_ping')).toBe(true)
-    expect(env.deps.skillStore.get('atc-src/demo')).toBeDefined()
+    // pack.json `name: "atc"` is authoritative — wins over the source dir
+    // basename ("atc-src"). Phase A: manifest.name is the single source of
+    // truth for the install namespace.
+    expect(data.namespace).toBe('atc')
+    expect(data.tools).toEqual(['atc_ping'])
+    expect(data.skills).toEqual(['atc/demo'])
+    expect(env.deps.toolRegistry.has('atc_ping')).toBe(true)
+    expect(env.deps.skillStore.get('atc/demo')).toBeDefined()
     expect(env.refreshCount.n).toBe(1)
   })
 

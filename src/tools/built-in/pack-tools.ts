@@ -6,10 +6,23 @@
 // basename; it prefixes all registered tools (`<ns>_<tool>`) and skills
 // (`<ns>/<skill>`) to eliminate cross-pack name collisions.
 //
-// install_pack accepts:
-//   - bare name          → github.com/samsinn-packs/<name>.git  (default org)
-//   - "user/repo"        → github.com/user/repo.git
-//   - full URL           → cloned as-is (https://, ssh, file://, ...)
+// Canonical namespace resolution (single source of truth):
+//   1. pack.json `name` (validated against VALID_NS)
+//   2. samsinn-pack-stripped basename of the source repo
+//   3. caller's optional `name` override (always wins if provided)
+//
+// install_pack source forms:
+//   - bare name `X`     → resolved against the registry (see registry.ts).
+//                         No more "default org" guess — if X isn't in the
+//                         registry, the call errors out.
+//   - "user/repo"       → github.com/user/repo.git
+//   - full URL          → cloned as-is (https://, ssh, file://, ...)
+//
+// Install flow: clone to a temp dir, read the manifest, resolve the canonical
+// namespace, then move the temp dir to the final path. This means the FINAL
+// directory name always matches the canonical namespace — so scanner-derived
+// basename == registered tool/skill prefix == registry name. One source of
+// truth, no prefix-stripping shims downstream.
 //
 // All shell-outs go through `Bun.$` tagged-template form so arguments are
 // quoted correctly — never string-concatenated.
@@ -18,14 +31,12 @@
 import type { Tool, ToolRegistry } from '../../core/types/tool.ts'
 import type { SkillStore } from '../../skills/loader.ts'
 import { loadPack } from '../../packs/loader.ts'
-import { readManifest } from '../../packs/manifest.ts'
+import { readManifest, resolveInstallNamespace, stripPackPrefix } from '../../packs/manifest.ts'
 import { scanPacks } from '../../packs/scanner.ts'
 import { getAvailablePacks } from '../../packs/registry.ts'
-import { stat } from 'node:fs/promises'
+import { stat, mkdtemp, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { $ } from 'bun'
-
-const DEFAULT_ORG = 'samsinn-packs'
 
 // Pack namespaces are directory names — same regex as tool/skill names.
 const VALID_NS = /^[a-zA-Z0-9_-]+$/
@@ -53,32 +64,33 @@ export interface PackToolsDeps {
   readonly notifyPacksChanged?: NotifyPacksChanged
 }
 
-// --- URL + namespace resolution ---
+// --- URL resolution ---
+//
+// resolveSource handles URL + user/repo forms. Bare names are resolved
+// separately via the registry — see resolveBareName below. Splitting the two
+// keeps URL parsing synchronous (no I/O) and forces the bare-name path to
+// surface a clear error when the registry has no match.
 
-interface ResolvedSource {
+interface ResolvedUrl {
   readonly url: string
-  readonly namespace: string  // default — user can override via explicit param
+  readonly sourceLabel: string   // basename used as the install fallback
 }
 
-// Guess the canonical namespace (directory name) from a git URL or short spec.
-// For "user/repo" or bare "name", the repo part is the namespace. For full
-// URLs, strip trailing .git and take the last path segment.
-const namespaceFromUrl = (url: string): string => {
-  // Handle file:// and plain paths too — last segment works universally.
+const basenameFromUrl = (url: string): string => {
   const withoutGit = url.replace(/\.git\/?$/, '').replace(/\/+$/, '')
   const parts = withoutGit.split('/').filter(Boolean)
   return parts[parts.length - 1] ?? ''
 }
 
-const resolveSource = (source: string): ResolvedSource | { error: string } => {
+const resolveSource = (source: string): ResolvedUrl | { error: string } => {
   const s = source.trim()
   if (!s) return { error: 'source is required' }
 
   // Full URL (anything with a scheme or @ for ssh).
   if (/^(https?:|ssh:|git:|file:)/i.test(s) || s.includes('@')) {
-    const ns = namespaceFromUrl(s)
-    if (!VALID_NS.test(ns)) return { error: `Cannot derive namespace from URL "${s}" — use explicit name param` }
-    return { url: s, namespace: ns }
+    const base = basenameFromUrl(s)
+    if (!base) return { error: `Cannot derive a name from URL "${s}" — pass an explicit \`name\`` }
+    return { url: s, sourceLabel: base }
   }
 
   // user/repo shorthand.
@@ -87,100 +99,123 @@ const resolveSource = (source: string): ResolvedSource | { error: string } => {
     if (parts.length !== 2 || !parts[0] || !parts[1]) {
       return { error: `Invalid shorthand "${s}" — expected "user/repo"` }
     }
-    if (!VALID_NS.test(parts[1])) return { error: `Invalid repo name "${parts[1]}"` }
-    return { url: `https://github.com/${parts[0]}/${parts[1]}.git`, namespace: parts[1] }
+    return { url: `https://github.com/${parts[0]}/${parts[1]}.git`, sourceLabel: parts[1] }
   }
 
-  // Bare name → default org.
-  if (!VALID_NS.test(s)) return { error: `Invalid pack name "${s}" — use letters, digits, underscores, hyphens` }
-  return { url: `https://github.com/${DEFAULT_ORG}/${s}.git`, namespace: s }
+  // Bare names are not handled here — see resolveBareName.
+  return { error: `Bare-name resolution requires the registry; got "${s}". Use \`user/repo\` or a full URL, or call list_available_packs to see what's available.` }
+}
+
+// Look up a bare name in the configured registry. Match by canonical name
+// (registry already strips `samsinn-pack-` from repo names, see registry.ts)
+// OR by the full repo basename — both forms are accepted so an agent that
+// remembers either spelling resolves the same pack.
+const resolveBareName = async (bareName: string): Promise<ResolvedUrl | { error: string }> => {
+  if (!VALID_NS.test(bareName)) {
+    return { error: `Invalid pack name "${bareName}" — use letters, digits, underscores, hyphens` }
+  }
+  let available
+  try {
+    available = await getAvailablePacks()
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    return { error: `Could not consult pack registry: ${reason}` }
+  }
+  const match = available.find(
+    p => p.name === bareName || stripPackPrefix(p.name) === bareName,
+  )
+  if (!match) {
+    return { error: `No pack named "${bareName}" in the registry. Configured sources: SAMSINN_PACK_SOURCES env. Use \`user/repo\` or a full URL to install from elsewhere.` }
+  }
+  return { url: `${match.repoUrl}.git`, sourceLabel: stripPackPrefix(match.name) }
 }
 
 // --- Tools ---
 
-// Match a bare-name install request against the configured registry.
-// Returns the registry entry (which carries the canonical source URL) when
-// the bare name matches a registry pack's full repo name OR its name with
-// the `samsinn-pack-` prefix stripped (so `install_pack vatsim` finds
-// `michaelhil/samsinn-pack-vatsim`). Used as a smart-default — explicit
-// `user/repo` and full URL forms still bypass this.
-const stripPackPrefix = (s: string): string => s.replace(/^samsinn-pack-/, '')
-
-const resolveFromRegistry = async (bareName: string): Promise<ResolvedSource | null> => {
-  try {
-    const available = await getAvailablePacks()
-    const match = available.find(
-      p => p.name === bareName || stripPackPrefix(p.name) === bareName,
-    )
-    if (!match) return null
-    return {
-      url: `${match.repoUrl}.git`,
-      namespace: stripPackPrefix(match.name),
-    }
-  } catch {
-    return null
-  }
-}
-
 export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
   name: 'install_pack',
-  description: 'Installs a pack (bundle of tools + skills) from GitHub. The agent-friendly form is a bare name (e.g. `vatsim`) — that resolves against the configured pack registry first (call list_available_packs to see what is publishable). Falls back to github.com/samsinn-packs/<name> when no registry match is found. Also accepts "user/repo" shorthand or a full git URL. Tools are namespaced as `<pack>_<tool>` and skills as `<pack>/<skill>`.',
+  description: 'Installs a pack (bundle of tools + skills) from GitHub. The canonical install namespace comes from the pack\'s pack.json `name` field; if absent, the repo basename with any `samsinn-pack-` prefix stripped is used. Pass a bare name (resolved via the registry — call list_available_packs to see what\'s publishable), a "user/repo" shorthand, or a full git URL. Tools are namespaced as `<pack>_<tool>` and skills as `<pack>/<skill>`.',
   usage: 'Use to bring domain-specific tooling (e.g. air-traffic-control, driving) into the current session. Effect is immediate — no restart needed. If unsure what is available, call list_available_packs first.',
   returns: 'Object with namespace, registered tool names, registered skill names, and the manifest if present.',
   parameters: {
     type: 'object',
     properties: {
-      source: { type: 'string', description: 'Pack name (resolved via registry), user/repo shorthand, or full git URL' },
-      name: { type: 'string', description: 'Override the default namespace (optional — defaults to registry-stripped name or repo basename)' },
+      source: { type: 'string', description: 'Bare pack name (resolved via registry), user/repo shorthand, or full git URL' },
+      name: { type: 'string', description: 'Override the canonical namespace (optional — defaults to pack.json name or stripped basename)' },
     },
     required: ['source'],
   },
   execute: async (params) => {
-    const source = params.source as string
+    const source = (params.source as string ?? '').trim()
     const override = typeof params.name === 'string' ? (params.name as string).trim() : ''
+    if (!source) return { success: false, error: 'source is required' }
 
-    // Bare-name path: try the registry first. This is what makes
-    // `install_pack vatsim` find `michaelhil/samsinn-pack-vatsim` without
-    // the agent needing to know the exact repo path.
-    const isBareName = !source.includes('/') && !/^(https?:|ssh:|git:|file:)/i.test(source) && !source.includes('@')
-    let resolved: ResolvedSource | { error: string } | null = null
-    if (isBareName) {
-      resolved = await resolveFromRegistry(source.trim())
-    }
-    if (!resolved) resolved = resolveSource(source)
+    const isBareName =
+      !source.includes('/') &&
+      !/^(https?:|ssh:|git:|file:)/i.test(source) &&
+      !source.includes('@')
+    const resolved = isBareName ? await resolveBareName(source) : resolveSource(source)
     if ('error' in resolved) return { success: false, error: resolved.error }
 
-    const namespace = override || resolved.namespace
-    if (!VALID_NS.test(namespace)) {
-      return { success: false, error: `Invalid namespace "${namespace}"` }
+    // Ensure parent exists, then clone into a *temp* dir under packsDir so
+    // we can read the manifest BEFORE picking the final destination.
+    await $`mkdir -p ${deps.packsDir}`.quiet().nothrow()
+    let tempDir: string
+    try {
+      tempDir = await mkdtemp(join(deps.packsDir, '.tmp-install-'))
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      return { success: false, error: `Could not create temp dir for install: ${reason}` }
     }
 
-    const dirPath = join(deps.packsDir, namespace)
+    const cleanup = async () => { try { await rm(tempDir, { recursive: true, force: true }) } catch { /* ignore */ } }
 
-    // Refuse to overwrite an existing install — user must uninstall first.
-    try {
-      const s = await stat(dirPath)
-      if (s.isDirectory()) {
-        return { success: false, error: `Pack "${namespace}" is already installed — use update_pack to refresh or uninstall_pack first` }
-      }
-    } catch { /* not present — proceed */ }
-
-    // Ensure parent exists.
-    await $`mkdir -p ${deps.packsDir}`.quiet().nothrow()
-
-    // Clone. Bun.$ quotes arguments; shell injection via source/namespace
-    // is not possible here.
-    const clone = await $`git clone --depth 1 ${resolved.url} ${dirPath}`.quiet().nothrow()
+    const clone = await $`git clone --depth 1 ${resolved.url} ${tempDir}`.quiet().nothrow()
     if (clone.exitCode !== 0) {
-      // Best-effort cleanup — a failed clone may still leave a partial dir.
-      await $`rm -rf ${dirPath}`.quiet().nothrow()
+      await cleanup()
       const stderr = clone.stderr.toString().trim()
       return { success: false, error: `git clone failed: ${stderr || 'unknown error'}` }
     }
 
-    const manifest = await readManifest(dirPath)
+    // Resolve the canonical namespace from the manifest. Override always
+    // wins; otherwise pack.json name; otherwise stripped basename.
+    const manifest = await readManifest(tempDir)
+    let namespace: string
+    if (override) {
+      namespace = override
+      if (!VALID_NS.test(namespace)) {
+        await cleanup()
+        return { success: false, error: `Invalid namespace override "${namespace}"` }
+      }
+    } else {
+      const derived = resolveInstallNamespace(manifest, resolved.sourceLabel)
+      if (!derived) {
+        await cleanup()
+        return { success: false, error: `Could not derive a valid namespace from manifest or source basename "${resolved.sourceLabel}". Pass an explicit \`name\`.` }
+      }
+      namespace = derived
+    }
+
+    // Refuse to overwrite an existing install — user must uninstall first.
+    const finalPath = join(deps.packsDir, namespace)
+    try {
+      const s = await stat(finalPath)
+      if (s.isDirectory()) {
+        await cleanup()
+        return { success: false, error: `Pack "${namespace}" is already installed — use update_pack to refresh or uninstall_pack first` }
+      }
+    } catch { /* not present — proceed */ }
+
+    try {
+      await rename(tempDir, finalPath)
+    } catch (err) {
+      await cleanup()
+      const reason = err instanceof Error ? err.message : String(err)
+      return { success: false, error: `Could not move installed pack into place: ${reason}` }
+    }
+
     const result = await loadPack(
-      { namespace, dirPath, manifest },
+      { namespace, dirPath: finalPath, manifest },
       deps.toolRegistry,
       deps.skillStore,
     )
@@ -355,20 +390,20 @@ export const createListPacksTool = (deps: PackToolsDeps): Tool => ({
 
 export const createListAvailablePacksTool = (deps: PackToolsDeps): Tool => ({
   name: 'list_available_packs',
-  description: 'Lists packs that can be installed via `install_pack`, sourced from the configured registry (SAMSINN_PACK_SOURCES). Each entry includes the bare name to pass to install_pack and whether it is already installed. Call this BEFORE install_pack when the user asks for an unknown domain — do not guess repo names.',
-  returns: 'Array of registry entries with name, source (owner/repo), repoUrl, description, and installed flag.',
+  description: 'Lists packs that can be installed via `install_pack`, sourced from the configured registry (SAMSINN_PACK_SOURCES). Each entry includes the canonical name to pass to install_pack and whether it is already installed. Call this BEFORE install_pack when the user asks for an unknown domain — do not guess repo names.',
+  returns: 'Array of registry entries with name (canonical), repoName, source (owner/repo), repoUrl, description, and installed flag.',
   parameters: { type: 'object', properties: {} },
   execute: async () => {
     try {
       const available = await getAvailablePacks()
       const installed = new Set((await scanPacks(deps.packsDir)).map(p => p.namespace))
       const data = available.map(p => ({
-        bareName: stripPackPrefix(p.name),
-        repoName: p.name,
+        name: p.name,
+        repoName: p.repoName,
         source: p.source,
         repoUrl: p.repoUrl,
         description: p.description,
-        installed: installed.has(p.name) || installed.has(stripPackPrefix(p.name)),
+        installed: installed.has(p.name),
       }))
       return { success: true, data }
     } catch (err) {

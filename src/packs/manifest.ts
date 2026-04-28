@@ -36,6 +36,33 @@ export const readManifest = async (dirPath: string): Promise<PackManifest> => {
   return out
 }
 
-// Namespace is always the directory basename — authoritative, independent of
-// any `name` in pack.json (which is display-only). Same convention as node_modules.
+// Namespace from a directory that already exists on disk. Used by the
+// scanner to identify already-installed packs — at that point the install
+// step has already chosen the directory name, so basename is authoritative.
 export const namespaceFor = (dirPath: string): string => basename(dirPath)
+
+// Pack-tools namespace regex (mirrors VALID_NS in pack-tools.ts to avoid an
+// import cycle).
+const VALID_NS_RE = /^[a-zA-Z0-9_-]+$/
+
+// Convention: GitHub repos are named `samsinn-pack-<X>` for discoverability
+// (so the registry can list them), but the canonical install namespace and
+// tool prefix is `<X>`. This helper strips the prefix only.
+export const stripPackPrefix = (s: string): string => s.replace(/^samsinn-pack-/, '')
+
+// Resolves the canonical install namespace for a freshly cloned pack:
+//   1. pack.json `name`  (if present and valid)
+//   2. samsinn-pack-stripped basename of the source dir
+// Validates against the namespace regex and returns null if neither yields
+// a valid identifier — caller must surface the error to the user instead of
+// installing the pack into a malformed directory.
+export const resolveInstallNamespace = (
+  manifest: PackManifest,
+  sourceDir: string,
+): string | null => {
+  const fromManifest = manifest.name?.trim() ?? ''
+  if (fromManifest && VALID_NS_RE.test(fromManifest)) return fromManifest
+  const fromBasename = stripPackPrefix(basename(sourceDir))
+  if (VALID_NS_RE.test(fromBasename)) return fromBasename
+  return null
+}
