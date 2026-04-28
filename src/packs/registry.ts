@@ -75,6 +75,14 @@ const repoToPack = (r: GHRepo): RegistryPack => ({
   description: r.description ?? '',
 })
 
+// Owners whose repos are ALL treated as packs (no prefix filter). Anything
+// matching `<x>-packs` is assumed to be a dedicated pack-hosting org by
+// convention — `samsinn-packs`, `acme-packs`, etc. Operators putting their
+// personal account in SAMSINN_PACK_SOURCES still get the prefix filter so
+// random repos don't pollute the registry.
+const isPackOnlyOwner = (owner: string): boolean =>
+  /-packs$/.test(owner) || owner === 'samsinn-packs'
+
 const fetchOwnerRepos = async (owner: string): Promise<ReadonlyArray<RegistryPack>> => {
   // /users/{owner}/repos works for both users and orgs.
   const res = await fetch(`https://api.github.com/users/${encodeURIComponent(owner)}/repos?per_page=100&sort=updated`, {
@@ -85,8 +93,9 @@ const fetchOwnerRepos = async (owner: string): Promise<ReadonlyArray<RegistryPac
     return []
   }
   const repos = await res.json() as ReadonlyArray<GHRepo>
+  const baseFilter = (r: GHRepo): boolean => !r.archived && !r.fork
   return repos
-    .filter(r => !r.archived && !r.fork && r.name.startsWith(PREFIX))
+    .filter(r => baseFilter(r) && (isPackOnlyOwner(owner) || r.name.startsWith(PREFIX)))
     .map(repoToPack)
 }
 
