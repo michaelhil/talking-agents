@@ -51,7 +51,14 @@ export const packsRoutes: RouteEntry[] = [
       const installed = installedRes.success && Array.isArray(installedRes.data)
         ? new Set((installedRes.data as Array<{ namespace: string }>).map(p => p.namespace))
         : new Set<string>()
-      return json(available.map(p => ({ ...p, installed: installed.has(p.name) })))
+      // Match either by full repo name (e.g. samsinn-pack-vatsim) or by the
+      // stripped form (vatsim) — the latter is what install_pack uses by
+      // default for bare-name resolution.
+      const stripped = (s: string) => s.replace(/^samsinn-pack-/, '')
+      return json(available.map(p => ({
+        ...p,
+        installed: installed.has(p.name) || installed.has(stripped(p.name)),
+      })))
     },
   },
   {
