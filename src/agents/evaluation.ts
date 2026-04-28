@@ -196,6 +196,13 @@ export const evaluate = async (
     flushInfo: contextResult.flushInfo,
   })
 
+  // Track the latest non-empty text the model emitted across tool rounds.
+  // When the loop hits maxToolIterations we surface this to the user along
+  // with the pass reason, instead of replacing the streamed text with a bare
+  // [pass] message — that was a bad UX where you'd see the agent typing,
+  // then watch its message get deleted and replaced with a terse error.
+  let lastAssistantText = ''
+
   try {
     for (let toolRound = 0; toolRound <= maxToolIterations; toolRound++) {
       const request: ChatRequest = {
@@ -214,6 +221,12 @@ export const evaluate = async (
 
       // Native tool calls
       if (streamResult.toolCalls && streamResult.toolCalls.length > 0) {
+        // Hold on to any text the model emitted before/alongside the tool
+        // calls — the user just watched it stream in. If we end up exhausting
+        // iterations, this is what we restore so the chat doesn't blank out.
+        if (streamResult.content && streamResult.content.trim().length > 0) {
+          lastAssistantText = streamResult.content.trim()
+        }
         const calls = nativeCallsToToolCalls(streamResult.toolCalls)
 
         // pass tool → return pass decision without executing
@@ -252,8 +265,22 @@ export const evaluate = async (
       return makeResult({ response: { action: 'respond', content }, generationMs: totalGenerationMs, triggerRoomId })
     }
 
-    // Max iterations reached
-    return makeResult({ response: { action: 'pass', reason: `Tool call loop exceeded ${maxToolIterations} iterations` }, generationMs: totalGenerationMs, triggerRoomId })
+    // Max iterations reached. If the model produced any visible text along
+    // the way, deliver it with a footer instead of replacing it with a bare
+    // pass. Without this, the user sees streamed text disappear and a terse
+    // [pass] error take its place.
+    const loopReason = `Tool call loop exceeded ${maxToolIterations} iterations`
+    if (lastAssistantText.length > 0) {
+      return makeResult({
+        response: {
+          action: 'respond',
+          content: `${lastAssistantText}\n\n_⚠ ${loopReason} — partial result._`,
+        },
+        generationMs: totalGenerationMs,
+        triggerRoomId,
+      })
+    }
+    return makeResult({ response: { action: 'pass', reason: loopReason }, generationMs: totalGenerationMs, triggerRoomId })
   } catch (err) {
     const errMsg = isOllamaError(err) && isPermanent(err)
       ? `Model error: ${err.message} — check agent config`

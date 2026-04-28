@@ -8,7 +8,7 @@ RUN bun install --frozen-lockfile
 
 # Copy source
 COPY src/ src/
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.ui.json ./
 
 # Build CSS so the runtime doesn't need devDeps and the UI ships with
 # styles already baked in.
