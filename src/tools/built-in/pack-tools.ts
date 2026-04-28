@@ -20,6 +20,7 @@ import type { SkillStore } from '../../skills/loader.ts'
 import { loadPack } from '../../packs/loader.ts'
 import { readManifest } from '../../packs/manifest.ts'
 import { scanPacks } from '../../packs/scanner.ts'
+import { getAvailablePacks } from '../../packs/registry.ts'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { $ } from 'bun'
@@ -83,16 +84,40 @@ const resolveSource = (source: string): ResolvedSource | { error: string } => {
 
 // --- Tools ---
 
+// Match a bare-name install request against the configured registry.
+// Returns the registry entry (which carries the canonical source URL) when
+// the bare name matches a registry pack's full repo name OR its name with
+// the `samsinn-pack-` prefix stripped (so `install_pack vatsim` finds
+// `michaelhil/samsinn-pack-vatsim`). Used as a smart-default — explicit
+// `user/repo` and full URL forms still bypass this.
+const stripPackPrefix = (s: string): string => s.replace(/^samsinn-pack-/, '')
+
+const resolveFromRegistry = async (bareName: string): Promise<ResolvedSource | null> => {
+  try {
+    const available = await getAvailablePacks()
+    const match = available.find(
+      p => p.name === bareName || stripPackPrefix(p.name) === bareName,
+    )
+    if (!match) return null
+    return {
+      url: `${match.repoUrl}.git`,
+      namespace: stripPackPrefix(match.name),
+    }
+  } catch {
+    return null
+  }
+}
+
 export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
   name: 'install_pack',
-  description: 'Installs a pack (bundle of tools + skills) from GitHub. Accepts a bare name (resolves to github.com/samsinn-packs/<name>), a "user/repo" shorthand, or a full git URL. Tools are namespaced as `<pack>_<tool>` and skills as `<pack>/<skill>`.',
-  usage: 'Use to bring domain-specific tooling (e.g. air-traffic-control, driving) into the current session. Effect is immediate — no restart needed.',
+  description: 'Installs a pack (bundle of tools + skills) from GitHub. The agent-friendly form is a bare name (e.g. `vatsim`) — that resolves against the configured pack registry first (call list_available_packs to see what is publishable). Falls back to github.com/samsinn-packs/<name> when no registry match is found. Also accepts "user/repo" shorthand or a full git URL. Tools are namespaced as `<pack>_<tool>` and skills as `<pack>/<skill>`.',
+  usage: 'Use to bring domain-specific tooling (e.g. air-traffic-control, driving) into the current session. Effect is immediate — no restart needed. If unsure what is available, call list_available_packs first.',
   returns: 'Object with namespace, registered tool names, registered skill names, and the manifest if present.',
   parameters: {
     type: 'object',
     properties: {
-      source: { type: 'string', description: 'Pack name, user/repo shorthand, or full git URL' },
-      name: { type: 'string', description: 'Override the default namespace (optional — defaults to repo basename)' },
+      source: { type: 'string', description: 'Pack name (resolved via registry), user/repo shorthand, or full git URL' },
+      name: { type: 'string', description: 'Override the default namespace (optional — defaults to registry-stripped name or repo basename)' },
     },
     required: ['source'],
   },
@@ -100,7 +125,15 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
     const source = params.source as string
     const override = typeof params.name === 'string' ? (params.name as string).trim() : ''
 
-    const resolved = resolveSource(source)
+    // Bare-name path: try the registry first. This is what makes
+    // `install_pack vatsim` find `michaelhil/samsinn-pack-vatsim` without
+    // the agent needing to know the exact repo path.
+    const isBareName = !source.includes('/') && !/^(https?:|ssh:|git:|file:)/i.test(source) && !source.includes('@')
+    let resolved: ResolvedSource | { error: string } | null = null
+    if (isBareName) {
+      resolved = await resolveFromRegistry(source.trim())
+    }
+    if (!resolved) resolved = resolveSource(source)
     if ('error' in resolved) return { success: false, error: resolved.error }
 
     const namespace = override || resolved.namespace
@@ -294,9 +327,35 @@ export const createListPacksTool = (deps: PackToolsDeps): Tool => ({
   },
 })
 
+export const createListAvailablePacksTool = (deps: PackToolsDeps): Tool => ({
+  name: 'list_available_packs',
+  description: 'Lists packs that can be installed via `install_pack`, sourced from the configured registry (SAMSINN_PACK_SOURCES). Each entry includes the bare name to pass to install_pack and whether it is already installed. Call this BEFORE install_pack when the user asks for an unknown domain — do not guess repo names.',
+  returns: 'Array of registry entries with name, source (owner/repo), repoUrl, description, and installed flag.',
+  parameters: { type: 'object', properties: {} },
+  execute: async () => {
+    try {
+      const available = await getAvailablePacks()
+      const installed = new Set((await scanPacks(deps.packsDir)).map(p => p.namespace))
+      const data = available.map(p => ({
+        bareName: stripPackPrefix(p.name),
+        repoName: p.name,
+        source: p.source,
+        repoUrl: p.repoUrl,
+        description: p.description,
+        installed: installed.has(p.name) || installed.has(stripPackPrefix(p.name)),
+      }))
+      return { success: true, data }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      return { success: false, error: `registry fetch failed: ${reason}` }
+    }
+  },
+})
+
 export const createPackTools = (deps: PackToolsDeps): ReadonlyArray<Tool> => [
   createInstallPackTool(deps),
   createUpdatePackTool(deps),
   createUninstallPackTool(deps),
   createListPacksTool(deps),
+  createListAvailablePacksTool(deps),
 ]
