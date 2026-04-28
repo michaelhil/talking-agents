@@ -52,3 +52,43 @@ export const createToolRegistry = (): ToolRegistry => {
     listEntries: (): ReadonlyArray<ToolRegistryEntry> => [...entries.values()],
   }
 }
+
+// Overlay registry — used by per-instance Systems to register house-bound
+// built-ins (createListRoomsTool(house), etc.) on top of the process-shared
+// registry that holds external tools, skills, packs, and MCP tools.
+//
+// Lookup falls through: own map → parent. Mutations stay in the overlay
+// (writes to parent are intentional admin paths via shared registration in
+// bootstrap, not via per-instance code). list() / listEntries() merge.
+//
+// `unregisterByPack` and `unregister` only touch the overlay; pack tools
+// live in the shared parent and the install/uninstall flow mutates parent
+// directly via its own reference.
+export const createOverlayToolRegistry = (parent: ToolRegistry): ToolRegistry => {
+  const own = createToolRegistry()
+
+  return {
+    register: own.register,
+    registerAll: own.registerAll,
+    registerWithSource: own.registerWithSource,
+    unregister: own.unregister,
+    unregisterByPack: own.unregisterByPack,
+    get: (name) => own.get(name) ?? parent.get(name),
+    getEntry: (name) => own.getEntry(name) ?? parent.getEntry(name),
+    has: (name) => own.has(name) || parent.has(name),
+    // Merge: overlay first (so an overlay override wins on duplicate names),
+    // then parent entries that aren't shadowed.
+    list: () => {
+      const ownTools = own.list()
+      const ownNames = new Set(ownTools.map(t => t.name))
+      const fromParent = parent.list().filter(t => !ownNames.has(t.name))
+      return [...ownTools, ...fromParent]
+    },
+    listEntries: () => {
+      const ownEntries = own.listEntries()
+      const ownNames = new Set(ownEntries.map(e => e.tool.name))
+      const fromParent = parent.listEntries().filter(e => !ownNames.has(e.tool.name))
+      return [...ownEntries, ...fromParent]
+    },
+  }
+}

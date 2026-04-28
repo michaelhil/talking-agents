@@ -32,8 +32,14 @@ import { generateInstanceId } from './api/instance-cookie.ts'
 import { wireSystemEvents } from './api/wire-system-events.ts'
 import { createWSManager } from './api/ws-handler.ts'
 import { initSharedLimiter } from './api/routes/instances.ts'
+// Process-wide tool factories. Anything that doesn't bind to a per-instance
+// `house` registers into shared.sharedToolRegistry once at boot, not per
+// instance — see registerSharedTools below.
+import {
+  createPassTool, createGetTimeTool, createTestToolTool, createListSkillsTool,
+  createWebTools, createWriteSkillTool, createWriteToolTool, createPackTools,
+} from './tools/built-in/index.ts'
 import type { System } from './main.ts'
-import type { Tool } from './core/types/tool.ts'
 
 const DRAIN_TIMEOUT_MS = 5_000
 
@@ -72,17 +78,65 @@ export const bootstrap = async (): Promise<void> => {
   // Each per-instance system applies this in its onSystemCreated hook.
   const bootLogConfig = parseLogConfigFromEnv()
 
-  // === MCP tools — load once at boot, replicate per instance ===
-  // Each MCP server is a stdio child process. We use a temp tool registry
-  // to capture the Tool[] definitions, then inject them into each
-  // per-instance registry. The underlying connections are shared.
+  // === MCP tools — load once at boot ===
+  // Each MCP server is a stdio child process. We register the Tool[]
+  // definitions directly into shared.sharedToolRegistry so every per-instance
+  // overlay can resolve them; the underlying connection is shared. Also kept
+  // on shared.mcpTools as a list for any consumer that needs the raw set.
   const mcpConfigPath = `${import.meta.dir}/../mcp-servers.json`
   let mcpDisconnect = async (): Promise<void> => {}
   if (existsSync(mcpConfigPath)) {
     const tempRegistry = createToolRegistry()
     const result = await registerAllMCPServers(tempRegistry, await Bun.file(mcpConfigPath).json())
     shared.mcpTools.push(...tempRegistry.list())
+    for (const tool of tempRegistry.list()) {
+      try { shared.sharedToolRegistry.register(tool) } catch { /* duplicate ignored */ }
+    }
     mcpDisconnect = result.disconnect
+  }
+
+  // === Process-wide tool/skill/pack scan — once, into shared ===
+  // Single FS scan: external tools, free-standing skills (cwd + samsinn-home),
+  // and packs all register into the SHARED registry/store. Per-instance
+  // Systems wrap this in an overlay (see createSystem in main.ts).
+  // Replaces the old per-instance loaders that ran inside onSystemCreated
+  // and re-scanned everything for every cookie that hit the server.
+  await loadExternalTools(shared.sharedToolRegistry)
+  await loadSkills(resolve(process.cwd(), 'skills'), shared.sharedSkillStore, shared.sharedToolRegistry)
+  await loadSkills(sharedPaths.skills(), shared.sharedSkillStore, shared.sharedToolRegistry)
+  await loadAllPacks(sharedPaths.packs(), shared.sharedToolRegistry, shared.sharedSkillStore)
+
+  // === Process-wide built-in tools (no per-instance state) ===
+  // Anything that doesn't bind to a per-instance House registers ONCE here.
+  // House-bound tools (room ops, artifacts, post_to_room, …) stay in
+  // createSystem and live in the per-instance overlay.
+  const isDeployMode = !!(process.env.SAMSINN_TOKEN && process.env.SAMSINN_TOKEN.length > 0)
+  const flag = (name: string, defaultOn: boolean): boolean => {
+    const v = process.env[name]
+    if (v === '1') return true
+    if (v === '0') return false
+    return defaultOn
+  }
+  const networkToolsEnabled = flag('SAMSINN_ENABLE_NETWORK_TOOLS', !isDeployMode)
+  const codegenEnabled = flag('SAMSINN_ENABLE_CODEGEN', !isDeployMode)
+
+  shared.sharedToolRegistry.register(createPassTool())
+  shared.sharedToolRegistry.register(createGetTimeTool())
+  shared.sharedToolRegistry.register(createTestToolTool(shared.sharedToolRegistry))
+  shared.sharedToolRegistry.register(createListSkillsTool(shared.sharedSkillStore))
+  if (networkToolsEnabled) {
+    shared.sharedToolRegistry.registerAll(createWebTools({
+      tavilyApiKey: process.env.TAVILY_API_KEY,
+      braveApiKey: process.env.BRAVE_API_KEY,
+      googleApiKey: process.env.GOOGLE_CSE_API_KEY,
+      googleCseId: process.env.GOOGLE_CSE_ID,
+    }))
+  }
+  if (codegenEnabled) {
+    // write_skill writes a SKILL.md file and registers into the shared store —
+    // visible across instances immediately. write_tool / pack admin land
+    // below, after `registry` exists (they need cross-instance refresh).
+    shared.sharedToolRegistry.register(createWriteSkillTool(shared.sharedSkillStore, sharedPaths.skills()))
   }
 
   // === Track new agents for the provider-event reverse index ===
@@ -125,15 +179,10 @@ export const bootstrap = async (): Promise<void> => {
   const registry = createSystemRegistry({
     shared,
     onSystemCreated: async (system, id) => {
-      // Per-instance loaders.
-      await loadExternalTools(system.toolRegistry)
-      await loadSkills(resolve(process.cwd(), 'skills'), system.skillStore, system.toolRegistry)
-      await loadSkills(system.skillsDir, system.skillStore, system.toolRegistry)
-      await loadAllPacks(system.packsDir, system.toolRegistry, system.skillStore)
-      // Inject MCP tools (loaded once at boot, registered into each instance).
-      for (const tool of shared.mcpTools as Tool[]) {
-        try { system.toolRegistry.register(tool) } catch { /* duplicate ignored */ }
-      }
+      // No per-instance FS scans: external tools, skills, packs and MCP
+      // tools all live in shared.sharedToolRegistry (populated above before
+      // the registry was built). Per-instance toolRegistry is a thin overlay
+      // that adds house-bound built-ins on top. See main.ts createSystem.
       // Configure logging from env template.
       try {
         await system.logging.configure(bootLogConfig)
@@ -176,6 +225,68 @@ export const bootstrap = async (): Promise<void> => {
       }
     },
   })
+
+  // === Cross-instance refresh + pack-change notification ===
+  // Tool changes (install_pack, write_tool) need to propagate to every live
+  // instance, not just the one whose agent triggered the change. The shared
+  // toolRegistry is already updated; what we still need is to rebuild each
+  // agent's frozen tool-executor and tool-definitions snapshot.
+  const crossInstanceRefreshAllAgentTools = async (): Promise<void> => {
+    for (const meta of registry.list()) {
+      const sys = registry.tryGetLive(meta.id)
+      if (!sys) continue
+      try { await sys.refreshAllAgentTools() } catch (err) {
+        console.error(`[refresh] instance ${meta.id}:`, err instanceof Error ? err.message : String(err))
+      }
+    }
+  }
+
+  // Drop a [admin] system note into every room with at least one AI agent
+  // across every active instance. Without this an agent's chat history
+  // keeps "tool unavailable" replies from before the install — Gemini and
+  // others pattern-match against past output and keep claiming the tool
+  // doesn't exist even with the right toolDefinitions in the request.
+  const crossInstanceNotifyPacksChanged = (info: {
+    readonly action: 'installed' | 'updated' | 'uninstalled'
+    readonly namespace: string
+    readonly tools: ReadonlyArray<string>
+    readonly skills: ReadonlyArray<string>
+  }): void => {
+    const note = info.action === 'uninstalled'
+      ? `[admin] Pack "${info.namespace}" was uninstalled. ${info.tools.length} tools and ${info.skills.length} skills are no longer available.`
+      : `[admin] Pack "${info.namespace}" was ${info.action}. Tools available now: ${info.tools.join(', ') || '(none)'}. Skills: ${info.skills.join(', ') || '(none)'}. Disregard any earlier message claiming these were unavailable.`
+    for (const meta of registry.list()) {
+      const sys = registry.tryGetLive(meta.id)
+      if (!sys) continue
+      for (const room of sys.house.listAllRooms()) {
+        const hasAi = sys.team.listByKind('ai').some(a =>
+          sys.house.getRoomsForAgent(a.id).some(r => r.profile.id === room.id),
+        )
+        if (!hasAi) continue
+        try {
+          sys.routeMessage({ rooms: [room.id] }, {
+            senderId: 'system', senderName: 'system',
+            content: note, type: 'system',
+          })
+        } catch { /* ignore — best-effort */ }
+      }
+    }
+  }
+
+  // Now that registry exists, finish wiring shared tools that needed it:
+  // write_tool (refreshes agents) and the pack admin tools.
+  if (codegenEnabled) {
+    shared.sharedToolRegistry.register(createWriteToolTool(
+      shared.sharedToolRegistry, shared.sharedSkillStore, crossInstanceRefreshAllAgentTools,
+    ))
+    shared.sharedToolRegistry.registerAll(createPackTools({
+      packsDir: sharedPaths.packs(),
+      toolRegistry: shared.sharedToolRegistry,
+      skillStore: shared.sharedSkillStore,
+      refreshAllAgentTools: crossInstanceRefreshAllAgentTools,
+      notifyPacksChanged: crossInstanceNotifyPacksChanged,
+    }))
+  }
 
   // === Provider routing event dispatcher (registry-aware) ===
   shared.setProviderEventDispatcher((event) => {

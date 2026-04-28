@@ -10,26 +10,37 @@
 //     state, single URL list editable from any instance's UI.
 //   - ProviderKeys + gateways — runtime key edits visible everywhere.
 //   - ProviderConfig — boot-time decision (order, single-Ollama mode, …).
+//   - sharedToolRegistry — external tools, skill-bundled tools, pack-bundled
+//     tools, MCP tools, write_skill / write_tool / install_pack et al.
+//     Single FS scan at boot, no per-instance reload thrash. Pack installed
+//     in instance A is immediately visible to instance B.
+//   - sharedSkillStore — every loaded skill (pack and free-standing). Each
+//     instance reads from the same store; install/uninstall mutate one place.
 //
 // What stays per-instance (built fresh by createSystem):
 //   - House (rooms, agents, artifacts, messages, members, mute/pause)
 //   - Team
-//   - Tool registry (house-bound built-ins must rebuild)
-//   - Skill store
+//   - Tool-registry OVERLAY — house-bound built-ins (createListRoomsTool,
+//     createAddArtifactTool, etc.) layered above sharedToolRegistry.
 //   - Logging sink
 //   - Summary scheduler
+//   - Script store (still per-instance — file-backed; future Phase B'
+//     candidate, parallel to skillStore here)
 //   - All event-callback late-binding slots
 // ============================================================================
 
 import type { ProviderConfig } from '../llm/providers-config.ts'
 import type { ProviderSetupResult } from '../llm/providers-setup.ts'
 import type { ProviderKeys } from '../llm/provider-keys.ts'
-import type { Tool } from '../core/types/tool.ts'
+import type { Tool, ToolRegistry } from '../core/types/tool.ts'
 import type { ProviderRoutingEvent } from '../llm/router.ts'
+import type { SkillStore } from '../skills/loader.ts'
 import { parseProviderConfig } from '../llm/providers-config.ts'
 import { buildProvidersFromConfig } from '../llm/providers-setup.ts'
 import { createProviderKeys } from '../llm/provider-keys.ts'
 import { mergeWithEnv } from '../llm/providers-store.ts'
+import { createToolRegistry } from './tool-registry.ts'
+import { createSkillStore } from '../skills/loader.ts'
 import { createLimitMetrics, type LimitMetrics } from './limit-metrics.ts'
 
 export interface SharedRuntime {
@@ -49,6 +60,15 @@ export interface SharedRuntime {
   // Process-global counters for cap/limit hits. Read-only API; the only
   // mutator is the inc() method on the metrics object itself.
   readonly limitMetrics: LimitMetrics
+  // Shared tool registry — populated at boot by bootstrap.ts (external tools,
+  // skill-bundled tools, pack-bundled tools, MCP tools) and subsequently
+  // mutated only by install/uninstall_pack and write_skill/write_tool. Per-
+  // instance Systems wrap this in an overlay (createOverlayToolRegistry).
+  readonly sharedToolRegistry: ToolRegistry
+  // Shared skill store — populated alongside sharedToolRegistry. Each
+  // instance reads from the same store, so installing a pack in instance A
+  // makes its skills visible in instance B without an instance reload.
+  readonly sharedSkillStore: SkillStore
 }
 
 export interface CreateSharedRuntimeOptions {
@@ -92,6 +112,11 @@ export const createSharedRuntime = (
 
   const mcpTools: Tool[] = []
   const limitMetrics = opts.limitMetrics ?? createLimitMetrics()
+  // Empty at construction — bootstrap.ts populates with external tools,
+  // skills (which register their bundled tools), packs, MCP tools, and the
+  // codegen/pack admin tools. createSystem then wraps this in an overlay.
+  const sharedToolRegistry = createToolRegistry()
+  const sharedSkillStore = createSkillStore()
   return {
     providerConfig,
     providerKeys,
@@ -99,5 +124,7 @@ export const createSharedRuntime = (
     mcpTools,
     setProviderEventDispatcher: (fn) => { dispatcher = fn },
     limitMetrics,
+    sharedToolRegistry,
+    sharedSkillStore,
   }
 }

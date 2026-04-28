@@ -33,7 +33,7 @@ import type { ProviderKeys } from './llm/provider-keys.ts'
 import { createSharedRuntime, type SharedRuntime } from './core/shared-runtime.ts'
 import type { LimitMetrics } from './core/limit-metrics.ts'
 import type { ProviderGateway } from './llm/provider-gateway.ts'
-import { createToolRegistry } from './core/tool-registry.ts'
+import { createOverlayToolRegistry } from './core/tool-registry.ts'
 import { spawnAIAgent, spawnHumanAgent, buildToolSupport, type SpawnOptions } from './agents/spawn.ts'
 import { callLLM } from './agents/evaluation.ts'
 import { createHumanAgent } from './agents/human-agent.ts'
@@ -41,23 +41,26 @@ import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
 import { addAgentToRoom, removeAgentFromRoom } from './agents/actions.ts'
 import {
-  createListRoomsTool, createGetTimeTool,
+  // House-bound built-ins (registered into the per-instance overlay).
+  // Process-wide built-ins (createPassTool, createGetTimeTool, createWebTools,
+  // createTestToolTool, createListSkillsTool, createWriteSkillTool,
+  // createWriteToolTool, createPackTools) live in shared.sharedToolRegistry —
+  // see bootstrap.ts.
+  createListRoomsTool,
   createCreateRoomTool, createDeleteRoomTool, createAddToRoomTool, createRemoveFromRoomTool,
-  createPassTool, createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool,
+  createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool,
   createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool,
   createPostToRoomTool, createGetRoomHistoryTool,
   createListArtifactTypesTool, createListArtifactsTool, createAddArtifactTool,
   createUpdateArtifactTool, createRemoveArtifactTool, createCastVoteTool,
-  createWebTools, createWriteDocumentSectionTool,
-  createWriteSkillTool, createWriteToolTool, createTestToolTool, createListSkillsTool,
-  createPackTools,
+  createWriteDocumentSectionTool,
 } from './tools/built-in/index.ts'
 import { createTaskListArtifactType } from './core/artifact-types/task-list.ts'
 import { pollArtifactType } from './core/artifact-types/poll.ts'
 import { documentArtifactType } from './core/artifact-types/document.ts'
 import { mermaidArtifactType } from './core/artifact-types/mermaid.ts'
 // Native-only tool calling — no capability probing needed
-import { createSkillStore, type SkillStore } from './skills/loader.ts'
+import { type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/script-store.ts'
 import { createScriptRunner, type ScriptRunner, type ScriptEventEmitter } from './core/script-runner.ts'
 import { createWriteScriptTool } from './tools/built-in/script-codegen.ts'
@@ -304,7 +307,12 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   }
   const house = createHouse(houseCallbacks)
   const routeMessage = createMessageRouter({ house })
-  const toolRegistry = createToolRegistry()
+  // Per-instance overlay over the process-shared tool registry. Pack tools,
+  // skill-bundled tools, external tools, MCP tools and the codegen suite
+  // live in shared (registered once at boot). Only house-bound built-ins
+  // (room ops, artifacts, post_to_room, write_document_section, write_script)
+  // register into the overlay below.
+  const toolRegistry = createOverlayToolRegistry(shared.sharedToolRegistry)
 
   // Summary engine + scheduler — default model is the first AI agent's model,
   // or a fallback when none exists yet.
@@ -468,9 +476,13 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     return removed
   }
 
-  // Register built-in tools
+  // Register HOUSE-BOUND built-in tools into the per-instance overlay.
+  // Process-wide tools (pass, get_time, web *, test_tool, list_skills,
+  // write_skill / write_tool, install_pack et al, MCP tools, external tools,
+  // skill-bundled tools, pack-bundled tools) live in shared.sharedToolRegistry
+  // and are registered once at boot — see bootstrap.ts.
   toolRegistry.registerAll([
-    // Room management
+    // Room management — bound to per-instance house
     createListRoomsTool(house),
     createCreateRoomTool(house, systemAddAgentToRoom),
     createDeleteRoomTool(systemRemoveRoom, house),
@@ -479,8 +491,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     createSetDeliveryModeTool(house),
     createAddToRoomTool(team, house, systemAddAgentToRoom),
     createRemoveFromRoomTool(team, house, systemRemoveAgentFromRoom),
-    // Agent tools
-    createPassTool(),
+    // Agent tools — bound to per-instance team / house
     createListAgentsTool(team),
     createMuteAgentTool(team, house),
     createGetMyContextTool(team, house),
@@ -491,52 +502,21 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     createUpdateArtifactTool(house),
     createRemoveArtifactTool(house),
     createCastVoteTool(house),
-    // Utility tools
-    createGetTimeTool(),
+    // Utility tools — bound to per-instance house
     createGetRoomHistoryTool(house),
     createPostToRoomTool(house),
   ])
-
-  // Mode detection: presence of SAMSINN_TOKEN means we're a hardened deploy
-  // (multi-user, untrusted access). Absence means a personal/dev environment
-  // where the operator IS the user, so risky tools default ON. The explicit
-  // flags still override either way for fine-grained control.
-  const isDeployMode = !!(process.env.SAMSINN_TOKEN && process.env.SAMSINN_TOKEN.length > 0)
-  const flag = (name: string, defaultOn: boolean): boolean => {
-    const v = process.env[name]
-    if (v === '1') return true
-    if (v === '0') return false
-    return defaultOn
-  }
-  const networkToolsEnabled = flag('SAMSINN_ENABLE_NETWORK_TOOLS', !isDeployMode)
-  const codegenEnabled = flag('SAMSINN_ENABLE_CODEGEN', !isDeployMode)
-
-  // Web tools — web_fetch / web_extract_json / web_search.
-  //
-  // Disabled by default in deploy mode: web_fetch can hit any URL the host
-  // can reach, including cloud-metadata services (169.254.169.254) and
-  // private network ranges. On a personal box, default-on (matches the
-  // pre-deploy-hardening UX); on a deploy, opt in via SAMSINN_ENABLE_NETWORK_TOOLS=1.
-  //
-  // web_search is additionally gated on TAVILY_API_KEY (preferred),
-  // BRAVE_API_KEY, or GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID.
-  if (networkToolsEnabled) {
-    toolRegistry.registerAll(createWebTools({
-      tavilyApiKey: process.env.TAVILY_API_KEY,
-      braveApiKey: process.env.BRAVE_API_KEY,
-      googleApiKey: process.env.GOOGLE_CSE_API_KEY,
-      googleCseId: process.env.GOOGLE_CSE_ID,
-    }))
-  }
-
-  // Document tool — collaborative structured writing with streaming LLM output
+  // Document tool — collaborative structured writing into per-room artifacts.
   toolRegistry.register(createWriteDocumentSectionTool(house.artifacts))
 
-  // Skill system — file-based behavioral templates with bundled tools
+  // Skill system — file-based behavioral templates with bundled tools.
+  // skillStore is process-shared (populated by bootstrap). scriptStore is
+  // still per-instance (file-backed under SAMSINN_HOME/scripts; will move
+  // to shared in a follow-up — same migration as we just did for skills).
   const skillsDir = sharedPaths.skills()
   const scriptsDir = sharedPaths.scripts()
   const packsDir = sharedPaths.packs()
-  const skillStore = createSkillStore()
+  const skillStore = shared.sharedSkillStore
   const scriptStore = createScriptStore(scriptsDir)
   // Fire-and-forget initial load — store is empty until this completes,
   // matching the skills loader pattern (which runs from bootstrap.ts).
@@ -579,48 +559,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     }
   }
 
-  // test_tool + list_skills are read-only (test_tool can only invoke tools
-  // already in the registry; list_skills enumerates skills). They stay
-  // registered regardless of SAMSINN_ENABLE_CODEGEN — disabling codegen
-  // doesn't make these unsafe.
-  toolRegistry.register(createTestToolTool(toolRegistry))
-  toolRegistry.register(createListSkillsTool(skillStore))
-  // write_script is always on — scripts are pure data (different threat
-  // model from write_skill / write_tool). The store's onChange listener
-  // (wired in wire-system-events.ts) broadcasts script_catalog_changed.
+  // write_script — pure data (writes JSON files under SAMSINN_HOME/scripts).
+  // Stays per-instance because scriptStore is per-instance for now (file-
+  // backed; same migration as skillStore is a future PR).
   toolRegistry.register(createWriteScriptTool(scriptStore, () => { /* onChange already broadcasts */ }))
-
-  // write_skill / write_tool / install_pack / update_pack / uninstall_pack /
-  // list_packs all let an agent drop arbitrary TS into ~/.samsinn/ and have
-  // it imported. On a personal box, default-on (matches the pre-deploy
-  // UX); on a deploy (SAMSINN_TOKEN set), default-off — operator opts in
-  // explicitly via SAMSINN_ENABLE_CODEGEN=1 only when authoring is wanted.
-  if (codegenEnabled) {
-    toolRegistry.register(createWriteSkillTool(skillStore, skillsDir))
-    toolRegistry.register(createWriteToolTool(toolRegistry, skillStore, refreshAllAgentTools))
-    toolRegistry.registerAll(createPackTools({
-      packsDir, toolRegistry, skillStore, refreshAllAgentTools,
-      // After a pack changes, drop a system note into every room with at
-      // least one AI agent. Without this the LLM keeps pattern-matching on
-      // its own earlier "tool unavailable" replies even after the install
-      // succeeds — a context-pollution bug, not a registry bug.
-      notifyPacksChanged: ({ action, namespace, tools, skills }) => {
-        const note = action === 'uninstalled'
-          ? `[admin] Pack "${namespace}" was uninstalled. ${tools.length} tools and ${skills.length} skills are no longer available.`
-          : `[admin] Pack "${namespace}" was ${action}. Tools available now: ${tools.join(', ') || '(none)'}. Skills: ${skills.join(', ') || '(none)'}. Disregard any earlier message claiming these were unavailable.`
-        for (const room of house.listAllRooms()) {
-          const hasAi = room.id && [...team.listByKind('ai')].some(a =>
-            house.getRoomsForAgent(a.id).some(r => r.profile.id === room.id),
-          )
-          if (!hasAi) continue
-          routeMessage({ rooms: [room.id] }, {
-            senderId: 'system', senderName: 'system',
-            content: note, type: 'system',
-          })
-        }
-      },
-    }))
-  }
 
   // Forward-ref so the runner can call System.* without a build-order cycle.
   const systemRef: { current: System | undefined } = { current: undefined }
