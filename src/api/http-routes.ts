@@ -20,6 +20,7 @@ import { ollamaRoutes } from './routes/ollama.ts'
 import { providersRoutes } from './routes/providers.ts'
 import { wikisRoutes } from './routes/wikis.ts'
 import { packsRoutes } from './routes/packs.ts'
+import { discoverySourcesRoutes } from './routes/discovery-sources.ts'
 import { systemRoutes } from './routes/system.ts'
 import { instanceRoutes } from './routes/instances.ts'
 import { bugRoutes } from './routes/bugs.ts'
@@ -44,6 +45,7 @@ const allRoutes = [
   // Wiki routes BEFORE roomRoutes so /api/rooms/:name/wikis matches first.
   ...wikisRoutes,
   ...packsRoutes,
+  ...discoverySourcesRoutes,
   ...systemRoutes,
   ...instanceRoutes,
   ...bugRoutes,

@@ -88,6 +88,9 @@ export type WSOutbound =
   | { readonly type: 'providers_changed'; readonly providers: ReadonlyArray<string> }
   // Fired after a pack is installed / updated / uninstalled. UI panels refresh.
   | { readonly type: 'packs_changed' }
+  // Fired after PUT /api/discovery-sources. UI panels refetch the GitHub
+  // discovery views; in-memory pack/wiki caches are already invalidated.
+  | { readonly type: 'discovery_sources_changed' }
   // Fired after a wiki is created/updated/deleted/warmed/bound. UI panels refresh.
   | {
       readonly type: 'wiki_changed'

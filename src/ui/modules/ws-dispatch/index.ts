@@ -570,6 +570,15 @@ const handlers: Handlers = {
     window.dispatchEvent(new CustomEvent('wikis-changed'))
   },
 
+  discovery_sources_changed(_msg) {
+    // Discovery-sources list was edited. Both packs and wikis panels rebuild
+    // when their re-render hooks fire — easiest is to reuse the existing
+    // packs-changed / wikis-changed events so each panel handles its own
+    // refresh path consistently.
+    window.dispatchEvent(new CustomEvent('packs-changed'))
+    window.dispatchEvent(new CustomEvent('wikis-changed'))
+  },
+
   reset_pending(msg) {
     window.dispatchEvent(new CustomEvent('reset-pending', { detail: { commitsAtMs: msg.commitsAtMs } }))
   },

@@ -22,10 +22,11 @@ import { getAvailableWikis } from './discovery.ts'
 export const resolveActiveWikis = async (
   storePath: string,
   registry: WikiRegistry,
+  discoverySources: ReadonlyArray<string> = [],
 ): Promise<ReadonlyArray<MergedWikiEntryWithSource>> => {
   const { data: store } = await loadWikiStore(storePath)
   let discovered: ReadonlyArray<DiscoveredWiki> = []
-  try { discovered = await getAvailableWikis() } catch { /* discovery failures are non-fatal */ }
+  try { discovered = await getAvailableWikis(discoverySources) } catch { /* discovery failures are non-fatal */ }
   const merged = mergeWithDiscovery(store, discovered)
   registry.reconcile(merged.filter((w) => w.enabled))
   return merged

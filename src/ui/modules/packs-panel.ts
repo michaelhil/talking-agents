@@ -11,6 +11,7 @@
 // ============================================================================
 
 import { showToast } from './toast.ts'
+import { renderSourcesEditor } from './discovery-sources.ts'
 
 interface InstalledPack {
   namespace: string
@@ -75,6 +76,12 @@ export const renderPacksInto = async (container: HTMLElement): Promise<void> => 
   container.innerHTML = ''
   renderInstalledSection(container, installed)
   renderBrowseSection(container, registry)
+  // Discovery-sources editor below the Available list. Independent fetch
+  // so installed/registry rendering isn't delayed by it; safe to ignore the
+  // returned Promise — the editor self-renders into its own sub-container.
+  const sourcesContainer = document.createElement('div')
+  container.appendChild(sourcesContainer)
+  void renderSourcesEditor(sourcesContainer, 'packs')
 }
 
 const renderInstalledSection = (container: HTMLElement, packs: InstalledPack[]): void => {
@@ -137,7 +144,7 @@ const renderBrowseSection = (container: HTMLElement, registry: RegistryPack[]): 
     const empty = document.createElement('div')
     empty.className = 'text-xs text-text-muted px-3 py-2 italic'
     empty.textContent = registry.length === 0
-      ? 'Registry empty — set SAMSINN_PACK_SOURCES env var to discover packs.'
+      ? 'No pack sources configured.'
       : 'All available packs are installed.'
     container.appendChild(empty)
     return

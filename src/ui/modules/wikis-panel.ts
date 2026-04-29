@@ -11,6 +11,7 @@
 
 import { showToast } from './toast.ts'
 import { createModal } from './detail-modal.ts'
+import { renderSourcesEditor } from './discovery-sources.ts'
 
 interface WikiEntry {
   id: string
@@ -88,6 +89,11 @@ export const renderWikisInto = async (container: HTMLElement): Promise<void> => 
     empty.className = 'text-xs text-text-muted px-3 py-3 italic'
     empty.textContent = 'No wikis configured. Use + to add one (e.g. owner=michaelhil repo=nuclear-wiki).'
     container.appendChild(empty)
+    // Discovery-sources editor still renders so users can configure where to
+    // discover wikis from even before adding any manually.
+    const sourcesContainer = document.createElement('div')
+    container.appendChild(sourcesContainer)
+    void renderSourcesEditor(sourcesContainer, 'wikis')
     return
   }
 
@@ -168,6 +174,12 @@ export const renderWikisInto = async (container: HTMLElement): Promise<void> => 
     container.appendChild(row)
     void renderBindingsCell(row.querySelector<HTMLElement>('[data-bindings]')!, w.id, rooms)
   }
+
+  // Discovery-sources editor below the configured-wikis list. Self-renders
+  // into its own sub-container; safe to ignore the returned Promise.
+  const sourcesContainer = document.createElement('div')
+  container.appendChild(sourcesContainer)
+  void renderSourcesEditor(sourcesContainer, 'wikis')
 }
 
 const renderBindingsCell = async (cell: HTMLElement, wikiId: string, rooms: RoomEntry[]): Promise<void> => {

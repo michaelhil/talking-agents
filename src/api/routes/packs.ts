@@ -16,6 +16,7 @@
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 import { getAvailablePacks } from '../../packs/registry.ts'
+import { loadDiscoverySources } from '../../core/discovery-sources.ts'
 
 // Small helper: invoke a built-in pack tool and return its result as JSON.
 const invoke = async (
@@ -42,7 +43,8 @@ export const packsRoutes: RouteEntry[] = [
     method: 'GET',
     pattern: /^\/api\/packs\/registry$/,
     handler: async (_req, _match, { system }) => {
-      const available = await getAvailablePacks()
+      const ds = await loadDiscoverySources(system.discoverySourcesStorePath)
+      const available = await getAvailablePacks(ds.packs)
       // Get installed list to mark each available pack. Registry names are
       // canonical (registry strips `samsinn-pack-` from repo basenames before
       // returning) and install_pack writes packs under the same canonical

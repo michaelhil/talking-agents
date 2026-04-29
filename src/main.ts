@@ -118,6 +118,11 @@ export interface System {
   readonly knowledgeDir: string
   readonly providersStorePath: string
   readonly wikisStorePath: string
+  // File-backed list of GitHub <owner>/<owner-repo> sources used by pack and
+  // wiki discovery. UI-managed via /api/discovery-sources; merged with the
+  // SAMSINN_PACK_SOURCES / SAMSINN_WIKI_SOURCES env vars at call time so env
+  // wins (deploy-time config) but UI users still get a real path.
+  readonly discoverySourcesStorePath: string
   // Shared wiki registry — read by tools and the wiki admin endpoints.
   readonly wikiRegistry: import('./wiki/registry.ts').WikiRegistry
   // OllamaUrls editor — no-op when Ollama isn't configured.
@@ -779,6 +784,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     knowledgeDir: sharedPaths.knowledge(),
     providersStorePath: sharedPaths.providers(),
     wikisStorePath: sharedPaths.wikis(),
+    discoverySourcesStorePath: sharedPaths.discoverySources(),
     wikiRegistry: shared.wikiRegistry,
     ollamaUrls,
     removeAgent,
