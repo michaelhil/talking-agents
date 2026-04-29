@@ -4,6 +4,7 @@
 import { createModal, createButton } from './detail-modal.ts'
 import { renderWikisInto, promptAddWiki } from './wikis-panel.ts'
 import { icon } from './icon.ts'
+import { showToast } from './toast.ts'
 
 export const openWikisModal = async (): Promise<void> => {
   const modal = createModal({ title: 'Wikis', width: 'max-w-2xl' })
@@ -22,6 +23,28 @@ export const openWikisModal = async (): Promise<void> => {
     },
   })
   modal.header.insertBefore(addBtn, closeBtn)
+
+  // Discovery force-refresh — busts the 5-min cache so a freshly-transferred
+  // repo in the SAMSINN_WIKI_SOURCES org appears immediately without a
+  // server restart.
+  const discRefreshBtn = createButton({
+    variant: 'ghost',
+    icon: icon('refresh-cw', { size: 12 }),
+    label: 'Discovery',
+    title: 'Re-scan SAMSINN_WIKI_SOURCES (busts the 5-min cache)',
+    className: 'mr-2',
+    onClick: async () => {
+      const res = await fetch('/api/wikis/discovery/refresh', { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json() as { count?: number }
+        showToast(document.body, `Discovery refreshed (${data.count ?? '?'} active)`, { type: 'success', position: 'fixed' })
+        await renderWikisInto(listEl)
+      } else {
+        showToast(document.body, `Refresh failed (${res.status})`, { type: 'error', position: 'fixed' })
+      }
+    },
+  })
+  modal.header.insertBefore(discRefreshBtn, closeBtn)
 
   const listEl = document.createElement('div')
   listEl.className = '-mx-6 -my-4'

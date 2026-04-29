@@ -52,7 +52,10 @@ export const createWikiSearchTool = (registry: WikiRegistry): Tool => ({
     const type = typeof params.type === 'string' ? params.type : undefined
     const tag = typeof params.tag === 'string' ? params.tag : undefined
     const limit = typeof params.limit === 'number' && params.limit > 0 ? params.limit : undefined
-    if (wikiId && !registry.hasWiki(wikiId)) {
+    // Existence check via getState (replaces dropped hasWiki). Wikis are
+    // expected to be reconciled before agents call these tools — see
+    // resolveActiveWikis in REST handlers and the boot path.
+    if (wikiId && !registry.getState(wikiId)) {
       return { success: false, error: `unknown wikiId: ${wikiId}` }
     }
     try {
@@ -86,7 +89,7 @@ export const createWikiGetPageTool = (registry: WikiRegistry): Tool => ({
     const wikiId = typeof params.wikiId === 'string' ? params.wikiId : ''
     const slug = typeof params.slug === 'string' ? params.slug : ''
     if (!wikiId || !slug) return { success: false, error: 'wikiId and slug are required' }
-    if (!registry.hasWiki(wikiId)) return { success: false, error: `unknown wikiId: ${wikiId}` }
+    if (!registry.getState(wikiId)) return { success: false, error: `unknown wikiId: ${wikiId}` }
     try {
       const page = await registry.getPage(wikiId, slug)
       if (!page) return { success: false, error: `page not found: ${slug}` }

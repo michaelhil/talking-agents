@@ -16,10 +16,11 @@
 
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
-import { loadWikiStore, saveWikiStore, mergeWithDiscovery, isValidWikiId, STORE_VERSION } from '../../wiki/store.ts'
+import { loadWikiStore, saveWikiStore, isValidWikiId, STORE_VERSION } from '../../wiki/store.ts'
 import { asAIAgent } from '../../agents/shared.ts'
 import type { WikiConfig } from '../../wiki/types.ts'
-import { getAvailableWikis } from '../../wiki/discovery.ts'
+import { getAvailableWikis, invalidateDiscoveryCache } from '../../wiki/discovery.ts'
+import { resolveActiveWikis } from '../../wiki/resolve-active.ts'
 
 interface WikiPatchBody {
   readonly owner?: string
@@ -45,30 +46,11 @@ export const wikisRoutes: RouteEntry[] = [
     method: 'GET',
     pattern: /^\/api\/wikis$/,
     handler: async (_req, _match, { system }) => {
-      const { data: store, warnings } = await loadWikiStore(system.wikisStorePath)
-      let discovered: Awaited<ReturnType<typeof getAvailableWikis>> = []
-      try { discovered = await getAvailableWikis() } catch { /* discovery failures are non-fatal here */ }
-      const merged = mergeWithDiscovery(store, discovered)
-      // Reconcile the registry with the merged set. Discovered wikis added
-      // after boot (org created, repos transferred in) need this to be
-      // queryable + warmable. Idempotent — setWikis no-ops on identical input.
-      const enabled = merged.filter((w) => w.enabled)
-      const liveIds = new Set(system.wikiRegistry.list().map((w) => w.id))
-      const enabledIds = new Set(enabled.map((w) => w.id))
-      const idsDiffer = liveIds.size !== enabledIds.size
-        || [...enabledIds].some((id) => !liveIds.has(id))
-      if (idsDiffer) {
-        system.wikiRegistry.setWikis(enabled)
-        // Background warm of the just-added ones; UI will reflect pageCount
-        // on its next poll/event without blocking this response.
-        for (const w of enabled) {
-          if (!liveIds.has(w.id)) {
-            system.wikiRegistry.warm(w.id).catch((err) => {
-              console.warn(`[wiki:${w.id}] background warm failed: ${(err as Error).message}`)
-            })
-          }
-        }
-      }
+      // Single source of truth: resolveActiveWikis loads the file store,
+      // calls discovery, merges, and reconciles the registry. Auto-warm
+      // for new ids fires from inside the registry's onNewWiki hook.
+      const { warnings } = await loadWikiStore(system.wikisStorePath)
+      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
       const live = system.wikiRegistry.list()
       const liveById = new Map(live.map((w) => [w.id, w]))
       const wikis = merged.map((w) => ({
@@ -143,10 +125,8 @@ export const wikisRoutes: RouteEntry[] = [
       }
       const next = { version: STORE_VERSION, wikis: [...store.wikis, entry] }
       await saveWikiStore(system.wikisStorePath, next)
-      let discovered2: Awaited<ReturnType<typeof getAvailableWikis>> = []
-      try { discovered2 = await getAvailableWikis() } catch { /* non-fatal */ }
-      const merged = mergeWithDiscovery(next, discovered2).filter((w) => w.enabled)
-      system.wikiRegistry.setWikis(merged)
+      // Reconcile through the canonical helper so all callers stay in sync.
+      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
 
       // Background warm — don't block the response.
       if (entry.enabled !== false) {
@@ -186,10 +166,8 @@ export const wikisRoutes: RouteEntry[] = [
       }
       const next = { version: STORE_VERSION, wikis: [...store.wikis.slice(0, idx), updated, ...store.wikis.slice(idx + 1)] }
       await saveWikiStore(system.wikisStorePath, next)
-      let discovered2: Awaited<ReturnType<typeof getAvailableWikis>> = []
-      try { discovered2 = await getAvailableWikis() } catch { /* non-fatal */ }
-      const merged = mergeWithDiscovery(next, discovered2).filter((w) => w.enabled)
-      system.wikiRegistry.setWikis(merged)
+      // Reconcile through the canonical helper so all callers stay in sync.
+      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
       try { broadcast({ type: 'wiki_changed', wikiId: id, action: 'updated' }) } catch { /* ignore */ }
       return json({ ok: true })
     },
@@ -205,13 +183,10 @@ export const wikisRoutes: RouteEntry[] = [
       const next = { version: STORE_VERSION, wikis: store.wikis.filter((w) => w.id !== id) }
       if (next.wikis.length === store.wikis.length) return errorResponse(`wiki "${id}" not found`, 404)
       await saveWikiStore(system.wikisStorePath, next)
-      // Re-merge with discovery so a delete that targets a stored override
-      // of a discovered wiki leaves the discovered entry active. setWikis is
-      // a diffing call: anything not in the new list is removed from the cache.
-      let discoveredDel: Awaited<ReturnType<typeof getAvailableWikis>> = []
-      try { discoveredDel = await getAvailableWikis() } catch { /* non-fatal */ }
-      const mergedDel = mergeWithDiscovery(next, discoveredDel).filter((w) => w.enabled)
-      system.wikiRegistry.setWikis(mergedDel)
+      // Reconcile via the canonical helper. Delete-of-stored-override-of-
+      // discovered leaves the discovered entry active automatically because
+      // mergeWithDiscovery still includes it.
+      await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
       // Also clear bindings from any room.
       for (const profile of system.house.listAllRooms()) {
         const room = system.house.getRoom(profile.id)
@@ -224,26 +199,35 @@ export const wikisRoutes: RouteEntry[] = [
     },
   },
 
+  // --- Discovery force-refresh ---
+  // Must come BEFORE the per-id refresh below (otherwise the [^/]+ pattern
+  // captures "discovery" as the wiki id and 404s). Bust the in-memory
+  // discovery cache and re-reconcile. Useful when the operator just
+  // transferred a repo into the SAMSINN_WIKI_SOURCES org and doesn't want
+  // to wait up to 5 min for the cache to expire.
+  {
+    method: 'POST',
+    pattern: /^\/api\/wikis\/discovery\/refresh$/,
+    handler: async (_req, _match, { system, broadcast }) => {
+      invalidateDiscoveryCache()
+      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      try { broadcast({ type: 'wiki_changed', action: 'discovery_refreshed' as const }) } catch { /* ignore */ }
+      return json({ ok: true, count: merged.filter((w) => w.enabled).length })
+    },
+  },
+
   // --- Refresh (force warm) ---
-  // Re-reconciles the registry with the merged stored+discovered set first.
-  // Without this, wikis discovered AFTER the bootstrap setWikis() (e.g. the
-  // operator added the org just now, or discovery's 5-min cache was empty
-  // at boot) are visible in GET /api/wikis but absent from the live registry,
-  // so refresh falls through to a 404 ("not found"). The reconcile makes
-  // the refresh handler self-healing.
   {
     method: 'POST',
     pattern: /^\/api\/wikis\/([^/]+)\/refresh$/,
     handler: async (_req, match, { system, broadcast }) => {
       const id = match[1]!
-      if (!system.wikiRegistry.hasWiki(id)) {
-        const { data: store } = await loadWikiStore(system.wikisStorePath)
-        let discovered: Awaited<ReturnType<typeof getAvailableWikis>> = []
-        try { discovered = await getAvailableWikis() } catch { /* non-fatal */ }
-        const merged = mergeWithDiscovery(store, discovered).filter((w) => w.enabled)
-        if (merged.some((w) => w.id === id)) system.wikiRegistry.setWikis(merged)
+      // resolveActiveWikis reconciles before we look up. Discovered-late
+      // wikis become warmable here without operator intervention.
+      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      if (!merged.some((w) => w.id === id && w.enabled)) {
+        return errorResponse(`wiki "${id}" not found`, 404)
       }
-      if (!system.wikiRegistry.hasWiki(id)) return errorResponse(`wiki "${id}" not found`, 404)
       try {
         const result = await system.wikiRegistry.warm(id)
         try { broadcast({ type: 'wiki_changed', wikiId: id, action: 'warmed', pageCount: result.pageCount }) } catch { /* ignore */ }
@@ -276,7 +260,10 @@ export const wikisRoutes: RouteEntry[] = [
       const ids = Array.isArray(body?.wikiIds)
         ? (body!.wikiIds as unknown[]).filter((v): v is string => typeof v === 'string')
         : []
-      const unknown = ids.filter((id) => !system.wikiRegistry.hasWiki(id))
+      // Validate against the current active set (reconciles in passing).
+      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      const activeIds = new Set(merged.filter((w) => w.enabled).map((w) => w.id))
+      const unknown = ids.filter((id) => !activeIds.has(id))
       if (unknown.length > 0) return errorResponse(`unknown wikiIds: ${unknown.join(', ')}`, 400)
       room.setWikiBindings(ids)
       try { broadcast({ type: 'wiki_changed', roomId: room.profile.id, action: 'bound' }) } catch { /* ignore */ }
@@ -296,7 +283,10 @@ export const wikisRoutes: RouteEntry[] = [
       const ids = Array.isArray(body?.wikiIds)
         ? (body!.wikiIds as unknown[]).filter((v): v is string => typeof v === 'string')
         : []
-      const unknown = ids.filter((id) => !system.wikiRegistry.hasWiki(id))
+      // Validate against the current active set (reconciles in passing).
+      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
+      const activeIds = new Set(merged.filter((w) => w.enabled).map((w) => w.id))
+      const unknown = ids.filter((id) => !activeIds.has(id))
       if (unknown.length > 0) return errorResponse(`unknown wikiIds: ${unknown.join(', ')}`, 400)
       ai.updateWikiBindings(ids)
       try { broadcast({ type: 'wiki_changed', agentId: ai.id, action: 'bound' }) } catch { /* ignore */ }

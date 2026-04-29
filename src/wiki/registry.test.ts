@@ -101,14 +101,72 @@ describe('createWikiRegistry', () => {
     expect(reg.list().find((w) => w.id === 'other')?.pageCount).toBe(0)
   })
 
-  it('removeWiki clears state', async () => {
+  it('reconcile to empty clears state (eviction)', async () => {
     const reg = createWikiRegistry({
       wikis: [wiki],
       adapterFactory: () => fakeAdapter({ x: '---\ntitle: x\n---\n' }, `- [[x]]\n`),
     })
     await reg.warm('test')
-    reg.removeWiki('test')
-    expect(reg.hasWiki('test')).toBe(false)
+    reg.reconcile([])
+    expect(reg.getState('test')).toBeUndefined()
     expect(reg.list()).toEqual([])
+  })
+
+  it('reconcile is idempotent: same set of wikis is a no-op', () => {
+    const reg = createWikiRegistry({
+      wikis: [wiki],
+      adapterFactory: () => fakeAdapter({}, ''),
+    })
+    const newWikiCalls: string[] = []
+    reg.setOnNewWiki((id) => newWikiCalls.push(id))
+    // Initial reconcile with the same wiki — already installed at construction
+    // time, should NOT fire onNewWiki again.
+    reg.reconcile([wiki])
+    reg.reconcile([wiki])
+    reg.reconcile([wiki])
+    expect(newWikiCalls).toEqual([])
+  })
+
+  it('reconcile fires onNewWiki when a new id appears', () => {
+    const reg = createWikiRegistry({
+      wikis: [],
+      adapterFactory: () => fakeAdapter({}, ''),
+    })
+    const newWikiCalls: string[] = []
+    reg.setOnNewWiki((id) => newWikiCalls.push(id))
+    reg.reconcile([wiki])
+    expect(newWikiCalls).toEqual(['test'])
+    // Second reconcile with same set: no extra fires.
+    reg.reconcile([wiki])
+    expect(newWikiCalls).toEqual(['test'])
+  })
+
+  it('reconcile fires onNewWiki when an existing id has a config swap', () => {
+    const reg = createWikiRegistry({
+      wikis: [wiki],
+      adapterFactory: () => fakeAdapter({}, ''),
+    })
+    const newWikiCalls: string[] = []
+    reg.setOnNewWiki((id) => newWikiCalls.push(id))
+    // Same id, different ref → re-install + fire.
+    const swapped: MergedWikiEntry = { ...wiki, ref: 'develop' }
+    reg.reconcile([swapped])
+    expect(newWikiCalls).toEqual(['test'])
+  })
+
+  it('reconcile evicts removed ids and keeps survivors', async () => {
+    const wikiA: MergedWikiEntry = { ...wiki, id: 'a' }
+    const wikiB: MergedWikiEntry = { ...wiki, id: 'b' }
+    const reg = createWikiRegistry({
+      wikis: [wikiA, wikiB],
+      adapterFactory: () => fakeAdapter({ x: '---\ntitle: x\n---\n' }, `- [[x]]\n`),
+    })
+    await reg.warm('a')
+    await reg.warm('b')
+    expect(reg.list().map((w) => w.id).sort()).toEqual(['a', 'b'])
+    reg.reconcile([wikiA])  // drop b
+    expect(reg.list().map((w) => w.id)).toEqual(['a'])
+    expect(reg.getState('b')).toBeUndefined()
+    expect(reg.getState('a')?.pages.size).toBe(1)
   })
 })

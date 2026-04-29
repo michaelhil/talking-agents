@@ -51,7 +51,8 @@ export const buildWikisCatalog = (
   const sections: string[] = [PREAMBLE]
 
   for (const id of wikiIds) {
-    if (!registry.hasWiki(id)) continue
+    // Membership check via getState — returns undefined for ids the
+    // registry doesn't know about. Replaces the dropped hasWiki.
     const state = registry.getState(id)
     if (!state) continue
     const lines: string[] = [`### Wiki: ${state.displayName} (id: ${id}, pages: ${state.pages.size})`]

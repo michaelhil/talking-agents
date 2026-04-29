@@ -45,8 +45,8 @@ import { loadSkills } from './skills/loader.ts'
 import { loadAllPacks } from './packs/loader.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
-import { loadWikiStore, mergeWithDiscovery } from './wiki/store.ts'
-import { getAvailableWikis } from './wiki/discovery.ts'
+import { loadWikiStore } from './wiki/store.ts'
+import { resolveActiveWikis } from './wiki/resolve-active.ts'
 import { createWikiTools } from './tools/built-in/wiki-tools.ts'
 import { parseLogConfigFromEnv } from './logging/config.ts'
 import { sharedPaths } from './core/paths.ts'
@@ -153,34 +153,29 @@ export const bootstrap = async (): Promise<void> => {
     shared.sharedToolRegistry.register(tool)
   }
 
-  // Load configured wikis and warm them in the background. Warm failures
-  // are logged; agents see "wiki unavailable" on tool calls in the meantime.
-  //
-  // Discovery: SAMSINN_WIKI_SOURCES (default `samsinn-wikis`) lists GitHub
-  // owners/repos to discover wikis from. Discovered entries are merged
-  // ephemerally with the on-disk store (stored wins on id collision); they
-  // are NEVER written to wikis.json. See src/wiki/discovery.ts.
-  const { data: wikiStoreData, warnings: wikiWarnings } = await loadWikiStore(sharedPaths.wikis())
-  for (const w of wikiWarnings) console.warn(`[wikis.json] ${w}`)
-  let discoveredWikis: Awaited<ReturnType<typeof getAvailableWikis>> = []
-  try {
-    discoveredWikis = await getAvailableWikis()
-  } catch (err) {
-    console.warn(`[wiki/discovery] failed: ${err instanceof Error ? err.message : String(err)}`)
-  }
-  const mergedWikis = mergeWithDiscovery(wikiStoreData, discoveredWikis).filter((w) => w.enabled)
-  console.log(
-    `[wiki] discovered ${discoveredWikis.length} from ${process.env.SAMSINN_WIKI_SOURCES ?? 'samsinn-wikis'}; `
-    + `${wikiStoreData.wikis.length} stored → ${mergedWikis.length} active`,
-  )
-  shared.wikiRegistry.setWikis(mergedWikis)
-  for (const w of mergedWikis) {
-    shared.wikiRegistry.warm(w.id)
+  // Wikis: install the auto-warm hook on the registry so any newly-seen
+  // id (from initial reconcile here, or a later resolveActiveWikis call
+  // triggered by a route handler when discovery picks up new wikis) gets
+  // warmed in the background. One source of truth for "wiki appeared →
+  // warm it" — no duplicate logic in route handlers.
+  shared.wikiRegistry.setOnNewWiki((wikiId) => {
+    shared.wikiRegistry.warm(wikiId)
       .then(({ pageCount, warnings }) => {
-        console.log(`[wiki:${w.id}] warmed ${pageCount} pages${warnings.length ? ` (${warnings.length} warnings)` : ''}`)
-        for (const ww of warnings) console.warn(`[wiki:${w.id}] ${ww}`)
+        console.log(`[wiki:${wikiId}] warmed ${pageCount} pages${warnings.length ? ` (${warnings.length} warnings)` : ''}`)
+        for (const ww of warnings) console.warn(`[wiki:${wikiId}] ${ww}`)
       })
-      .catch((err) => console.error(`[wiki:${w.id}] warm failed: ${(err as Error).message}`))
+      .catch((err) => console.error(`[wiki:${wikiId}] warm failed: ${(err as Error).message}`))
+  })
+  // Initial reconcile + warm. Best-effort: discovery might be down at boot;
+  // the next resolveActiveWikis call (from any GET /api/wikis) will retry.
+  // Per-wiki warm fires from the onNewWiki hook above.
+  const { warnings: wikiWarnings } = await loadWikiStore(sharedPaths.wikis())
+  for (const w of wikiWarnings) console.warn(`[wikis.json] ${w}`)
+  try {
+    const merged = await resolveActiveWikis(sharedPaths.wikis(), shared.wikiRegistry)
+    console.log(`[wiki] reconciled — ${merged.filter((w) => w.enabled).length} active`)
+  } catch (err) {
+    console.warn(`[wiki] initial reconcile failed: ${err instanceof Error ? err.message : String(err)}`)
   }
   if (networkToolsEnabled) {
     shared.sharedToolRegistry.registerAll(createWebTools({

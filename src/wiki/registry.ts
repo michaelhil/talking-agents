@@ -44,17 +44,25 @@ export interface WikiListEntry {
 }
 
 export interface WikiRegistry {
-  readonly setWikis: (wikis: ReadonlyArray<MergedWikiEntry>) => void
-  readonly addWiki: (wiki: MergedWikiEntry) => void
-  readonly removeWiki: (id: string) => void
+  // Idempotent reconcile. Adds adapters for new ids, evicts cache for ids
+  // no longer present. Replaces the boot-time setWikis (which had a write-
+  // once mental model that drifted from external state). Callers should
+  // route through resolveActiveWikis() so reconcile is invoked uniformly
+  // before reads — the registry no longer maintains a "list of wikis"
+  // independently of the merge of stored + discovered.
+  readonly reconcile: (wikis: ReadonlyArray<MergedWikiEntry>) => void
   readonly warm: (wikiId: string) => Promise<{ pageCount: number; warnings: ReadonlyArray<string> }>
   readonly list: () => ReadonlyArray<WikiListEntry>
-  readonly hasWiki: (id: string) => boolean
   readonly getIndex: (id: string) => string | undefined
   readonly getScope: (id: string) => string | undefined
   readonly getPage: (id: string, slug: string) => Promise<WikiPage | undefined>
   readonly search: (query: string, opts?: WikiSearchOptions) => ReadonlyArray<WikiSearchHit>
   readonly getState: (id: string) => WikiState | undefined
+  // Install a callback fired when reconcile sees a new id (or a config
+  // swap on an existing id). Bootstrap uses this for background-warm
+  // logging. Tests can inject a recorder. Idempotent: only fires once
+  // per id-or-config-change, not on every reconcile.
+  readonly setOnNewWiki: (fn: (wikiId: string) => void) => void
 }
 
 export interface WikiRegistryOptions {
@@ -84,7 +92,15 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
 
   for (const w of opts.wikis) installWiki(w)
 
-  const setWikis: WikiRegistry['setWikis'] = (wikis) => {
+  // Background-warm callback: invoked when reconcile encounters a NEW id
+  // (not previously in the registry). Default no-op; bootstrap installs a
+  // logging warmer. Tests can inject a recorder. Lives here so all the
+  // "wiki appeared" logic is in one place.
+  let onNewWiki: (wikiId: string) => void = () => {}
+
+  const setOnNewWiki = (fn: (wikiId: string) => void): void => { onNewWiki = fn }
+
+  const reconcile: WikiRegistry['reconcile'] = (wikis) => {
     const newIds = new Set(wikis.map((w) => w.id))
     for (const id of [...states.keys()]) {
       if (!newIds.has(id)) { states.delete(id); cache.clear(id) }
@@ -92,20 +108,23 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
     for (const w of wikis) {
       const existing = states.get(w.id)
       // Re-install if config changed (new ref/PAT/etc).
-      if (!existing
+      const configChanged = !existing
         || existing.wiki.owner !== w.owner
         || existing.wiki.repo !== w.repo
         || existing.wiki.ref !== w.ref
-        || existing.wiki.apiKey !== w.apiKey) {
+        || existing.wiki.apiKey !== w.apiKey
+      if (configChanged) {
         cache.clear(w.id)
         installWiki(w)
+        // First sighting of this id (or config swap) → trigger background
+        // warm. Idempotent: subsequent reconciles with the same config
+        // skip this branch.
+        try { onNewWiki(w.id) } catch (err) {
+          console.warn(`[wiki:${w.id}] onNewWiki callback threw: ${(err as Error).message}`)
+        }
       }
     }
   }
-
-  const addWiki: WikiRegistry['addWiki'] = (wiki) => { installWiki(wiki); cache.clear(wiki.id) }
-
-  const removeWiki: WikiRegistry['removeWiki'] = (id) => { states.delete(id); cache.clear(id) }
 
   const warm: WikiRegistry['warm'] = async (wikiId) => {
     const s = states.get(wikiId)
@@ -189,16 +208,14 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
     }))
 
   return {
-    setWikis,
-    addWiki,
-    removeWiki,
+    reconcile,
     warm,
     list,
-    hasWiki: (id) => states.has(id),
     getIndex: (id) => states.get(id)?.indexMd,
     getScope: (id) => states.get(id)?.scopeMd,
     getPage,
     search,
+    setOnNewWiki,
     getState: (id) => {
       const s = states.get(id)
       if (!s) return undefined

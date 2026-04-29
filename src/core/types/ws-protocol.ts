@@ -94,7 +94,7 @@ export type WSOutbound =
       readonly wikiId?: string
       readonly roomId?: string
       readonly agentId?: string
-      readonly action: 'created' | 'updated' | 'deleted' | 'warmed' | 'warm_failed' | 'bound'
+      readonly action: 'created' | 'updated' | 'deleted' | 'warmed' | 'warm_failed' | 'bound' | 'discovery_refreshed'
       readonly pageCount?: number
       readonly error?: string
     }
