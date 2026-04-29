@@ -154,6 +154,39 @@ const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
 
 // --- Save / Load ---
 
+// A snapshot is "skippable" iff persisting it adds no value the user would
+// notice — either truly empty, or matches the seed-only shape exactly
+// (one demo room, one Helper agent, no chat messages, no artifacts, no
+// bookmarks). Used by createAutoSaver to skip persistence so cookieless
+// drive-by visits and seed-only instances don't leave dirs on disk.
+//
+// First real chat message, custom room, custom agent, artifact, or bookmark
+// flips this to non-skippable and the autosaver writes through normally.
+//
+// Defining "seed-only" by structural match: rooms.length === 1 with name
+// 'demo', agents.length === 1 with name 'Helper', and every message in the
+// demo room is non-'chat' (join/system/leave/etc — pure boilerplate). If
+// seed-example.ts changes its output shape, update this predicate.
+export const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
+  if (snap.artifacts && snap.artifacts.length > 0) return false
+  if (snap.bookmarks && snap.bookmarks.length > 0) return false
+
+  // Truly empty (seed disabled or failed before any state was created).
+  if (snap.rooms.length === 0 && snap.agents.length === 0) return true
+
+  // Seed-only: exactly the shape produced by seedFreshInstance.
+  if (snap.rooms.length !== 1) return false
+  if (snap.agents.length !== 1) return false
+  const room = snap.rooms[0]!
+  const agent = snap.agents[0]!
+  if (room.profile.name !== 'demo') return false
+  if (agent.config.name !== 'Helper') return false
+  for (const msg of room.messages) {
+    if (msg.type === 'chat') return false
+  }
+  return true
+}
+
 export const saveSnapshot = async (snapshot: SystemSnapshot, path: string): Promise<void> => {
   const dir = dirname(path)
   await mkdir(dir, { recursive: true })
@@ -296,6 +329,11 @@ export const createAutoSaver = (
     pendingSave = false
     try {
       const snapshot = serializeSystem(system)
+      // Skip persistence for instances with no real user activity. Prevents
+      // cookieless drive-by visits and the seed-only state from leaving an
+      // empty dir on disk. First user/AI message flips this and the dir is
+      // created via saveSnapshot's mkdir(recursive).
+      if (isEmptySnapshot(snapshot)) return
       await saveSnapshot(snapshot, path)
     } catch (err) {
       console.error('Auto-save failed:', err)

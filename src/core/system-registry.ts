@@ -56,7 +56,7 @@ import {
   loadSnapshot, restoreFromSnapshot, createAutoSaver, type AutoSaver,
 } from './snapshot.ts'
 import { instancePaths, isValidInstanceId, sharedPaths, trashPath } from './paths.ts'
-import { mkdir, readdir, rename, stat } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { asAIAgent } from '../agents/shared.ts'
 import { seedFreshInstance } from './seed-example.ts'
@@ -117,6 +117,11 @@ export interface SystemRegistryOptions {
   // Hook called immediately before a System is dropped from memory.
   // Phase F removes the WS callback wiring here.
   readonly onSystemEvicted?: (system: System, id: string) => void
+  // Fires exactly once, after the first successful getOrLoad in this
+  // process. Replaces the boot-time validateBootstrap call: the contract
+  // check still runs before any traffic actually reaches a System, but
+  // we don't materialize a throwaway boot instance just to validate.
+  readonly onFirstLoad?: (system: System) => void
 }
 
 export interface SystemRegistry {
@@ -133,6 +138,10 @@ export interface SystemRegistry {
   // returning snapshot mtime + size. Includes instances not currently in
   // memory. Used by the Instances admin UI.
   readonly listOnDisk: () => Promise<ReadonlyArray<InstanceOnDisk>>
+  // Operator-initiated trash cleanup. Walks .trash and rm -rf each entry.
+  // Distinct from the janitor's age-based purge — runs only when the user
+  // clicks "Purge trash" in the admin UI.
+  readonly purgeTrash: () => Promise<{ purged: number; errors: ReadonlyArray<string> }>
   readonly shutdown: () => Promise<void>
   // For tests + boundary handlers that need to know the configured timer.
   readonly idleMs: () => number
@@ -187,10 +196,13 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     createAutoSaver(_system, snapshotPath)
 
   // Build a fresh System for `id`, restoring from snapshot if present.
+  // Note: we DO NOT mkdir here. The instance dir is created lazily by
+  // saveSnapshot's own mkdir(recursive) on the first real autosave write.
+  // This means cookieless visitors that never trigger a meaningful save
+  // (and the now-removed boot getOrLoad) leave no trace on disk. Was the
+  // dominant source of empty-instance accumulation before Plan A.
   const buildSystem = async (id: string): Promise<{ system: System; autoSaver: AutoSaver }> => {
     const paths = instancePaths(id)
-    await mkdir(dirname(paths.snapshot), { recursive: true })
-
     const system = createSystem({ shared: opts.shared, instanceLabel: id })
 
     // Restore snapshot if file exists. Corrupt snapshots get renamed
@@ -242,6 +254,19 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
 
   // --- Public API ---
 
+  let firstLoadFired = false
+  const fireFirstLoadOnce = (system: System): void => {
+    if (firstLoadFired) return
+    firstLoadFired = true
+    try { opts.onFirstLoad?.(system) } catch (err) {
+      // Re-throw — the onFirstLoad contract check is meant to crash boot
+      // when wiring is broken. Suppressing it would resurrect the silent-
+      // skip class of bug the contract guards.
+      firstLoadFired = false
+      throw err
+    }
+  }
+
   const getOrLoad = async (id: string): Promise<System> => {
     if (!isValidInstanceId(id)) {
       throw new Error(`[registry] invalid instance id: ${id}`)
@@ -251,6 +276,7 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     const existing = map.get(id)
     if (existing && existing.state === 'active') {
       existing.lastTouchedAt = Date.now()
+      fireFirstLoadOnce(existing.system)
       return existing.system
     }
 
@@ -276,6 +302,7 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
           onIdle: async () => { /* set later if needed */ },
         }
         map.set(id, entry)
+        fireFirstLoadOnce(system)
         return system
       } finally {
         pendingLoads.delete(id)
@@ -417,6 +444,32 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     return out
   }
 
+  // Walk .trash and rm -rf every entry. Returns the count purged. Used
+  // by the "Purge trash" admin endpoint. Does NOT run the demote pass —
+  // operator-initiated cleanup of trash only.
+  const purgeTrash = async (): Promise<{ purged: number; errors: ReadonlyArray<string> }> => {
+    const trashRoot = sharedPaths.trashRoot()
+    let entries: string[]
+    try {
+      entries = await readdir(trashRoot)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') return { purged: 0, errors: [] }
+      return { purged: 0, errors: [`readdir trash: ${(err as Error).message}`] }
+    }
+    let purged = 0
+    const errors: string[] = []
+    for (const name of entries) {
+      try {
+        await rm(join(trashRoot, name), { recursive: true, force: true })
+        purged += 1
+      } catch (err) {
+        errors.push(`${name}: ${(err as Error).message}`)
+      }
+    }
+    return { purged, errors }
+  }
+
   // Final flush of every active instance. Called from the SIGINT/SIGTERM
   // handler in bootstrap.ts (replaces the single-system flush).
   const shutdown = async (): Promise<void> => {
@@ -452,6 +505,7 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     exists,
     list,
     listOnDisk,
+    purgeTrash,
     shutdown,
     idleMs: () => idleMs,
     autoSaverFor,

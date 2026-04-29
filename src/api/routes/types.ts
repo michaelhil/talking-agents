@@ -20,6 +20,8 @@ export interface InstanceAdmin {
   // Trash an instance directory by id. Refuses if id is the current cookie's
   // instance — caller should use /api/system/reset for that.
   readonly delete: (id: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+  // Operator-initiated trash cleanup. Walks .trash/ and rm -rf each entry.
+  readonly purgeTrash: () => Promise<{ purged: number; errors: ReadonlyArray<string> }>
   // Build a Set-Cookie value pointing at `id`. The route returns it on the response.
   readonly buildSwitchCookie: (id: string, req: Request) => string
 }

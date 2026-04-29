@@ -99,6 +99,14 @@ const renderHeaderActions = (state: ModalState, listEl: HTMLElement, headerEl: H
       renderHeaderActions(state, listEl, headerEl)
     }
     headerEl.appendChild(delBtn)
+
+    const purgeBtn = document.createElement('button')
+    purgeBtn.type = 'button'
+    purgeBtn.className = 'px-3 py-1 text-sm border border-border-strong text-text rounded hover:bg-surface-muted'
+    purgeBtn.title = 'Permanently delete all trashed instances'
+    purgeBtn.textContent = 'Purge trash'
+    purgeBtn.onclick = () => { void handlePurgeTrash(purgeBtn) }
+    headerEl.appendChild(purgeBtn)
     return
   }
 
@@ -189,6 +197,13 @@ const buildRow = (state: ModalState, inst: InstanceRow, listEl: HTMLElement, hea
     }
     actions.appendChild(reset)
   } else if (state.mode === 'browse') {
+    const share = document.createElement('button')
+    share.className = 'px-2 py-1 text-xs border border-border-strong rounded hover:bg-surface-muted'
+    share.title = 'Copy share link — recipients land in this instance via /?join='
+    share.textContent = 'Share'
+    share.onclick = () => { void handleShare(inst.id) }
+    actions.appendChild(share)
+
     const sw = document.createElement('button')
     sw.className = 'px-2 py-1 text-xs border border-border-strong rounded hover:bg-surface-muted'
     sw.textContent = 'Switch'
@@ -200,6 +215,15 @@ const buildRow = (state: ModalState, inst: InstanceRow, listEl: HTMLElement, hea
     del.textContent = 'Delete'
     del.onclick = () => { void handleSingleDelete(inst.id, row) }
     actions.appendChild(del)
+  }
+  // Current row also gets a Share button — most useful case for collab.
+  if (inst.isCurrent && state.mode === 'browse') {
+    const share = document.createElement('button')
+    share.className = 'px-2 py-1 text-xs border border-border-strong rounded hover:bg-surface-muted'
+    share.title = 'Copy share link — recipients land in this instance via /?join='
+    share.textContent = 'Share'
+    share.onclick = () => { void handleShare(inst.id) }
+    actions.insertBefore(share, actions.firstChild)
   }
   row.appendChild(actions)
 
@@ -238,6 +262,39 @@ const fullRender = async (state: ModalState, listEl: HTMLElement, headerEl: HTML
 }
 
 // --- Action handlers ---
+
+const handleShare = async (id: string): Promise<void> => {
+  const url = `${window.location.origin}/?join=${encodeURIComponent(id)}`
+  try {
+    await navigator.clipboard.writeText(url)
+    showToast(document.body, `Copied: ${url}`, { type: 'success', position: 'fixed' })
+  } catch {
+    // Clipboard API blocked (e.g. non-secure context). Fall back to prompt
+    // so the user can copy manually.
+    window.prompt('Copy this share link:', url)
+  }
+}
+
+const handlePurgeTrash = async (btn: HTMLButtonElement): Promise<void> => {
+  if (!confirm('Permanently purge all trashed instances? This cannot be undone.')) return
+  btn.disabled = true
+  try {
+    const res = await fetch('/api/instances/purge-trash', { method: 'POST' })
+    if (!res.ok) {
+      showToast(document.body, `Purge failed (${res.status})`, { type: 'error', position: 'fixed' })
+      return
+    }
+    const data = await res.json() as { purged: number; errors: ReadonlyArray<string> }
+    const errSuffix = data.errors.length > 0 ? ` (${data.errors.length} errors)` : ''
+    showToast(document.body, `Purged ${data.purged} trashed instance${data.purged === 1 ? '' : 's'}${errSuffix}`, {
+      type: data.errors.length > 0 ? 'error' : 'success', position: 'fixed',
+    })
+  } catch {
+    showToast(document.body, 'Purge failed', { type: 'error', position: 'fixed' })
+  } finally {
+    btn.disabled = false
+  }
+}
 
 const handleSwitch = async (id: string): Promise<void> => {
   try {

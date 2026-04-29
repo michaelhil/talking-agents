@@ -110,6 +110,15 @@ export const instanceRoutes: RouteEntry[] = [
     },
   },
   {
+    method: 'POST',
+    pattern: /^\/api\/instances\/purge-trash$/,
+    handler: async (_req, _match, ctx) => {
+      if (!ctx.instances) return REQUIRED()
+      const result = await ctx.instances.purgeTrash()
+      return json(result)
+    },
+  },
+  {
     method: 'DELETE',
     pattern: /^\/api\/instances\/([a-z0-9]{16})$/,
     handler: async (req, match, ctx) => {

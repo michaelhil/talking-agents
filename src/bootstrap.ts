@@ -214,6 +214,11 @@ export const bootstrap = async (): Promise<void> => {
   // === SystemRegistry ===
   const registry = createSystemRegistry({
     shared,
+    // Lazy validateBootstrap: fires once on the first successful getOrLoad.
+    // Replaces the boot-time call against a throwaway boot system. Contract
+    // still runs before any traffic actually reaches a System; we just
+    // don't materialize an empty instance dir for the privilege.
+    onFirstLoad: (system) => validateBootstrap(system),
     onSystemCreated: async (system, id, autoSaver) => {
       // No per-instance FS scans: external tools, skills, packs and MCP
       // tools all live in shared.sharedToolRegistry (populated above before
@@ -407,16 +412,13 @@ export const bootstrap = async (): Promise<void> => {
   }
 
   // === HTTP mode ===
-  // Boot system (any cookie-less request lands here too via the bootstrap
-  // registry path). Provider event dispatcher already routes by agentId so
-  // this is just the seed instance. wsManager was assigned above before
-  // any getOrLoad ran, so onSystemCreated has already wired its broadcasts.
-  // Deliberately NO rescue path here — single wiring site is the invariant.
-  const bootInstanceId = generateInstanceId()
-  const bootSystem = await registry.getOrLoad(bootInstanceId)
+  // No boot system. The first cookieless visitor (or a cookie-bound one)
+  // creates their instance lazily via the HTTP path. validateBootstrap
+  // runs on that first getOrLoad via onFirstLoad above. This eliminates
+  // the boot-orphan instance dir that watch-mode reloads used to mint on
+  // every restart — see commit log for the empty-instance-accumulation fix.
 
-  // Warm provider model caches (after first instance exists so the router
-  // has someone to log against). Awaited synchronously: B3 of the audit
+  // Warm provider model caches. Awaited synchronously: B3 of the audit
   // requires that warm complete BEFORE we accept traffic, so the router's
   // catalog filter has real data to work with (no optimistic-include).
   const warmResults = await warmProviderModels(providerSetup.gateways)
@@ -425,11 +427,10 @@ export const bootstrap = async (): Promise<void> => {
     else console.warn(`  ${name}: warm-up failed — ${result.message}`)
   }
 
-  // Single contract check — every wiring invariant a bug has uncovered
-  // gets a line in src/boot/validate.ts.
-  validateBootstrap(bootSystem)
-
-  console.log(`Tools: ${bootSystem.toolRegistry.list().map(t => t.name).join(', ')}`)
+  // Tool surface log — sourced from the shared registry (process-wide).
+  // Per-instance overlays (house-bound built-ins) aren't included; those
+  // are uniform across instances anyway.
+  console.log(`Tools: ${shared.sharedToolRegistry.list().map(t => t.name).join(', ')}`)
 
   // === Janitor + idle-eviction timer ===
   const janitor = startJanitor({
@@ -476,10 +477,14 @@ export const bootstrap = async (): Promise<void> => {
     liveIds: () => new Set(registry.list().map(m => m.id)),
     createNew: async () => {
       const newId = generateInstanceId()
-      // Materialize so the directory exists on disk before the next listOnDisk.
+      // Materialize in-memory so the live list reports it. We deliberately
+      // do NOT touch disk here — empty instances no longer leave a dir
+      // (see snapshot.ts:isEmptySnapshot + autosaver skip). The UI lists
+      // the new instance by merging listOnDisk with liveIds().
       await registry.getOrLoad(newId)
       return { id: newId }
     },
+    purgeTrash: () => registry.purgeTrash(),
     delete: async (id: string) => {
       try {
         await registry.resetInstance(id)
@@ -531,7 +536,13 @@ export const bootstrap = async (): Promise<void> => {
     if (!ephemeral) {
       try { await registry.shutdown() } catch (err) { console.error('Failed to flush snapshots:', err) }
     }
-    try { await bootSystem.logging.configure({ enabled: false }) } catch { /* noop */ }
+    // Disable logging on every still-live instance. Process exit would close
+    // the JSONL sinks anyway, but explicit configure({enabled:false}) lets
+    // each instance flush a clean shutdown line first.
+    for (const meta of registry.list()) {
+      const sys = registry.tryGetLive(meta.id)
+      if (sys) try { await sys.logging.configure({ enabled: false }) } catch { /* noop */ }
+    }
     await mcpDisconnect()
     process.exit(0)
   }
