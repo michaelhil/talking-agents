@@ -6,7 +6,7 @@
 // Hand-maintained. When provider offerings change, edit here.
 // ============================================================================
 
-import type { CloudProviderName } from './providers-config.ts'
+import type { CloudProviderName } from '../providers-config.ts'
 
 export interface CuratedModel {
   readonly id: string

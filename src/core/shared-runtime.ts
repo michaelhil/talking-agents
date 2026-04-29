@@ -78,8 +78,15 @@ export interface SharedRuntime {
 
 export interface CreateSharedRuntimeOptions {
   readonly providerConfig?: ProviderConfig
-  // For tests that want to inject a pre-built setup (matches the
-  // previous CreateSystemOptions.providerSetup escape hatch).
+  // TEST-ONLY: inject a pre-built setup (matches the previous
+  // CreateSystemOptions.providerSetup escape hatch). Production code
+  // does NOT pass this — bootstrap.ts goes through src/boot/provider-stack.ts
+  // which constructs the setup once and passes it here together with
+  // matching providerKeys. If you find yourself adding `providerSetup`
+  // outside a test, you're recreating the dual-path bug d0c1f73 fixed.
+  // The wiring contract is enforced by:
+  //   - src/boot/validate.ts (checks providerKeys is on the System)
+  //   - src/boot/bootstrap-e2e.test.ts (end-to-end boot path)
   readonly providerSetup?: ProviderSetupResult
   // Optional pre-built metrics handle. Bootstrap supplies one so the same
   // instance can be passed to buildProvidersFromConfig before SharedRuntime

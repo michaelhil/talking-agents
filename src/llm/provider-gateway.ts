@@ -122,7 +122,12 @@ export const createProviderGateway = (
   const emitHealth = (next: ProviderHealth): void => {
     health = next
     for (const cb2 of healthChangeCallbacks) {
-      try { cb2(health) } catch { /* ignore callback errors */ }
+      // Do NOT silently eat callback errors — that's the bug-class from
+      // commit 5d73a8e (broadcast wiring silently dropped). Log loudly so
+      // a misbehaving observer surfaces in journal/CI.
+      try { cb2(health) } catch (err) {
+        console.warn(`[provider-gateway:onHealthChange] observer threw:`, err)
+      }
     }
   }
 

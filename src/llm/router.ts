@@ -127,21 +127,12 @@ export interface RouterMetrics {
   }
 }
 
-// === Helpers ===
-
-// Split provider-prefixed model: "groq:llama-3.3" → ["groq", "llama-3.3"].
-// Also handles OpenRouter slugs like "openrouter:meta-llama/x:free" by splitting
-// on the FIRST colon only.
-export const parseProviderPrefix = (model: string): { provider: string | null; modelId: string } => {
-  const colonIdx = model.indexOf(':')
-  if (colonIdx === -1) return { provider: null, modelId: model }
-  const provider = model.slice(0, colonIdx)
-  const modelId = model.slice(colonIdx + 1)
-  // Heuristic: a prefix is a plausible provider name (no slash, no space).
-  // If the first segment contains '/' (e.g. "meta-llama/..."), treat it as bare.
-  if (!provider || provider.includes('/')) return { provider: null, modelId: model }
-  return { provider, modelId }
-}
+// Re-export from the unified model-naming subsystem so existing tests and
+// any internal call sites that reach for `parseProviderPrefix` keep working.
+// The single source of truth lives in src/llm/models/parse-prefix.ts.
+import { parsePrefixedModel } from './models/parse-prefix.ts'
+export { parsePrefixedModel as parseProviderPrefix }
+const parseProviderPrefix = parsePrefixedModel
 
 // === Factory ===
 
@@ -194,7 +185,13 @@ export const createProviderRouter = (
   // Routing listeners
   const listeners: ProviderRoutingListener[] = []
   const emit = (ev: ProviderRoutingEvent): void => {
-    for (const l of listeners) { try { l(ev) } catch { /* ignore */ } }
+    for (const l of listeners) {
+      // Loud-warn instead of silent-drop — same bug-class as commit 5d73a8e.
+      // A buggy listener should be visible, not eaten.
+      try { l(ev) } catch (err) {
+        console.warn(`[router:onRoutingEvent] listener threw on ${ev.type}:`, err)
+      }
+    }
     if (ev.type === 'provider_bound') eventCounts.bound++
     else if (ev.type === 'provider_all_failed') eventCounts.allFailed++
     else eventCounts.streamFailed++
@@ -215,14 +212,20 @@ export const createProviderRouter = (
     }
 
     // Filter order by providers whose cached availableModels includes modelId
-    // AND who are currently enabled (have an API key). If a provider hasn't
-    // populated its model list yet (empty array), we optimistically include
-    // it rather than skip — avoids blocking on first call before refreshModels
-    // has fired.
+    // AND who are currently enabled (have an API key).
+    //
+    // Bootstrap awaits warmProviderModels before serving traffic, so by the
+    // time chat()/stream() runs, every provider with credentials has
+    // populated its catalog. A still-empty catalog means either (a) the
+    // provider had no key and warm was skipped, or (b) warm failed (logged
+    // at boot). In neither case should we optimistically include — that
+    // produces the "fall through to broken provider" failure mode that
+    // surfaced on samsinn.app. Empty catalog = not eligible. If a user
+    // explicitly wants a provider that lacks a catalog, they prefix the
+    // model (e.g. "groq:llama-3.3"); pinned routing skips this filter.
     const eligible = order.filter(name => {
       if (!isEnabled(name)) return false
       const list = providers[name]?.getHealth().availableModels ?? []
-      if (list.length === 0) return true
       return list.includes(modelId)
     })
 
@@ -239,6 +242,34 @@ export const createProviderRouter = (
   }
 
   // Classify an error → cooldown (ms) + reason (or null if non-fallbackable).
+  // Classify a provider error into a routing decision. Mutates `attempts`
+  // and (via markCold) cooldowns. Returns:
+  //   'fallthrough' — error is fallbackable; caller should try next candidate.
+  //   'rethrow'     — permanent error (auth, bad_request, etc); propagate.
+  //
+  // This used to be inlined twice in chat() with two parallel branches —
+  // one for cooldown errors, one for shed (queue_full / circuit_open).
+  // Collapsed so the chat path has a single uniform shape; stream() will
+  // start using this once its iterator-deferred semantics are factored.
+  const classifyProviderError = (
+    err: unknown,
+    name: string,
+    attempts: ProviderAttemptRecord[],
+    markColdFn: typeof markCold,
+  ): 'fallthrough' | 'rethrow' => {
+    const cooldown = cooldownFor(err)
+    if (cooldown) {
+      markColdFn(name, cooldown.cooldownMs, cooldown.reason)
+      attempts.push({ provider: name, reason: cooldown.reason })
+      return 'fallthrough'
+    }
+    if (isGatewayError(err) && (err.code === 'queue_full' || err.code === 'circuit_open')) {
+      attempts.push({ provider: name, reason: err.code })
+      return 'fallthrough'
+    }
+    return 'rethrow'
+  }
+
   const cooldownFor = (err: unknown): { cooldownMs: number; reason: string } | null => {
     if (!isCloudProviderError(err)) return null
     if (!isFallbackable(err)) return null
@@ -315,33 +346,13 @@ export const createProviderRouter = (
         }
         return response
       } catch (err) {
-        // Pinned provider: propagate auth/bad_request and cold-status errors.
-        // For fallbackable errors on a pinned provider, still fail (no fallback).
-        const cooldown = cooldownFor(err)
-        if (cooldown) {
-          markCold(name, cooldown.cooldownMs, cooldown.reason)
-          attempts.push({ provider: name, reason: cooldown.reason })
-          if (pinned) {
-            emit({
-              type: 'provider_all_failed',
-              agentId, model: request.model,
-              attempts,
-            })
-            throw err
-          }
-          continue
+        const decision = classifyProviderError(err, name, attempts, markCold)
+        if (decision === 'rethrow') throw err
+        if (pinned) {
+          emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+          throw err
         }
-        // Also fall through on shed (queue_full) — provider saturated, try next.
-        if (isGatewayError(err) && (err.code === 'queue_full' || err.code === 'circuit_open')) {
-          attempts.push({ provider: name, reason: err.code })
-          if (pinned) {
-            emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
-            throw err
-          }
-          continue
-        }
-        // Permanent config error (auth, bad_request, non-fallbackable) — propagate.
-        throw err
+        // 'fallthrough' — try next candidate.
       }
     }
 

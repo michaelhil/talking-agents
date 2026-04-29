@@ -268,8 +268,8 @@ export const providersRoutes: RouteEntry[] = [
 
       const reported = gw.getHealth().availableModels
 
-      const { CURATED_MODELS } = await import('../../llm/model-catalog.ts')
-      const { getContextWindowSync } = await import('../../llm/model-context.ts')
+      const { CURATED_MODELS } = await import('../../llm/models/catalog.ts')
+      const { getContextWindowSync } = await import('../../llm/models/context-window.ts')
 
       const curatedIds = new Set((CURATED_MODELS[name] ?? []).map(m => m.id))
       const curatedLabel: Record<string, string | undefined> = {}
@@ -401,7 +401,7 @@ export const providersRoutes: RouteEntry[] = [
         }
         const elapsedMs = Math.round(performance.now() - startedAt)
 
-        const { CURATED_MODELS } = await import('../../llm/model-catalog.ts')
+        const { CURATED_MODELS } = await import('../../llm/models/catalog.ts')
         const { createOllamaProvider } = await import('../../llm/ollama.ts')
         const pinnedList = [] as ReadonlyArray<string>
         const curatedIds = (CURATED_MODELS.ollama ?? []).map(m => m.id)
@@ -477,7 +477,7 @@ export const providersRoutes: RouteEntry[] = [
       // Concurrency probe — fire `maxConcurrent` parallel single-token chat
       // calls and report capacity. Bypasses the gateway's local semaphore to
       // actually probe upstream behaviour, not our own throttle.
-      const { CURATED_MODELS } = await import('../../llm/model-catalog.ts')
+      const { CURATED_MODELS } = await import('../../llm/models/catalog.ts')
       const { data: storeAgain } = await loadProviderStore(system.providersStorePath)
       const mergedAgain = mergeWithEnv(storeAgain)
       const pinned = mergedAgain.cloud[name]?.pinnedModels ?? []

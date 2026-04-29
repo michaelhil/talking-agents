@@ -16,6 +16,7 @@ import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk } from '../cor
 import type { NativeToolCall } from '../core/types/tool.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
 import { createCloudProviderError, parseRetryAfterMs } from './errors.ts'
+import { normalizeModelId } from './models/normalize.ts'
 
 const DEFAULT_CHAT_TIMEOUT_MS = 300_000
 const DEFAULT_MODELS_TIMEOUT_MS = 10_000
@@ -584,16 +585,10 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       throw mapHttpError(config.name, response.status, text, response.headers.get('retry-after'))
     }
     const data = (await response.json()) as OAIModelsResponse
-    // Strip Gemini's "models/" prefix so the router's catalog membership
-    // check matches the user-facing model name. Without this, Gemini's
-    // /models lists ids as "models/gemini-2.5-flash-lite", but agents and
-    // the seed config use "gemini-2.5-flash-lite", so the router's
-    // `list.includes(modelId)` check fails — gemini gets filtered out of
-    // candidates and the request falls through to keyless / unreachable
-    // providers (e.g. ollama on a host without ollama). Production samsinn
-    // exhibited this as silent "Send does nothing" + ollama 'Unable to
-    // connect' errors.
-    return (data.data ?? []).map(m => m.id.startsWith('models/') ? m.id.slice(7) : m.id)
+    // Provider-specific id normalization (e.g. strip Gemini's "models/" prefix
+    // so the catalog matches user-facing names). Single place for these quirks:
+    // src/llm/models/normalize.ts. See that file for the full bug story.
+    return (data.data ?? []).map(m => normalizeModelId(config.name, m.id))
   }
 
   return { chat, stream, models }

@@ -100,9 +100,9 @@ export const houseRoutes: RouteEntry[] = [
       // UI's model-selection dropdown.
       try {
         const { CURATED_MODELS, isCuratedModel, DEFAULT_PREFERENCE_ORDER } =
-          await import('../../llm/model-catalog.ts')
+          await import('../../llm/models/catalog.ts')
         const { PROVIDER_PROFILES } = await import('../../llm/providers-config.ts')
-        const { getContextWindowSync } = await import('../../llm/model-context.ts')
+        const { getContextWindowSync } = await import('../../llm/models/context-window.ts')
         const { loadProviderStore, mergeWithEnv } = await import('../../llm/providers-store.ts')
 
         const { data: storeData } = await loadProviderStore(system.providersStorePath)

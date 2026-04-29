@@ -30,7 +30,8 @@ import { extractAgentProfile as extractProfile } from './shared.ts'
 import { buildContext, buildSystemSections, estimateTokens, flushIncoming, type BuildContextDeps } from './context-builder.ts'
 import { callLLM, evaluate, type OnDecision } from './evaluation.ts'
 import { createConcurrencyManager } from './concurrency.ts'
-import { getContextWindowSync } from '../llm/model-context.ts'
+import { getContextWindowSync } from '../llm/models/context-window.ts'
+import { parsePrefixedModel, isCloudProvider } from '../llm/models/parse-prefix.ts'
 
 // Auto-budget reserves ~30% of a model's context window for tool definitions,
 // generation output, and safety margin. Fits typical tool+output overhead
@@ -39,16 +40,20 @@ const AUTO_BUDGET_FRACTION = 0.7
 const AUTO_BUDGET_FLOOR = 2000
 const AUTO_BUDGET_FALLBACK = 8000
 
-// Split "provider:model" on the FIRST colon only — OpenRouter slugs can
-// contain additional colons (e.g. "openrouter:anthropic/claude-3.5:beta").
-const splitProviderModel = (fullModel: string): { provider: string; model: string } => {
-  const idx = fullModel.indexOf(':')
-  if (idx < 0) return { provider: 'ollama', model: fullModel }
-  const provider = fullModel.slice(0, idx)
-  const model = fullModel.slice(idx + 1)
-  // Known cloud prefixes; everything else is treated as Ollama (e.g. "qwen:14b")
-  const cloudPrefixes = new Set(['groq', 'cerebras', 'openrouter', 'mistral', 'sambanova', 'anthropic', 'gemini'])
-  return cloudPrefixes.has(provider) ? { provider, model } : { provider: 'ollama', model: fullModel }
+// Resolve a fully-qualified model string for context-window lookup. Cloud-
+// prefixed models (e.g. "groq:llama-3.3") look up via the curated table;
+// unknown / unprefixed models fall through as Ollama (which queries the
+// running Ollama instance for context length).
+//
+// Uses the shared parser in src/llm/models/parse-prefix.ts so adding a new
+// cloud provider in providers-config.ts automatically updates this resolver.
+const resolveModelForContext = (fullModel: string): { provider: string; model: string } => {
+  const { provider, modelId } = parsePrefixedModel(fullModel)
+  // Cloud-prefixed and known → table lookup with the bare modelId.
+  if (provider && isCloudProvider(provider)) return { provider, model: modelId }
+  // Anything else (no prefix, or prefix not a known cloud provider like
+  // "qwen:14b") → Ollama, which queries the running daemon for context length.
+  return { provider: 'ollama', model: fullModel }
 }
 
 // Re-export Decision/OnDecision for consumers
@@ -132,7 +137,7 @@ export const createAIAgent = (
   // Resolve the system+history token budget from the current model's context
   // window (70% of modelMax, with a fallback constant when the window is unknown).
   const resolveContextTokenBudget = (): number => {
-    const { provider, model } = splitProviderModel(currentModel)
+    const { provider, model } = resolveModelForContext(currentModel)
     const info = getContextWindowSync(provider, model)
     if (info.contextMax > 0) {
       return Math.max(AUTO_BUDGET_FLOOR, Math.floor(info.contextMax * AUTO_BUDGET_FRACTION))
@@ -141,7 +146,7 @@ export const createAIAgent = (
   }
 
   const resolveModelMax = (): number => {
-    const { provider, model } = splitProviderModel(currentModel)
+    const { provider, model } = resolveModelForContext(currentModel)
     return getContextWindowSync(provider, model).contextMax
   }
   const getHousePrompt = options?.getHousePrompt

@@ -16,7 +16,7 @@ import type { ProviderRouter } from './router.ts'
 import { createProviderRouter } from './router.ts'
 import { isCloudProviderError } from './errors.ts'
 import { PROVIDER_PROFILES, type ProviderConfig, type CloudProviderName } from './providers-config.ts'
-import { getContextWindow } from './model-context.ts'
+import { getContextWindow } from './models/context-window.ts'
 import type { ProviderKeys } from './provider-keys.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
 
@@ -36,6 +36,11 @@ export interface BuildProvidersOptions {
   // Optional process-global counters; threaded into each cloud provider so
   // SSE-buffer overflow (and any future per-provider cap hits) is observable.
   readonly limitMetrics?: LimitMetrics
+  // Per-provider baseUrl override. Production never sets this; integration
+  // tests use it to redirect a provider's HTTP calls at a local Bun.serve
+  // fixture so the boot-shape wiring (real adapter → real gateway → real
+  // router) can be exercised end-to-end against a controlled endpoint.
+  readonly baseUrlOverrides?: Partial<Record<string, string>>
 }
 
 export const buildProvidersFromConfig = (
@@ -74,9 +79,10 @@ export const buildProvidersFromConfig = (
           'anthropic-version': '2023-06-01',
         })
       : undefined
+    const baseUrl = options.baseUrlOverrides?.[name] ?? PROVIDER_PROFILES[name].baseUrl
     const provider = createOpenAICompatibleProvider({
       name,
-      baseUrl: PROVIDER_PROFILES[name].baseUrl,
+      baseUrl,
       getApiKey,
       ...(authHeaders ? { authHeaders } : {}),
       ...(options.limitMetrics ? { limitMetrics: options.limitMetrics } : {}),

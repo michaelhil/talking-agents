@@ -34,8 +34,6 @@
 // the lifecycle invariant above is broken — fix it there.
 // ============================================================================
 
-import { createSharedRuntime } from './core/shared-runtime.ts'
-import { createLimitMetrics } from './core/limit-metrics.ts'
 import { createSystemRegistry } from './core/system-registry.ts'
 import { startJanitor } from './core/instance-cleanup.ts'
 import { DEFAULTS } from './core/types/constants.ts'
@@ -46,10 +44,7 @@ import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
 import { loadAllPacks } from './packs/loader.ts'
 import { asAIAgent } from './agents/shared.ts'
-import { parseProviderConfig, summariseProviderConfig } from './llm/providers-config.ts'
-import { buildProvidersFromConfig, warmProviderModels } from './llm/providers-setup.ts'
-import { loadProviderStore, mergeWithEnv } from './llm/providers-store.ts'
-import { createProviderKeys } from './llm/provider-keys.ts'
+import { warmProviderModels } from './llm/providers-setup.ts'
 import { loadWikiStore, mergeWikis } from './wiki/store.ts'
 import { createWikiTools } from './tools/built-in/wiki-tools.ts'
 import { parseLogConfigFromEnv } from './logging/config.ts'
@@ -58,8 +53,9 @@ import { createToolRegistry } from './core/tool-registry.ts'
 import { generateInstanceId } from './api/instance-cookie.ts'
 import { wireSystemEvents } from './api/wire-system-events.ts'
 import { wireAgentTracking } from './api/agent-tracking.ts'
+import { validateBootstrap } from './boot/validate.ts'
+import { buildProviderStack, summariseProviders } from './boot/provider-stack.ts'
 import { createWSManager } from './api/ws-handler.ts'
-import { initSharedLimiter } from './api/routes/instances.ts'
 // Process-wide tool factories. Anything that doesn't bind to a per-instance
 // `house` registers into shared.sharedToolRegistry once at boot, not per
 // instance — see registerSharedTools below.
@@ -80,34 +76,18 @@ export const bootstrap = async (): Promise<void> => {
     console.info = stderrLog
   }
 
-  // === Provider config + shared runtime ===
-  const providersStorePath = sharedPaths.providers()
-  const { data: storeData, warnings: storeWarnings } = await loadProviderStore(providersStorePath)
-  for (const w of storeWarnings) console.warn(`[providers.json] ${w}`)
-  const fileStore = mergeWithEnv(storeData)
-
-  const providerConfig = parseProviderConfig({ fileStore })
-  // Build the metrics handle first so the same instance flows into both
-  // the cloud-provider adapters (SSE-overflow tracking) and SharedRuntime.
-  const limitMetrics = createLimitMetrics()
-  // Build providerKeys BEFORE the setup so the router's isProviderEnabled
-  // filter actually skips keyless providers. Without this, the router
-  // walks every provider in the order, including ones with no key (e.g.
-  // anthropic), which throws auth errors on every chat call.
-  const providerKeys = createProviderKeys(fileStore)
-  for (const [name, cc] of Object.entries(providerConfig.cloud)) {
-    if (cc?.apiKey) providerKeys.set(name, cc.apiKey)
-  }
-  const providerSetup = buildProvidersFromConfig(providerConfig, { limitMetrics, providerKeys })
-  const shared = createSharedRuntime({ providerConfig, providerSetup, limitMetrics, providerKeys })
-  // Wire the shared rate-limiter with the global metrics handle so LRU
-  // evictions are counted. Idempotent — safe if called more than once.
-  initSharedLimiter(shared.limitMetrics)
+  // === Provider stack ===
+  // All the wiring (config → keys → setup → SharedRuntime) lives in one
+  // place: src/boot/provider-stack.ts. That's where the bug class fixed
+  // in commits f04e61e / d0c1f73 / 3729e50 surfaced; isolating the order
+  // keeps the contract obvious.
+  const { providerConfig, shared } = await buildProviderStack()
+  const providerSetup = shared.providerSetup
 
   const pkg = await Bun.file(`${import.meta.dir}/../package.json`).json() as { version: string }
   console.log(`Samsinn v${pkg.version}${headless ? ' (headless)' : ''}`)
   if (ephemeral) console.log('[bootstrap] ephemeral mode — snapshot disabled')
-  console.log(summariseProviderConfig(providerConfig))
+  console.log(summariseProviders(providerConfig))
 
   // === Boot logging template ===
   // Each per-instance system applies this in its onSystemCreated hook.
@@ -382,6 +362,11 @@ export const bootstrap = async (): Promise<void> => {
       else console.warn(`  ${name}: warm-up failed — ${result.message}`)
     }
 
+    // Single contract check — every wiring invariant a bug has uncovered
+    // gets a line in src/boot/validate.ts. Throwing here fails the boot
+    // loud and clear instead of running with broken wiring.
+    validateBootstrap(system)
+
     const { createMCPServer, wireEventNotifications, startMCPServerStdio } = await import('./integrations/mcp/server.ts')
     const mcpServer = createMCPServer(system, pkg.version)
     wireEventNotifications(system, mcpServer)
@@ -414,13 +399,19 @@ export const bootstrap = async (): Promise<void> => {
   const bootInstanceId = generateInstanceId()
   const bootSystem = await registry.getOrLoad(bootInstanceId)
 
-  // Warm provider model caches (best-effort, after first instance exists
-  // so the router has someone to log against).
+  // Warm provider model caches (after first instance exists so the router
+  // has someone to log against). Awaited synchronously: B3 of the audit
+  // requires that warm complete BEFORE we accept traffic, so the router's
+  // catalog filter has real data to work with (no optimistic-include).
   const warmResults = await warmProviderModels(providerSetup.gateways)
   for (const [name, result] of Object.entries(warmResults)) {
     if (result.status === 'ok') console.log(`  ${name}: ${result.count} models available`)
     else console.warn(`  ${name}: warm-up failed — ${result.message}`)
   }
+
+  // Single contract check — every wiring invariant a bug has uncovered
+  // gets a line in src/boot/validate.ts.
+  validateBootstrap(bootSystem)
 
   console.log(`Tools: ${bootSystem.toolRegistry.list().map(t => t.name).join(', ')}`)
 
