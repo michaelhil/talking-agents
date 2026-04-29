@@ -31,6 +31,33 @@ export const createTeam = (): Team => {
     return agents.delete(id)
   }
 
+  // Rename an agent. Validates non-empty + uniqueness (case-insensitive,
+  // excluding self). Swaps the nameIndex entry and calls agent.setName().
+  // Returns null on success, or an error string.
+  const renameAgent = (id: string, newName: string): string | null => {
+    const agent = agents.get(id)
+    if (!agent) return `Agent ${id} not found`
+    const trimmed = newName.trim()
+    if (!trimmed) return 'Name cannot be empty'
+    try { validateName(trimmed, 'Agent') } catch (err) {
+      return err instanceof Error ? err.message : String(err)
+    }
+    const lowerNew = trimmed.toLowerCase()
+    const lowerOld = agent.name.toLowerCase()
+    if (lowerNew === lowerOld) {
+      // No-op rename — just update casing in the agent object.
+      agent.setName?.(trimmed)
+      return null
+    }
+    const colliderId = nameIndex.get(lowerNew)
+    if (colliderId && colliderId !== id) return `Name "${trimmed}" is already taken`
+    if (!agent.setName) return 'This agent type does not support rename'
+    nameIndex.delete(lowerOld)
+    nameIndex.set(lowerNew, id)
+    agent.setName(trimmed)
+    return null
+  }
+
   const listAgents = (): ReadonlyArray<Agent> => [...agents.values()]
 
   const listByKind = (kind: 'ai' | 'human'): ReadonlyArray<Agent> =>
@@ -46,5 +73,5 @@ export const createTeam = (): Team => {
     })
   }
 
-  return { addAgent, getAgent, removeAgent, listAgents, listByKind, listByTag }
+  return { addAgent, getAgent, removeAgent, renameAgent, listAgents, listByKind, listByTag }
 }

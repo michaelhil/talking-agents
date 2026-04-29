@@ -35,6 +35,7 @@ export const createHumanAgent = (
   const agentId = overrideId ?? crypto.randomUUID()
   let send = initialSend
   let isInactive = false
+  let currentName = config.name
   let description = config.description ?? ''
   const historyLimit = DEFAULTS.historyLimit
 
@@ -74,7 +75,7 @@ export const createHumanAgent = (
 
   return {
     id: agentId,
-    name: config.name,
+    get name() { return currentName },
     kind: 'human',
     metadata: liveMetadata,
     state,
@@ -84,6 +85,7 @@ export const createHumanAgent = (
     setTransport: (newSend: TransportSend) => { send = newSend },
     get inactive() { return isInactive },
     setInactive: (value: boolean) => { isInactive = value },
+    setName: (newName: string) => { currentName = newName },
     getDescription: () => description,
     updateDescription: (desc: string) => { description = desc },
     getTags: () => currentTags,

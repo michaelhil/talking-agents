@@ -8,7 +8,7 @@
 // pending map, with a toast on success.
 // ============================================================================
 
-import { $agentListView, $agents, type AgentEntry } from './stores.ts'
+import { $agentListView, $agents, $selectedHumanByRoom, type AgentEntry } from './stores.ts'
 import { showToast } from './toast.ts'
 import { roomIdToName } from './identity-lookups.ts'
 import { icon } from './icon.ts'
@@ -85,12 +85,33 @@ export const mountRoomMembers = (deps: RoomMembersDeps): void => {
       return
     }
     wrapper.classList.remove('hidden')
+    const selectedHumanId = $selectedHumanByRoom.get()[selectedRoomId] ?? null
     render(container, {
       agents,
       mutedAgentIds: mutedAgents,
       memberIds: roomMemberIds,
       selectedRoomId,
+      selectedHumanId,
       deliveryMode,
+      send,
+      openCreateAgentModal,
+      inspectAgent,
+    })
+  })
+
+  // Re-render when the per-room human selection changes — the chip's
+  // dot inner-border reflects the selected human only.
+  $selectedHumanByRoom.subscribe(() => {
+    const view = $agentListView.get()
+    if (!view.selectedRoomId) return
+    const selectedHumanId = $selectedHumanByRoom.get()[view.selectedRoomId] ?? null
+    render(container, {
+      agents: view.agents,
+      mutedAgentIds: view.mutedAgents,
+      memberIds: view.roomMemberIds,
+      selectedRoomId: view.selectedRoomId,
+      selectedHumanId,
+      deliveryMode: view.deliveryMode,
       send,
       openCreateAgentModal,
       inspectAgent,
@@ -105,6 +126,7 @@ interface RenderOpts {
   readonly mutedAgentIds: Set<string>
   readonly memberIds: ReadonlyArray<string>
   readonly selectedRoomId: string
+  readonly selectedHumanId: string | null   // per-room poster (humans only)
   readonly deliveryMode: string
   readonly send: (data: unknown) => void
   readonly openCreateAgentModal: () => void
@@ -123,7 +145,8 @@ const render = (container: HTMLElement, opts: RenderOpts): void => {
     const agent = opts.agents[agentId]
     if (!agent) continue
     const isGenerating = agent.state === 'generating'
-    container.appendChild(renderChip(agent, opts.mutedAgentIds.has(agentId), isGenerating, isManual, roomName, opts.send, opts.inspectAgent))
+    const isSelected = agent.id === opts.selectedHumanId
+    container.appendChild(renderChip(agent, opts.mutedAgentIds.has(agentId), isGenerating, isManual, isSelected, opts.selectedRoomId, roomName, opts.send, opts.inspectAgent))
   }
 
   container.appendChild(renderAddButton(opts, roomName))
@@ -134,6 +157,8 @@ const renderChip = (
   isMuted: boolean,
   isGenerating: boolean,
   isManualMode: boolean,
+  isSelected: boolean,             // human selected as current poster (humans only)
+  roomId: string,
   roomName: string,
   send: (data: unknown) => void,
   inspectAgent: (agentId: string) => void,
@@ -142,22 +167,53 @@ const renderChip = (
   const bg = isMuted ? 'bg-surface-strong text-text-subtle' : 'bg-surface-muted text-accent'
   chip.className = `inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${bg} group/chip`
 
+  const isHuman = agent.kind === 'human'
+
+  // Dot. For humans: green (default) or green with inner accent ring (selected).
+  //   - Click toggles per-room selection; existing entry deselects.
+  //   - We DON'T set bg-text-muted for humans (no human mute concept).
+  // For AI: existing bg-text-muted on mute, click toggles set_muted.
   const dot = document.createElement('button')
-  const dotColor = isMuted
-    ? 'bg-text-muted'
-    : isGenerating
-      ? 'bg-thinking typing-indicator'
+  let dotColor: string
+  if (isHuman) {
+    dotColor = isGenerating ? 'bg-thinking typing-indicator' : 'bg-success'
+  } else {
+    dotColor = isMuted ? 'bg-text-muted'
+      : isGenerating ? 'bg-thinking typing-indicator'
       : 'bg-success'
+  }
   dot.className = `inline-block w-2 h-2 rounded-full shrink-0 cursor-pointer ${dotColor}`
-  dot.title = isMuted ? `Unmute ${agent.name}` : `Mute ${agent.name}`
-  dot.onclick = (e) => {
-    e.stopPropagation()
-    send({ type: 'set_muted', roomName, agentName: agent.name, muted: !isMuted })
+  // Inner border for selected humans — inset box-shadow keeps dot size unchanged.
+  if (isHuman && isSelected) {
+    dot.style.boxShadow = 'inset 0 0 0 1px var(--accent, currentColor)'
+    dot.style.outline = '1px solid var(--accent, currentColor)'
+    dot.style.outlineOffset = '-2px'
+  }
+  if (isHuman) {
+    dot.title = isSelected ? `Deselect ${agent.name}` : `Post as ${agent.name}`
+    dot.onclick = (e) => {
+      e.stopPropagation()
+      const map = $selectedHumanByRoom.get()
+      if (map[roomId] === agent.id) {
+        // Deselect: remove key.
+        const next = { ...map }; delete next[roomId]
+        $selectedHumanByRoom.set(next)
+      } else {
+        $selectedHumanByRoom.setKey(roomId, agent.id)
+      }
+    }
+  } else {
+    dot.title = isMuted ? `Unmute ${agent.name}` : `Mute ${agent.name}`
+    dot.onclick = (e) => {
+      e.stopPropagation()
+      send({ type: 'set_muted', roomName, agentName: agent.name, muted: !isMuted })
+    }
   }
   chip.appendChild(dot)
 
   const name = document.createElement('span')
-  const nameStyle = isMuted ? 'line-through' : ''
+  // Strikethrough only for AI mute. Humans have no mute, so always solid.
+  const nameStyle = (!isHuman && isMuted) ? 'line-through' : ''
   name.className = `font-medium cursor-pointer hover:underline ${nameStyle}`
   name.textContent = agent.name
   name.title = `Inspect ${agent.name}`

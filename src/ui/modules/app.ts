@@ -49,7 +49,6 @@ import { initScriptPanel } from './script-panel.ts'
 import { initScriptDocPanel } from './script-doc-panel.ts'
 import {
   $myAgentId,
-  $myName,
   $sessionToken,
   $connected,
   $selectedRoomId,
@@ -263,13 +262,12 @@ $roomListView.subscribe(({ rooms, selectedRoomId, pausedRooms, unreadCounts, gen
 // --- Agent list (batched: agents + identity + selection + members) ---
 // Per-room actions (add/remove/mute) live in the room-members chip row;
 // this sidebar list is now a read-only global registry with in-room tint.
+// Sidebar agent list: display-only — selection happens in the room chip
+// row, not here. Re-renders on agent list / membership / mute / inspect
+// changes; does NOT depend on $selectedHumanByRoom.
 $agentListView.subscribe(({ agents, selectedAgentId, selectedRoomId, roomMemberIds }) => {
-  // Per-room "post as" highlight. selectedHumanByRoom[roomId] === agentId.
-  const posterMap = $selectedHumanByRoom.get()
-  const selectedPosterId = selectedRoomId ? (posterMap[selectedRoomId] ?? null) : null
   renderAgents(agentList, {
     agents: agents as unknown as Record<string, AgentInfo>,
-    selectedPosterId,
     selectedAgentId,
     roomMemberIds,
     hasSelectedRoom: selectedRoomId !== null,
@@ -280,45 +278,8 @@ $agentListView.subscribe(({ agents, selectedAgentId, selectedRoomId, roomMemberI
       if (!confirm(`Delete agent ${agentName}? This cannot be undone.`)) return
       void safeFetchJson(`/api/agents/${encodeURIComponent(agentName)}`, { method: 'DELETE' })
     },
-    onSelectAsPoster: (agentId) => {
-      const roomId = $selectedRoomId.get()
-      if (!roomId) return
-      // Confirm-add if the human isn't a member of the current room.
-      const isMember = roomMemberIds.includes(agentId)
-      const ag = $agents.get()[agentId]
-      if (!ag) return
-      const roomName = roomIdToName(roomId)
-      if (!isMember && roomName) {
-        if (!confirm(`Add ${ag.name} to ${roomName}?`)) return
-        send({ type: 'add_to_room', roomName, agentName: ag.name })
-      }
-      $selectedHumanByRoom.setKey(roomId, agentId)
-    },
   })
   updateAgentsLabel()
-})
-
-// Re-render when poster selection changes (lights the dot/ring).
-$selectedHumanByRoom.subscribe(() => {
-  const view = $agentListView.get()
-  const posterMap = $selectedHumanByRoom.get()
-  const selectedPosterId = view.selectedRoomId ? (posterMap[view.selectedRoomId] ?? null) : null
-  renderAgents(agentList, {
-    agents: view.agents as unknown as Record<string, AgentInfo>,
-    selectedPosterId,
-    selectedAgentId: view.selectedAgentId,
-    roomMemberIds: view.roomMemberIds,
-    hasSelectedRoom: view.selectedRoomId !== null,
-    onInspect: (agentId) => $selectedAgentId.set(agentId),
-    onDelete: (agentName) => {
-      if (!confirm(`Delete agent ${agentName}? This cannot be undone.`)) return
-      void safeFetchJson(`/api/agents/${encodeURIComponent(agentName)}`, { method: 'DELETE' })
-    },
-    onSelectAsPoster: (agentId) => {
-      const roomId = $selectedRoomId.get()
-      if (roomId) $selectedHumanByRoom.setKey(roomId, agentId)
-    },
-  })
 })
 
 // Auto-select / GC on room enter:
@@ -910,8 +871,8 @@ ollamaEls.dashboard.addEventListener('close', () => stopProvidersPanel())
 // CONNECT + STARTUP
 // ============================================================================
 
-const connect = (name: string) => {
-  client = createWSClient(name, $sessionToken.get(), (raw) => {
+const connect = () => {
+  client = createWSClient($sessionToken.get(), (raw) => {
     const msg = raw as { type?: string }
     if (typeof msg.type !== 'string') return
     const handler = wsDispatch[msg.type]
@@ -919,28 +880,14 @@ const connect = (name: string) => {
   }, (connected) => {
     $connected.set(connected)
   })
-  // Expose the active client to any module that imports send() from ws-send.ts.
-  // Mirrors the local `client` ref.
   setWSClient(client)
 }
 
-// Pre-existing localStorage `ta_name` from old versions. Used as the WS
-// connect name (legacy reclaim-by-name keeps working). For fresh visitors,
-// we connect with the seeded "Human" agent's name. Server reclaims it.
-const DEFAULT_HUMAN_NAME = 'Human'
-const savedName = localStorage.getItem('ta_name') ?? DEFAULT_HUMAN_NAME
-
-// Legacy: the old name-modal form is hidden and never shown. Keep the
-// element in the HTML for now — removing it requires an index.html edit
-// that's noisy for this PR. The form's submit handler is dropped because
-// the modal never opens.
-
-// Boot order: auth gate must complete before we open a WebSocket — the
-// upgrade rejects unauthenticated connections in deploy mode and would
-// otherwise spin in the reconnect loop.
+// v15+: WS sessions are pure viewers — no name, no agent binding.
+// The legacy localStorage `ta_name` (and the never-shown #name-modal)
+// are vestigial; we ignore both.
 void (async () => {
   const { ensureAuthenticated } = await import('./auth.ts')
   await ensureAuthenticated()
-  $myName.set(savedName)
-  connect(savedName)
+  connect()
 })()

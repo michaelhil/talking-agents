@@ -170,11 +170,23 @@ export const agentRoutes: RouteEntry[] = [
   {
     method: 'PATCH',
     pattern: /^\/api\/agents\/([^/]+)$/,
-    handler: async (req, match, { system }) => {
+    handler: async (req, match, { system, instanceId, broadcast, broadcastToInstance }) => {
       const name = decodeURIComponent(match[1]!)
       const agent = system.team.getAgent(name)
       if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
       const body = await parseBody(req)
+      // --- Rename ---
+      // Process before any other field so subsequent UI events reference the
+      // new name. Humans are renameable today; AI rename support depends on
+      // the agent factory implementing setName (deferred for AI in v15).
+      if (typeof body.name === 'string' && body.name.trim() !== agent.name) {
+        const oldName = agent.name
+        const err = system.team.renameAgent(agent.id, body.name as string)
+        if (err) return errorResponse(err, err.includes('already taken') ? 409 : 400)
+        const evt = { type: 'agent_renamed' as const, id: agent.id, oldName, newName: agent.name }
+        if (broadcastToInstance) broadcastToInstance(instanceId, evt)
+        else broadcast(evt)
+      }
       const aiAgent = asAIAgent(agent)
       if (aiAgent) {
         if (body.persona) aiAgent.updatePersona(body.persona as string)

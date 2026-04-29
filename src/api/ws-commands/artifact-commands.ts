@@ -2,7 +2,12 @@ import type { WSInbound } from '../../core/types/ws-protocol.ts'
 import { sendError, type CommandContext } from './types.ts'
 
 export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): boolean => {
-  const { ws, session, system, wsManager } = ctx
+  const { ws, system, wsManager } = ctx
+  // v15+: WS sessions don't own an actor. Artifact commands attribute to
+  // 'system' for createdBy / callerId. Future PRs can plumb the per-room
+  // selected human through here.
+  const SYSTEM_ACTOR_ID = 'system'
+  const SYSTEM_ACTOR_NAME = 'system'
 
   switch (msg.type) {
     case 'add_artifact': {
@@ -29,7 +34,7 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
         ...(msg.description !== undefined ? { description: msg.description } : {}),
         body: msg.body,
         scope,
-        createdBy: session.agent.name,
+        createdBy: SYSTEM_ACTOR_NAME,
       })
       if (msg.requestId) {
         wsManager.safeSend(ws, JSON.stringify({
@@ -50,7 +55,7 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
           body: msg.body,
           resolution: msg.resolution,
         },
-        { callerId: session.agent.id, callerName: session.agent.name },
+        { callerId: SYSTEM_ACTOR_ID, callerName: SYSTEM_ACTOR_NAME },
       )
       if (!updated) sendError(wsManager, ws, `Artifact "${msg.artifactId}" not found`)
       return true
@@ -75,7 +80,7 @@ export const handleArtifactCommand = (msg: WSInbound, ctx: CommandContext): bool
       system.house.artifacts.update(
         msg.artifactId,
         { body: { castVote: msg.optionId } },
-        { callerId: session.agent.id, callerName: session.agent.name },
+        { callerId: SYSTEM_ACTOR_ID, callerName: SYSTEM_ACTOR_NAME },
       )
       return true
     }

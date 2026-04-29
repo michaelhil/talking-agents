@@ -5,13 +5,9 @@
 // Handles Bun.serve setup, static file serving, and WebSocket upgrade.
 // ============================================================================
 
-import type { Message } from '../core/types/messaging.ts'
-import type { HumanAgent } from '../agents/human-agent.ts'
-import type { WSOutbound } from '../core/types/ws-protocol.ts'
 import type { SystemRegistry } from '../core/system-registry.ts'
 import type { WSManager } from './ws-handler.ts'
 import { DEFAULTS } from '../core/types/constants.ts'
-import { ensureUniqueName } from '../core/names.ts'
 import { authEnabled, isValidSession, sessionFromRequest, validateToken, issueSession, buildSessionCookie } from './auth.ts'
 import { handleAPI } from './http-routes.ts'
 import { handleWSMessage, type WSData } from './ws-handler.ts'
@@ -196,59 +192,24 @@ export const createServer = (config: ServerConfig) => {
         : null
 
       // === WebSocket upgrade ===
+      // v15+: WS sessions are pure viewers of an instance. No agent binding,
+      // no reclaim-by-name, no spawn-on-connect. Each post_message names
+      // its actor via senderId; non-content commands fall back to 'system'
+      // attribution server-side.
       if (pathname === '/ws') {
-        // Auth gate (deploy mode only). Cookie is set by /api/auth.
         if (authEnabled() && !isValidSession(sessionFromRequest(req))) {
           return sec(new Response('Unauthorized', { status: 401 }))
         }
-        const name = url.searchParams.get('name')
-        if (!name) return sec(new Response('name query parameter required', { status: 400 }))
-
         const sessionToken = url.searchParams.get('session') ?? crypto.randomUUID()
 
-        // Session token reconnect (same browser tab, brief disconnect)
-        if (wsManager.sessions.has(sessionToken)) {
-          // Cross-instance token-reuse refusal — refuse if the existing
-          // session belongs to a different instance.
-          const sess = wsManager.sessions.get(sessionToken)!
-          if (sess.instanceId !== instanceId) {
-            return sec(new Response('Session token belongs to a different instance', { status: 403 }))
-          }
-          const upgraded = server.upgrade(req, { data: { sessionToken, instanceId, reconnect: true } })
-          return upgraded ? undefined : sec(new Response('WebSocket upgrade failed', { status: 500 }))
+        // Session token reuse — refuse if the existing session is bound to
+        // a different instance (browser cookie was switched).
+        const existing = wsManager.sessions.get(sessionToken)
+        if (existing && existing.instanceId !== instanceId) {
+          return sec(new Response('Session token belongs to a different instance', { status: 403 }))
         }
 
-        // Resolve the per-instance system to scope reclaim + spawn.
-        const targetSystem = await registry.getOrLoad(instanceId)
-
-        // Name-based reclaim: find a human with same name. We no longer
-        // require `inactive` — the seeded Human (and any persisted human in
-        // v15+) is never marked inactive because no prior WS was bound to it.
-        // Reclaim regardless; the WS open handler reuses the existing agent
-        // and reattaches its transport, replacing any prior one.
-        const existingAgent = targetSystem.team.listAgents().find(a =>
-          a.kind === 'human' && a.name === name,
-        )
-        if (existingAgent) {
-          // Find and reuse the old session for this agent
-          let reclaimedToken: string | undefined
-          for (const [token, session] of wsManager.sessions) {
-            if (session.instanceId !== instanceId) continue
-            if (session.agent.id === existingAgent.id) {
-              reclaimedToken = token
-              break
-            }
-          }
-          const useToken = reclaimedToken ?? sessionToken
-          const upgraded = server.upgrade(req, { data: { sessionToken: useToken, instanceId, reconnect: true, name } })
-          return upgraded ? undefined : sec(new Response('WebSocket upgrade failed', { status: 500 }))
-        }
-
-        // New connection — fresh agent. Collision check scoped to instance.
-        const activeNames = targetSystem.team.listAgents().filter(a => !a.inactive).map(a => a.name)
-        const assignedName = activeNames.includes(name) ? ensureUniqueName(name, activeNames) : name
-
-        const upgraded = server.upgrade(req, { data: { sessionToken, instanceId, name: assignedName } })
+        const upgraded = server.upgrade(req, { data: { sessionToken, instanceId } })
         return upgraded ? undefined : sec(new Response('WebSocket upgrade failed', { status: 500 }))
       }
 
@@ -295,58 +256,17 @@ export const createServer = (config: ServerConfig) => {
 
     websocket: {
       async open(ws) {
-        if (ws.data.reconnect) {
-          let session = wsManager.sessions.get(ws.data.sessionToken)
-          // First WS open after a name-based reclaim: the session map has no
-          // entry yet because the upgrade route only sets `reconnect: true`
-          // and hands us the reclaim'd name. Look up the existing agent by
-          // name in this instance, then build the session here.
-          if (!session && ws.data.name) {
-            const sys = registry.tryGetLive(ws.data.instanceId)
-              ?? await registry.getOrLoad(ws.data.instanceId)
-            const existing = sys.team.listAgents().find(a => a.kind === 'human' && a.name === ws.data.name) as HumanAgent | undefined
-            if (existing) {
-              session = { agent: existing, instanceId: ws.data.instanceId, lastActivity: Date.now() }
-              wsManager.sessions.set(ws.data.sessionToken, session)
-            }
-          }
-          if (!session) return
-          const newTransport = (msg: Message) => {
-            wsManager.safeSend(ws, JSON.stringify({ type: 'message', message: msg } satisfies WSOutbound))
-          }
-          session.agent.setTransport(newTransport)
-          // Reactivate if was inactive (name-based reclaim)
-          if (session.agent.inactive) {
-            session.agent.setInactive?.(false)
-            wsManager.broadcastToInstance(session.instanceId, { type: 'agent_joined', agent: {
-              id: session.agent.id, name: session.agent.name,
-              kind: session.agent.kind,
-            }})
-          }
-          session.lastActivity = Date.now()
-          wsManager.wsConnections.set(ws.data.sessionToken, ws)
-          // Custom WS close code 4001 = "instance unavailable" (WS spec
-          // reserves 4000–4999 for application use). Client sees onclose
-          // with this code and reconnects via the registry's lazy-load path.
-          const snap = wsManager.buildSnapshot(session.instanceId, session.agent.id)
-          if (!snap) { ws.close(4001, 'instance unavailable'); return }
-          wsManager.safeSend(ws, JSON.stringify(snap))
-          return
-        }
-
-        const targetSystem = await registry.getOrLoad(ws.data.instanceId)
-        const agent = await targetSystem.spawnHumanAgent(
-          { name: ws.data.name! },
-          (msg: Message) => {
-            wsManager.safeSend(ws, JSON.stringify({ type: 'message', message: msg } satisfies WSOutbound))
-          },
-        )
-
-        const session = { agent, instanceId: ws.data.instanceId, lastActivity: Date.now() }
-        wsManager.sessions.set(ws.data.sessionToken, session)
+        // Ensure the instance is loaded (lazy materialization on first
+        // visit). The session entry is keyed by sessionToken so reconnects
+        // and stale-sweep work the same.
+        await registry.getOrLoad(ws.data.instanceId)
+        const existing = wsManager.sessions.get(ws.data.sessionToken)
+        const session = existing ?? { instanceId: ws.data.instanceId, lastActivity: Date.now() }
+        if (!existing) wsManager.sessions.set(ws.data.sessionToken, session)
+        else session.lastActivity = Date.now()
         wsManager.wsConnections.set(ws.data.sessionToken, ws)
 
-        const snap = wsManager.buildSnapshot(ws.data.instanceId, agent.id, ws.data.sessionToken)
+        const snap = wsManager.buildSnapshot(ws.data.instanceId, ws.data.sessionToken)
         if (!snap) { ws.close(4001, 'instance unavailable'); return }
         wsManager.safeSend(ws, JSON.stringify(snap))
       },
@@ -364,23 +284,16 @@ export const createServer = (config: ServerConfig) => {
       },
 
       close(ws) {
-        const session = wsManager.sessions.get(ws.data.sessionToken)
-        // v15+ humans are persistent. Closing the WS does NOT remove the
-        // bound human from rooms or mark them inactive — they keep their
-        // place and the next viewer (same browser, different tab, or a
-        // colleague via /?join=) sees them as members. Legacy "phantom
-        // member accumulation" risk is gone: humans are addressable by id,
-        // duplicates can be deleted via the agent-list × button.
-        if (session?.agent.kind === 'human') {
-          session.agent.setInactive?.(true)
-        }
+        // v15+ WS sessions own no agent. Just drop the connection map
+        // entry; sessions can persist briefly for reconnect (sweep cleans
+        // them up after SESSION_STALE_MS).
         wsManager.wsConnections.delete(ws.data.sessionToken)
       },
     },
   })
 
   console.log(`Server listening on http://localhost:${port}`)
-  console.log(`WebSocket: ws://localhost:${port}/ws?name=YourName`)
+  console.log(`WebSocket: ws://localhost:${port}/ws`)
   console.log(`API: http://localhost:${port}/api/rooms`)
 
   return server

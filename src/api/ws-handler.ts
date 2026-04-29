@@ -9,7 +9,6 @@
 // ============================================================================
 
 import type { System } from '../main.ts'
-import type { HumanAgent } from '../agents/human-agent.ts'
 import type { Agent } from '../core/types/agent.ts'
 import type { AgentProfile } from '../core/types/messaging.ts'
 import type { RoomState } from '../core/types/room.ts'
@@ -50,8 +49,11 @@ export interface WSConnection {
   close: (code: number, reason?: string) => void
 }
 
+// In v15+ a WS session is a "viewer" of an instance — it doesn't bind to
+// any human agent. Each WS message that creates content names its actor
+// via senderId; non-content commands fall back to 'system' attribution.
+// The session map exists only for connection lifecycle (reconnect, sweep).
 export interface ClientSession {
-  readonly agent: HumanAgent
   readonly instanceId: string         // which per-tenant House this session belongs to
   lastActivity: number
 }
@@ -59,8 +61,6 @@ export interface ClientSession {
 export interface WSData {
   sessionToken: string
   instanceId: string                  // bound at upgrade from cookie
-  name?: string
-  reconnect?: boolean
 }
 
 // === Session + State Management ===
@@ -85,7 +85,7 @@ export interface WSManager {
   // and the snapshot build. Callers must close the socket (4001) instead of
   // sending a fabricated empty snapshot — clients trust empty rooms+agents
   // and would render a blank UI without knowing why.
-  readonly buildSnapshot: (instanceId: string, agentId: string, sessionToken?: string) => Extract<WSOutbound, { type: 'snapshot' }> | null
+  readonly buildSnapshot: (instanceId: string, sessionToken?: string) => Extract<WSOutbound, { type: 'snapshot' }> | null
   // Drop sessions whose WS has been closed for more than SESSION_STALE_MS
   // and remove the corresponding human agent from the team. Without this,
   // every disconnected user accumulates a session entry forever (and an
@@ -190,15 +190,12 @@ export const createWSManager = (deps: WSManagerDeps): WSManager => {
   // any snapshot restore). Single-tenant boot path calls wireSystemEvents
   // immediately after createWSManager, so behavior is preserved.
 
-  const buildSnapshot = (instanceId: string, agentId: string, sessionToken?: string): Extract<WSOutbound, { type: 'snapshot' }> | null => {
+  const buildSnapshot = (instanceId: string, sessionToken?: string): Extract<WSOutbound, { type: 'snapshot' }> | null => {
     const sys = getSystem(instanceId)
     if (!sys) {
-      // Instance evicted between WS upgrade and snapshot build. Returning
-      // an empty shell would make the client trust a blank UI; instead we
-      // return null and the caller closes the socket so the client
-      // reconnects honestly through the registry's lazy-load path.
+      // Instance evicted between WS upgrade and snapshot build.
       console.error(`[ws] buildSnapshot for evicted instance ${instanceId} — caller will close socket (4001)`)
-      void agentId; void sessionToken
+      void sessionToken
       return null
     }
     const roomStates: Record<string, RoomState> = {}
@@ -217,7 +214,6 @@ export const createWSManager = (deps: WSManagerDeps): WSManager => {
       type: 'snapshot',
       rooms: sys.house.listAllRooms(),
       agents,
-      agentId,
       roomStates,
       ...(sessionToken ? { sessionToken } : {}),
     }
@@ -230,12 +226,9 @@ export const createWSManager = (deps: WSManagerDeps): WSManager => {
       // Skip live connections — their lastActivity is fresh anyway.
       if (wsConnections.has(token)) continue
       if (session.lastActivity > cutoff) continue
-      // Remove the agent from its instance's team. If the instance is
-      // currently evicted, getSystem returns undefined; skip the team
-      // cleanup (the snapshot rehydrate path won't see this human). The
-      // session entry is dropped either way.
-      const sys = getSystem(session.instanceId)
-      try { sys?.removeAgent(session.agent.id) } catch { /* best-effort */ }
+      // v15+: WS sessions don't own an agent, so there's nothing to remove
+      // from the team. Just drop the session map entry.
+      void session
       sessions.delete(token)
       limitMetrics?.inc('staleSessionsEvicted')
       dropped++

@@ -21,7 +21,6 @@ export interface WSClient {
 }
 
 export const createWSClient = (
-  name: string,
   sessionToken: string,
   onMessage: (msg: unknown) => void,
   onStatusChange: (connected: boolean) => void,
@@ -33,7 +32,7 @@ export const createWSClient = (
     BACKOFF_SCHEDULE_MS[Math.min(attempt, BACKOFF_SCHEDULE_MS.length - 1)]!
 
   const connect = () => {
-    const params = new URLSearchParams({ name })
+    const params = new URLSearchParams()
     if (sessionToken) params.set('session', sessionToken)
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'

@@ -71,7 +71,11 @@ const handlers: Handlers = {
       $sessionToken.set(msg.sessionToken)
       localStorage.setItem('ta_session', msg.sessionToken)
     }
-    $myAgentId.set(msg.agentId)
+    // v15+: snapshot.agentId is now optional and unused. WS sessions are
+    // pure viewers — there's no per-tab "my" agent. "Self" styling has
+    // been dropped from the UI; the per-room selected human is the actor.
+    if (msg.agentId) $myAgentId.set(msg.agentId)
+    else $myAgentId.set(null)
 
     // Populate rooms (UI-shaped via toUIRoomProfile; type inferred)
     const roomMap = Object.fromEntries(msg.rooms.map(r => [r.id, toUIRoomProfile(r)]))
@@ -299,6 +303,12 @@ const handlers: Handlers = {
     const agents = { ...$agents.get() }
     delete agents[id]
     $agents.set(agents)
+  },
+
+  agent_renamed(msg) {
+    const existing = $agents.get()[msg.id]
+    if (!existing) return
+    $agents.setKey(msg.id, { ...existing, name: msg.newName })
   },
 
   // --- Delivery mode ---

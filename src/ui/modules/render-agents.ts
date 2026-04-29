@@ -2,10 +2,14 @@
 // render-room-members.ts; this list shows all agents and highlights those
 // that are members of the currently selected room.
 //
+// Sidebar dots are display-only — they show presence/mute state, not
+// per-room selection. Selection happens via clicking the dot on the
+// agent's chip in the room members row at the top of the active room.
+//
 // Click targets:
-//   - dot (left)   → select-as-poster (humans only; AI no-op)
-//   - name         → open agent-detail-modal (inspect)
-//   - × on hover   → delete
+//   - dot   → no-op (display only)
+//   - name  → open agent-detail-modal (inspect)
+//   - × on hover → delete
 
 import type { AgentInfo } from './render-types.ts'
 import { icon } from './icon.ts'
@@ -14,35 +18,21 @@ const renderAgentRow = (
   agent: AgentInfo,
   isInSelectedRoom: boolean,
   isGenerating: boolean,
-  isSelectedAsPoster: boolean,
   isInspectSelected: boolean,
   onInspect: (agentName: string) => void,
   onDelete: (agentName: string) => void,
-  onSelectAsPoster: (agentId: string) => void,
 ): HTMLElement => {
   const div = document.createElement('div')
   const tint = isInspectSelected ? 'bg-surface-strong' : isInSelectedRoom ? 'bg-surface-muted' : ''
-  const posterRing = isSelectedAsPoster && agent.kind === 'human' ? 'border-l-2 border-accent pl-[10px]' : ''
-  div.className = `px-3 py-1 flex items-center gap-1.5 group relative ${tint} ${posterRing}`
+  div.className = `px-3 py-1 flex items-center gap-1.5 group relative ${tint}`
 
   const dot = document.createElement('span')
-  const isHuman = agent.kind === 'human'
-  // Selected human: accent fill + ring. Unselected human: hover ring to
-  // signal interactivity. AI: status dot, no select affordance.
-  const dotColor = isGenerating ? 'bg-thinking typing-indicator'
-    : isSelectedAsPoster && isHuman ? 'bg-accent ring-2 ring-accent/40'
-    : 'bg-success'
-  const dotInteractive = isHuman ? 'cursor-pointer hover:ring-2 hover:ring-accent/30' : ''
-  dot.className = `inline-block w-2 h-2 rounded-full shrink-0 ${dotColor} ${dotInteractive}`
-  if (isHuman) {
-    dot.title = isSelectedAsPoster ? `Currently posting as ${agent.name}` : `Post as ${agent.name}`
-    dot.onclick = (e) => { e.stopPropagation(); onSelectAsPoster(agent.id) }
-  }
+  const dotColor = isGenerating ? 'bg-thinking typing-indicator' : 'bg-success'
+  dot.className = `inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`
   div.appendChild(dot)
 
   const name = document.createElement('span')
-  const isSelf = isSelectedAsPoster && isHuman
-  name.className = `text-xs truncate cursor-pointer ${isSelf ? 'font-bold' : 'font-medium'} ${isInspectSelected ? 'text-accent' : 'text-text'}`
+  name.className = `text-xs truncate cursor-pointer font-medium ${isInspectSelected ? 'text-accent' : 'text-text'}`
   name.textContent = agent.name
   name.onclick = (e) => { e.stopPropagation(); onInspect(agent.name) }
   div.appendChild(name)
@@ -63,13 +53,11 @@ const renderAgentRow = (
 
 export interface RenderAgentsOptions {
   agents: Record<string, AgentInfo>
-  selectedPosterId: string | null            // human currently selected for the active room
-  selectedAgentId: string | null              // inspect highlight (legacy)
+  selectedAgentId: string | null              // inspect highlight
   roomMemberIds: string[]
   hasSelectedRoom: boolean
   onInspect: (agentId: string) => void
   onDelete: (agentName: string) => void
-  onSelectAsPoster: (agentId: string) => void
 }
 
 export const renderAgents = (
@@ -84,13 +72,11 @@ export const renderAgents = (
   for (const agent of allAgents) {
     const isInRoom = opts.hasSelectedRoom && memberSet.has(agent.id)
     const isGenerating = agent.state === 'generating'
-    const isSelectedAsPoster = agent.id === opts.selectedPosterId
     const isInspectSelected = agent.id === opts.selectedAgentId
     container.appendChild(renderAgentRow(
-      agent, isInRoom, isGenerating, isSelectedAsPoster, isInspectSelected,
+      agent, isInRoom, isGenerating, isInspectSelected,
       () => opts.onInspect(agent.id),
       () => opts.onDelete(agent.name),
-      () => opts.onSelectAsPoster(agent.id),
     ))
   }
 }

@@ -5,30 +5,35 @@ import { requireRoom, requireAgent, sendError, type CommandContext } from './typ
 import { asAIAgent } from '../../agents/shared.ts'
 
 export const handleRoomCommand = async (msg: WSInbound, ctx: CommandContext): Promise<boolean> => {
-  const { ws, session, system, broadcast, wsManager } = ctx
+  const { ws, system, broadcast, wsManager } = ctx
+  // v15+: WS sessions don't own a default actor. Non-content commands
+  // attribute to 'system' as createdBy / initiator-name. Future PRs can
+  // plumb the per-room selected human through to these commands too.
+  const SYSTEM_ACTOR_ID = 'system'
+  const SYSTEM_ACTOR_NAME = 'system'
 
   switch (msg.type) {
     case 'create_room': {
       const result = system.house.createRoomSafe({
         name: msg.name,
         roomPrompt: msg.roomPrompt,
-        createdBy: session.agent.id,
+        createdBy: SYSTEM_ACTOR_ID,
       })
-      // Add the creator; system.addAgentToRoom fires membership_changed + join message
-      // room_created fired via onRoomCreated callback
-      await system.addAgentToRoom(session.agent.id, result.value.profile.id)
+      // Note: no creator-add — the WS no longer represents an agent. The
+      // user can add humans/AI to the new room via the chip row.
+      void result
       return true
     }
     case 'add_to_room': {
       const room = requireRoom(wsManager, ws, system, msg.roomName)
       const agent = requireAgent(wsManager, ws, system, msg.agentName)
-      if (room && agent) await system.addAgentToRoom(agent.id, room.profile.id, session.agent.name)
+      if (room && agent) await system.addAgentToRoom(agent.id, room.profile.id, SYSTEM_ACTOR_NAME)
       return true
     }
     case 'remove_from_room': {
       const room = requireRoom(wsManager, ws, system, msg.roomName)
       const agent = requireAgent(wsManager, ws, system, msg.agentName)
-      if (room && agent) system.removeAgentFromRoom(agent.id, room.profile.id, session.agent.name)
+      if (room && agent) system.removeAgentFromRoom(agent.id, room.profile.id, SYSTEM_ACTOR_NAME)
       return true
     }
     case 'set_delivery_mode': {

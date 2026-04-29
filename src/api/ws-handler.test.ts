@@ -117,12 +117,14 @@ describe('WS Handler', () => {
   let system: System
   let session: ClientSession
   let wsManager: WSManager
+  let humanId: string
 
   beforeEach(() => {
     system = makeSystem()
     const human = createHumanAgent({ name: 'Human' }, () => {})
     system.team.addAgent(human)
-    session = { agent: human, instanceId: 'test0123456789ab', lastActivity: Date.now() }
+    humanId = human.id
+    session = { instanceId: 'test0123456789ab', lastActivity: Date.now() }
     wsManager = createWSManager({
       getSystem: () => system,
     })
@@ -177,7 +179,7 @@ describe('WS Handler', () => {
   test('post_message to known room echoes message back to sender', async () => {
     const { ws, messages } = makeWS()
     await dispatch(ws, session, system, wsManager, {
-      type: 'post_message', target: { rooms: ['TestRoom'] }, content: 'Hello',
+      type: 'post_message', target: { rooms: ['TestRoom'] }, content: 'Hello', senderId: humanId,
     })
     const msgEvents = messages().filter(m => m.type === 'message')
     expect(msgEvents).toHaveLength(1)
@@ -311,14 +313,16 @@ describe('WS Handler', () => {
 
   // --- create_room ---
 
-  test('create_room with duplicate name still calls addAgentToRoom', async () => {
+  test('create_room with duplicate name does NOT auto-add (v15+ no WS-bound creator)', async () => {
     let addCalled = false
     ;(system as unknown as Record<string, unknown>).addAgentToRoom = async () => { addCalled = true }
     const { ws, errors } = makeWS()
     await dispatch(ws, session, system, wsManager, { type: 'create_room', name: 'TestRoom' })
     // Duplicate names are allowed (createRoomSafe returns sanitised name) — no error expected
     expect(errors()).toHaveLength(0)
-    expect(addCalled).toBe(true)
+    // v15+ semantics: WS sessions don't represent an agent, so create_room
+    // can't auto-add a creator. User adds members via the chip row.
+    expect(addCalled).toBe(false)
   })
 })
 
@@ -372,19 +376,19 @@ describe('WSManager.safeSend backpressure', () => {
     })
     const TEN_DAYS_AGO = Date.now() - 10 * 24 * 60 * 60 * 1000
     wsManager.sessions.set('stale-token', {
-      agent: { id: 'agent-stale', name: 'Stale' } as never,
+
       instanceId: 'test0123456789ab',
       lastActivity: TEN_DAYS_AGO,
     })
     // Recent + no live ws — should NOT be swept.
     wsManager.sessions.set('recent-token', {
-      agent: { id: 'agent-recent', name: 'Recent' } as never,
+
       instanceId: 'test0123456789ab',
       lastActivity: Date.now() - 60_000,
     })
     // Old but live connection — should NOT be swept.
     wsManager.sessions.set('live-token', {
-      agent: { id: 'agent-live', name: 'Live' } as never,
+
       instanceId: 'test0123456789ab',
       lastActivity: TEN_DAYS_AGO,
     })
@@ -397,7 +401,9 @@ describe('WSManager.safeSend backpressure', () => {
     expect(wsManager.sessions.has('stale-token')).toBe(false)
     expect(wsManager.sessions.has('recent-token')).toBe(true)
     expect(wsManager.sessions.has('live-token')).toBe(true)
-    expect(removed).toEqual(['agent-stale'])
+    // v15+: sweep no longer removes agents from team. Sessions are pure
+    // viewers; agent removal only happens via DELETE /api/agents/:name.
+    expect(removed).toEqual([])
     expect(limitMetrics.snapshot().staleSessionsEvicted).toBe(1)
   })
 
@@ -409,7 +415,7 @@ describe('WSManager.safeSend backpressure', () => {
       limitMetrics,
     })
     wsManager.sessions.set('orphan-token', {
-      agent: { id: 'agent-orphan', name: 'Orphan' } as never,
+
       instanceId: 'test0123456789ab',
       lastActivity: Date.now() - 10 * 24 * 60 * 60 * 1000,
     })

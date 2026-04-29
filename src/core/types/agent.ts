@@ -30,6 +30,10 @@ export interface Agent {
   readonly leave: (roomId: string) => void
   readonly inactive?: boolean
   readonly setInactive?: (value: boolean) => void
+  // Rename in place. Implemented by humans; AI agents may implement later.
+  // Callers should go through team.renameAgent which validates uniqueness +
+  // swaps the team's nameIndex; calling setName directly skips that.
+  readonly setName?: (newName: string) => void
   readonly getDescription?: () => string
   readonly updateDescription?: (desc: string) => void
   // Capability/role tags — used for [[tag:X]] addressing via team.listByTag.
@@ -148,6 +152,10 @@ export interface Team {
   readonly addAgent: (agent: Agent) => void
   readonly getAgent: (idOrName: string) => Agent | undefined
   readonly removeAgent: (id: string) => boolean
+  // Rename in place. Validates non-empty + unique. Returns null on success
+  // or an error string. Callers must broadcast `agent_renamed` themselves
+  // to keep open UIs in sync.
+  readonly renameAgent: (id: string, newName: string) => string | null
   readonly listAgents: () => ReadonlyArray<Agent>
   readonly listByKind: (kind: 'ai' | 'human') => ReadonlyArray<Agent>
   readonly listByTag: (tag: string) => ReadonlyArray<Agent>

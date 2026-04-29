@@ -55,7 +55,8 @@ export type WSOutbound =
   | { readonly type: 'room_created'; readonly profile: RoomProfile }
   | { readonly type: 'agent_joined'; readonly agent: AgentProfile }
   | { readonly type: 'agent_removed'; readonly agentName: string }
-  | { readonly type: 'snapshot'; readonly rooms: ReadonlyArray<RoomProfile>; readonly agents: ReadonlyArray<AgentProfile>; readonly agentId: string; readonly roomStates?: Record<string, RoomState>; readonly sessionToken?: string }
+  | { readonly type: 'agent_renamed'; readonly id: string; readonly oldName: string; readonly newName: string }
+  | { readonly type: 'snapshot'; readonly rooms: ReadonlyArray<RoomProfile>; readonly agents: ReadonlyArray<AgentProfile>; readonly agentId?: string; readonly roomStates?: Record<string, RoomState>; readonly sessionToken?: string }
   | { readonly type: 'error'; readonly message: string }
   | { readonly type: 'delivery_mode_changed'; readonly roomName: string; readonly mode: DeliveryMode; readonly paused: boolean }
   | { readonly type: 'mute_changed'; readonly roomName: string; readonly agentName: string; readonly muted: boolean }
