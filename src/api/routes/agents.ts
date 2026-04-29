@@ -110,15 +110,24 @@ export const agentRoutes: RouteEntry[] = [
       if (!body.name || !body.model || !body.persona) {
         return errorResponse('name, model, and persona are required')
       }
-      // Best-effort model validation — warn but don't block.
-      // Use router-level model list (covers Ollama + cloud, prefixed) plus
-      // Ollama's unprefixed list (back-compat for legacy agent configs).
+      // Soft validation — let the user set a preferred model even if the
+      // provider is currently unconfigured (e.g. setting up agents before
+      // adding the API key). Surface a `modelStatus` so the UI can show a
+      // yellow warning chip; do NOT block creation.
+      // Why soft: Phase 4 resolves an effective model per call from the
+      // preferred string + currently-available providers. A hard 400 here
+      // would reject perfectly valid intent ("I want this agent on Haiku
+      // once Anthropic is configured").
       const ollamaAvailable = system.ollama?.getHealth().availableModels ?? []
       const routerAvailable = await system.llm.models().catch(() => [] as string[])
       const allAvailable = [...ollamaAvailable, ...routerAvailable]
       const requestedModel = body.model as string
-      if (allAvailable.length > 0 && !allAvailable.includes(requestedModel)) {
-        console.warn(`[agents] Model "${requestedModel}" not in available models.`)
+      const modelStatus: 'ok' | 'unavailable' | 'unverified' =
+        allAvailable.length === 0 ? 'unverified'
+        : allAvailable.includes(requestedModel) ? 'ok'
+        : 'unavailable'
+      if (modelStatus === 'unavailable') {
+        console.warn(`[agents] Model "${requestedModel}" not currently available — agent will use fallback when invoked.`)
       }
       try {
         // subscribeAgentState happens automatically inside the wrapped
@@ -134,7 +143,7 @@ export const agentRoutes: RouteEntry[] = [
         const evt = { type: 'agent_joined' as const, agent: { id: agent.id, name: agent.name, kind: agent.kind, ...(aiA ? { model: aiA.getModel() } : {}) } }
         if (broadcastToInstance) broadcastToInstance(instanceId, evt)
         else broadcast(evt)
-        return json({ id: agent.id, name: agent.name }, 201)
+        return json({ id: agent.id, name: agent.name, modelStatus }, 201)
       } catch (err) {
         return errorResponse(err instanceof Error ? err.message : 'Failed to create agent')
       }
@@ -195,9 +204,26 @@ export const agentRoutes: RouteEntry[] = [
         else broadcast(evt)
       }
       const aiAgent = asAIAgent(agent)
+      let modelStatus: 'ok' | 'unavailable' | 'unverified' | undefined
       if (aiAgent) {
         if (body.persona) aiAgent.updatePersona(body.persona as string)
-        if (body.model) aiAgent.updateModel(body.model as string)
+        if (body.model) {
+          // Same soft-validation behaviour as POST — accept the update, surface
+          // status so the UI can warn if currently unavailable. Effective-model
+          // resolution at call time picks a working fallback when needed.
+          const ollamaAvailable = system.ollama?.getHealth().availableModels ?? []
+          const routerAvailable = await system.llm.models().catch(() => [] as string[])
+          const allAvailable = [...ollamaAvailable, ...routerAvailable]
+          const requestedModel = body.model as string
+          modelStatus =
+            allAvailable.length === 0 ? 'unverified'
+            : allAvailable.includes(requestedModel) ? 'ok'
+            : 'unavailable'
+          if (modelStatus === 'unavailable') {
+            console.warn(`[agents] Model "${requestedModel}" not currently available — agent will use fallback when invoked.`)
+          }
+          aiAgent.updateModel(requestedModel)
+        }
         if (body.temperature !== undefined) aiAgent.updateTemperature?.(body.temperature as number | undefined)
         if (body.historyLimit !== undefined) aiAgent.updateHistoryLimit?.(body.historyLimit as number)
         if (body.thinking !== undefined) aiAgent.updateThinking?.(body.thinking as boolean)
@@ -236,7 +262,7 @@ export const agentRoutes: RouteEntry[] = [
           .filter(t => t.length > 0)
         agent.updateTags(tags)
       }
-      return json({ updated: true, name: agent.name })
+      return json({ updated: true, name: agent.name, ...(modelStatus !== undefined ? { modelStatus } : {}) })
     },
   },
   {
