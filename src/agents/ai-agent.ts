@@ -198,7 +198,6 @@ export const createAIAgent = (
   const EVAL_COOLDOWN_MS = 500
 
   const tryEvaluate = (triggerRoomId: string): void => {
-    console.error(`[DEBUG ${config.name}.tryEvaluate] room=${triggerRoomId} busy=${cm.isBusy()}`)
     if (cm.isBusy()) {
       cm.addPending(triggerRoomId)
       return
@@ -206,7 +205,6 @@ export const createAIAgent = (
 
     cm.startGeneration(triggerRoomId)
     cm.notifyState('generating', triggerRoomId)
-    console.error(`[DEBUG ${config.name}.tryEvaluate] started generating, model=${currentModel}`)
 
     const contextResult = buildContext(contextDeps(), triggerRoomId)
     const epoch = cm.epochAtStart()
@@ -297,7 +295,6 @@ export const createAIAgent = (
   // re-evaluation continuity without triggering a new eval.
 
   const receive = (message: Message): void => {
-    console.error(`[DEBUG ${config.name}.receive] type=${message.type} from=${message.senderId} room=${message.roomId} content="${message.content.slice(0,40)}"`)
     extractProfile(message, agentId, agentHistory.agentProfiles)
 
     if (message.senderId === agentId) {
@@ -308,12 +305,8 @@ export const createAIAgent = (
 
     agentHistory.incoming.push(message)
 
-    if (message.type === 'system' || message.type === 'join' || message.type === 'leave' || message.type === 'pass') {
-      console.error(`[DEBUG ${config.name}.receive] FILTERED OUT (non-eval-trigger type)`)
-      return
-    }
+    if (message.type === 'system' || message.type === 'join' || message.type === 'leave' || message.type === 'pass') return
 
-    console.error(`[DEBUG ${config.name}.receive] calling tryEvaluate roomId=${message.roomId}`)
     tryEvaluate(message.roomId)
   }
 
