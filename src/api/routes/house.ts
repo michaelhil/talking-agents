@@ -99,8 +99,9 @@ export const houseRoutes: RouteEntry[] = [
       // (context window, running flag, recommended flag). Consumed by the
       // UI's model-selection dropdown.
       try {
-        const { CURATED_MODELS, isCuratedModel, DEFAULT_PREFERENCE_ORDER } =
+        const { CURATED_MODELS, isCuratedModel } =
           await import('../../llm/models/catalog.ts')
+        const { resolveDefaultModel } = await import('../../llm/models/default-resolver.ts')
         const { PROVIDER_PROFILES } = await import('../../llm/providers-config.ts')
         const { getContextWindowSync } = await import('../../llm/models/context-window.ts')
         const { loadProviderStore, mergeWithEnv } = await import('../../llm/providers-store.ts')
@@ -198,20 +199,11 @@ export const houseRoutes: RouteEntry[] = [
           })
         }
 
-        // Default model pick — first curated entry of the first "ok" provider
-        // in the preferred order, prefixed with the provider name.
-        let defaultModel = ''
-        for (const prov of DEFAULT_PREFERENCE_ORDER) {
-          const p = providers.find(x => x.name === prov && x.status === 'ok')
-          if (!p || p.models.length === 0) continue
-          defaultModel = prov === 'ollama' ? p.models[0]!.id : `${prov}:${p.models[0]!.id}`
-          break
-        }
-        if (!defaultModel) {
-          // Fallback: first model of first ok provider
-          const p = providers.find(x => x.status === 'ok' && x.models.length > 0)
-          if (p) defaultModel = p.name === 'ollama' ? p.models[0]!.id : `${p.name}:${p.models[0]!.id}`
-        }
+        // Default model pick — delegated to the pure resolver so the same logic
+        // can be reused by per-call effective-model resolution in agent eval.
+        // The resolver only sees 'ok' providers as candidates (key + no cooldown
+        // already encoded in the status field above).
+        const defaultModel = resolveDefaultModel(providers)
 
         void isCuratedModel
 
