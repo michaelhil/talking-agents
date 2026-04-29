@@ -85,6 +85,14 @@ export interface CreateSharedRuntimeOptions {
   // instance can be passed to buildProvidersFromConfig before SharedRuntime
   // exists. Tests/headless paths omit and we lazy-create.
   readonly limitMetrics?: LimitMetrics
+  // Optional pre-built provider keys store. Bootstrap supplies this so the
+  // SAME ProviderKeys instance flows into both `buildProvidersFromConfig`
+  // (used by bootstrap to wire limitMetrics into adapters) AND SharedRuntime.
+  // Without this, bootstrap built providerSetup with NO providerKeys → router
+  // had `isProviderEnabled = undefined` → every provider (including keyless
+  // anthropic) was tried on every request → Helper got `[pass] LLM error:
+  // anthropic auth error 401` on samsinn.app.
+  readonly providerKeys?: ProviderKeys
 }
 
 export const createSharedRuntime = (
@@ -95,11 +103,15 @@ export const createSharedRuntime = (
   // Mutable runtime registry of API keys. Boot-time keys (env or stored)
   // are seeded from providerConfig.cloud; later UI edits flow through here
   // without restart.
-  const providerKeys = createProviderKeys(
+  const providerKeys = opts.providerKeys ?? createProviderKeys(
     mergeWithEnv({ version: 1, providers: {} }, { env: {} as Record<string, string | undefined> }),
   )
-  for (const [name, cc] of Object.entries(providerConfig.cloud)) {
-    if (cc?.apiKey) providerKeys.set(name, cc.apiKey)
+  // Only seed from cloud config when we constructed the keys here. If the
+  // caller supplied them, they've already been populated.
+  if (!opts.providerKeys) {
+    for (const [name, cc] of Object.entries(providerConfig.cloud)) {
+      if (cc?.apiKey) providerKeys.set(name, cc.apiKey)
+    }
   }
 
   const providerSetup =

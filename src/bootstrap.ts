@@ -49,6 +49,7 @@ import { asAIAgent } from './agents/shared.ts'
 import { parseProviderConfig, summariseProviderConfig } from './llm/providers-config.ts'
 import { buildProvidersFromConfig, warmProviderModels } from './llm/providers-setup.ts'
 import { loadProviderStore, mergeWithEnv } from './llm/providers-store.ts'
+import { createProviderKeys } from './llm/provider-keys.ts'
 import { loadWikiStore, mergeWikis } from './wiki/store.ts'
 import { createWikiTools } from './tools/built-in/wiki-tools.ts'
 import { parseLogConfigFromEnv } from './logging/config.ts'
@@ -89,8 +90,16 @@ export const bootstrap = async (): Promise<void> => {
   // Build the metrics handle first so the same instance flows into both
   // the cloud-provider adapters (SSE-overflow tracking) and SharedRuntime.
   const limitMetrics = createLimitMetrics()
-  const providerSetup = buildProvidersFromConfig(providerConfig, { limitMetrics })
-  const shared = createSharedRuntime({ providerConfig, providerSetup, limitMetrics })
+  // Build providerKeys BEFORE the setup so the router's isProviderEnabled
+  // filter actually skips keyless providers. Without this, the router
+  // walks every provider in the order, including ones with no key (e.g.
+  // anthropic), which throws auth errors on every chat call.
+  const providerKeys = createProviderKeys(fileStore)
+  for (const [name, cc] of Object.entries(providerConfig.cloud)) {
+    if (cc?.apiKey) providerKeys.set(name, cc.apiKey)
+  }
+  const providerSetup = buildProvidersFromConfig(providerConfig, { limitMetrics, providerKeys })
+  const shared = createSharedRuntime({ providerConfig, providerSetup, limitMetrics, providerKeys })
   // Wire the shared rate-limiter with the global metrics handle so LRU
   // evictions are counted. Idempotent — safe if called more than once.
   initSharedLimiter(shared.limitMetrics)
