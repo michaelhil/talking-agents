@@ -207,9 +207,18 @@ export const wireSystemEvents = (
     wsManager.broadcast({ type: 'ollama_health', health })
   })
 
-  // === Existing AI agent state subscriptions — populate at wire time ===
-  // After wiring, subscribe each existing AI agent so the UI sees state
-  // changes scoped to this instance.
+  // === Snapshot-restored agents: subscribe at wire time ===
+  // Covers ONE specific path: agents already present when wireSystemEvents
+  // runs. Today that's exclusively snapshot-restored agents — restoreFrom
+  // Snapshot runs in buildSystem BEFORE onSystemCreated (system-registry.ts:
+  // 192-203), so by the time wireSystemEvents fires, the snapshot's agents
+  // exist on system.team but bypassed the wireAgentTracking spawn-wrapper
+  // (which is installed by onSystemCreated, also AFTER restore).
+  //
+  // Future spawns (seed, REST, WS, script-engine, anything programmatic)
+  // are covered by wireAgentTracking's spawnAIAgent wrapper. Do NOT add
+  // ad-hoc subscribeAgentState calls in route/command handlers — the
+  // wrapper is the single source of truth.
   for (const agent of system.team.listAgents()) {
     if (agent.kind === 'ai') wsManager.subscribeAgentState(agent, instanceId)
   }

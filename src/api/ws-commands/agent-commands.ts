@@ -8,8 +8,9 @@ export const handleAgentCommand = async (msg: WSInbound, ctx: CommandContext): P
 
   switch (msg.type) {
     case 'create_agent': {
+      // subscribeAgentState happens automatically inside the wrapped
+      // system.spawnAIAgent — see wireAgentTracking in bootstrap.ts.
       const agent = await system.spawnAIAgent(msg.config)
-      ctx.wsManager.subscribeAgentState(agent, ctx.session.instanceId)
       const ai = asAIAgent(agent)
       ctx.wsManager.broadcastToInstance(ctx.session.instanceId, { type: 'agent_joined', agent: { id: agent.id, name: agent.name, kind: agent.kind, ...(ai ? { model: ai.getModel() } : {}) } })
       return true
@@ -17,7 +18,8 @@ export const handleAgentCommand = async (msg: WSInbound, ctx: CommandContext): P
     case 'remove_agent': {
       const agent = system.team.getAgent(msg.name)
       if (agent) {
-        ctx.wsManager.unsubscribeAgentState(agent.id)
+        // unsubscribeAgentState happens automatically inside the wrapped
+        // system.removeAgent — see wireAgentTracking in bootstrap.ts.
         system.removeAgent(agent.id)
         ctx.wsManager.broadcastToInstance(ctx.session.instanceId, { type: 'agent_removed', agentName: msg.name })
       }

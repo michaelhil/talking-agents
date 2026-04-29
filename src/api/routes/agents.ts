@@ -105,7 +105,7 @@ export const agentRoutes: RouteEntry[] = [
   {
     method: 'POST',
     pattern: /^\/api\/agents$/,
-    handler: async (req, _match, { system, instanceId, broadcast, broadcastToInstance, subscribeAgentState }) => {
+    handler: async (req, _match, { system, instanceId, broadcast, broadcastToInstance }) => {
       const body = await parseBody(req)
       if (!body.name || !body.model || !body.persona) {
         return errorResponse('name, model, and persona are required')
@@ -121,6 +121,8 @@ export const agentRoutes: RouteEntry[] = [
         console.warn(`[agents] Model "${requestedModel}" not in available models.`)
       }
       try {
+        // subscribeAgentState happens automatically inside the wrapped
+        // system.spawnAIAgent — see wireAgentTracking in bootstrap.ts.
         const agent = await system.spawnAIAgent({
           name: body.name as string,
           model: requestedModel,
@@ -128,7 +130,6 @@ export const agentRoutes: RouteEntry[] = [
           temperature: body.temperature as number | undefined,
           historyLimit: body.historyLimit as number | undefined,
         })
-        subscribeAgentState(agent, instanceId)
         const aiA = asAIAgent(agent)
         const evt = { type: 'agent_joined' as const, agent: { id: agent.id, name: agent.name, kind: agent.kind, ...(aiA ? { model: aiA.getModel() } : {}) } }
         if (broadcastToInstance) broadcastToInstance(instanceId, evt)
@@ -235,11 +236,12 @@ export const agentRoutes: RouteEntry[] = [
   {
     method: 'DELETE',
     pattern: /^\/api\/agents\/([^/]+)$/,
-    handler: (_req, match, { system, instanceId, broadcast, broadcastToInstance, unsubscribeAgentState }) => {
+    handler: (_req, match, { system, instanceId, broadcast, broadcastToInstance }) => {
       const name = decodeURIComponent(match[1]!)
       const agent = system.team.getAgent(name)
       if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
-      unsubscribeAgentState?.(agent.id)
+      // unsubscribeAgentState happens automatically inside the wrapped
+      // system.removeAgent — see wireAgentTracking in bootstrap.ts.
       system.removeAgent(agent.id)
       const evt = { type: 'agent_removed' as const, agentName: name }
       if (broadcastToInstance) broadcastToInstance(instanceId, evt)

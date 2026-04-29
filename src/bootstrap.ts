@@ -56,6 +56,7 @@ import { sharedPaths } from './core/paths.ts'
 import { createToolRegistry } from './core/tool-registry.ts'
 import { generateInstanceId } from './api/instance-cookie.ts'
 import { wireSystemEvents } from './api/wire-system-events.ts'
+import { wireAgentTracking } from './api/agent-tracking.ts'
 import { createWSManager } from './api/ws-handler.ts'
 import { initSharedLimiter } from './api/routes/instances.ts'
 // Process-wide tool factories. Anything that doesn't bind to a per-instance
@@ -65,7 +66,6 @@ import {
   createPassTool, createGetTimeTool, createTestToolTool, createListSkillsTool,
   createWebTools, createWriteSkillTool, createWriteToolTool, createPackTools,
 } from './tools/built-in/index.ts'
-import type { System } from './main.ts'
 
 const DRAIN_TIMEOUT_MS = 5_000
 
@@ -192,33 +192,10 @@ export const bootstrap = async (): Promise<void> => {
     shared.sharedToolRegistry.register(createWriteSkillTool(shared.sharedSkillStore, sharedPaths.skills()))
   }
 
-  // === Track new agents for the provider-event reverse index ===
-  // Bun JS is single-threaded; mutating system function references via
-  // Object.assign at construction time is safe before any agents spawn.
-  const wireAgentTracking = (system: System, instanceId: string,
-    attach: (agentId: string, instanceId: string) => void,
-    detach: (agentId: string) => void): void => {
-    const origSpawnAI = system.spawnAIAgent
-    const origSpawnHuman = system.spawnHumanAgent
-    const origRemove = system.removeAgent
-    Object.assign(system, {
-      spawnAIAgent: async (cfg: Parameters<typeof origSpawnAI>[0], opts?: Parameters<typeof origSpawnAI>[1]) => {
-        const agent = await origSpawnAI(cfg, opts)
-        attach(agent.id, instanceId)
-        return agent
-      },
-      spawnHumanAgent: async (cfg: Parameters<typeof origSpawnHuman>[0], send: Parameters<typeof origSpawnHuman>[1]) => {
-        const agent = await origSpawnHuman(cfg, send)
-        attach(agent.id, instanceId)
-        return agent
-      },
-      removeAgent: (id: string) => {
-        const ok = origRemove(id)
-        if (ok) detach(id)
-        return ok
-      },
-    })
-  }
+  // === Per-agent wiring on spawn/remove ===
+  // Implementation lives in src/api/agent-tracking.ts so the regression test
+  // (src/api/agent-state-wiring.test.ts) exercises the SAME code that runs
+  // in production. Do not duplicate the wrapper logic here.
 
   // === SystemRegistry ===
   // The onSystemCreated hook closes over `wsManager` (assigned right after
@@ -248,7 +225,12 @@ export const bootstrap = async (): Promise<void> => {
       for (const agent of system.team.listAgents()) {
         registry.attachAgent(agent.id, id)
       }
-      wireAgentTracking(system, id, registry.attachAgent, registry.detachAgent)
+      wireAgentTracking(system, id, {
+        attach: registry.attachAgent,
+        detach: registry.detachAgent,
+        subscribeAgentState: wsManager.subscribeAgentState,
+        unsubscribeAgentState: wsManager.unsubscribeAgentState,
+      })
       // Default room if empty (first-time creation only).
       if (system.house.listAllRooms().length === 0) {
         system.house.createRoomSafe({ name: 'general', createdBy: 'system' })
