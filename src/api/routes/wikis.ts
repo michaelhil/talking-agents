@@ -49,6 +49,26 @@ export const wikisRoutes: RouteEntry[] = [
       let discovered: Awaited<ReturnType<typeof getAvailableWikis>> = []
       try { discovered = await getAvailableWikis() } catch { /* discovery failures are non-fatal here */ }
       const merged = mergeWithDiscovery(store, discovered)
+      // Reconcile the registry with the merged set. Discovered wikis added
+      // after boot (org created, repos transferred in) need this to be
+      // queryable + warmable. Idempotent — setWikis no-ops on identical input.
+      const enabled = merged.filter((w) => w.enabled)
+      const liveIds = new Set(system.wikiRegistry.list().map((w) => w.id))
+      const enabledIds = new Set(enabled.map((w) => w.id))
+      const idsDiffer = liveIds.size !== enabledIds.size
+        || [...enabledIds].some((id) => !liveIds.has(id))
+      if (idsDiffer) {
+        system.wikiRegistry.setWikis(enabled)
+        // Background warm of the just-added ones; UI will reflect pageCount
+        // on its next poll/event without blocking this response.
+        for (const w of enabled) {
+          if (!liveIds.has(w.id)) {
+            system.wikiRegistry.warm(w.id).catch((err) => {
+              console.warn(`[wiki:${w.id}] background warm failed: ${(err as Error).message}`)
+            })
+          }
+        }
+      }
       const live = system.wikiRegistry.list()
       const liveById = new Map(live.map((w) => [w.id, w]))
       const wikis = merged.map((w) => ({
@@ -205,11 +225,24 @@ export const wikisRoutes: RouteEntry[] = [
   },
 
   // --- Refresh (force warm) ---
+  // Re-reconciles the registry with the merged stored+discovered set first.
+  // Without this, wikis discovered AFTER the bootstrap setWikis() (e.g. the
+  // operator added the org just now, or discovery's 5-min cache was empty
+  // at boot) are visible in GET /api/wikis but absent from the live registry,
+  // so refresh falls through to a 404 ("not found"). The reconcile makes
+  // the refresh handler self-healing.
   {
     method: 'POST',
     pattern: /^\/api\/wikis\/([^/]+)\/refresh$/,
     handler: async (_req, match, { system, broadcast }) => {
       const id = match[1]!
+      if (!system.wikiRegistry.hasWiki(id)) {
+        const { data: store } = await loadWikiStore(system.wikisStorePath)
+        let discovered: Awaited<ReturnType<typeof getAvailableWikis>> = []
+        try { discovered = await getAvailableWikis() } catch { /* non-fatal */ }
+        const merged = mergeWithDiscovery(store, discovered).filter((w) => w.enabled)
+        if (merged.some((w) => w.id === id)) system.wikiRegistry.setWikis(merged)
+      }
       if (!system.wikiRegistry.hasWiki(id)) return errorResponse(`wiki "${id}" not found`, 404)
       try {
         const result = await system.wikiRegistry.warm(id)
