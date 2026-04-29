@@ -407,9 +407,6 @@ export const openInstancesModal = async (): Promise<void> => {
   if (!dlg) return
   const listEl = document.getElementById('instances-list')!
   const headerEl = document.getElementById('instances-header-actions')!
-  const closeBtn = document.getElementById('instances-close') as HTMLButtonElement
-
-  closeBtn.onclick = () => dlg.close()
 
   const state = newState()
   if (!dlg.open) dlg.showModal()

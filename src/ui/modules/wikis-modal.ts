@@ -10,7 +10,8 @@ export const openWikisModal = async (): Promise<void> => {
   const modal = createModal({ title: 'Wikis', width: 'max-w-2xl' })
   document.body.appendChild(modal.overlay)
 
-  const closeBtn = modal.header.querySelector('button')!
+  // Append action buttons to the header. The createModal helper no longer
+  // adds an × button — backdrop click + Escape are the close affordances.
   const addBtn = createButton({
     variant: 'ghost',
     icon: icon('plus', { size: 12 }),
@@ -22,7 +23,7 @@ export const openWikisModal = async (): Promise<void> => {
       await renderWikisInto(listEl)
     },
   })
-  modal.header.insertBefore(addBtn, closeBtn)
+  modal.header.appendChild(addBtn)
 
   // Discovery force-refresh — busts the 5-min cache so a freshly-transferred
   // repo in the SAMSINN_WIKI_SOURCES org appears immediately without a
@@ -44,7 +45,7 @@ export const openWikisModal = async (): Promise<void> => {
       }
     },
   })
-  modal.header.insertBefore(discRefreshBtn, closeBtn)
+  modal.header.appendChild(discRefreshBtn)
 
   const listEl = document.createElement('div')
   listEl.className = '-mx-6 -my-4'

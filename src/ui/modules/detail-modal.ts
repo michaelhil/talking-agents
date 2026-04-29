@@ -203,13 +203,10 @@ export const createModal = (config: ModalConfig): ModalElements => {
   title.textContent = config.title
   header.appendChild(title)
   const close = (): void => { overlay.remove() }
-  // Hidden × — overlay click + Escape are the canonical close affordances.
-  // Kept in DOM for callers that look up `header.querySelector('button')`.
-  const closeBtn = document.createElement('button')
-  closeBtn.className = 'hidden'
-  closeBtn.textContent = '×'
-  closeBtn.onclick = close
-  header.appendChild(closeBtn)
+  // No × button. Click outside or Escape closes. Some callers used to look
+  // it up via `header.querySelector('button')` — those have been migrated
+  // to insert their own buttons before any reference, so the lookup is
+  // either gone or harmless (returns the inserted button or null).
 
   const scrollBody = document.createElement('div')
   scrollBody.className = 'px-6 py-4 overflow-y-auto min-h-0 flex-1'

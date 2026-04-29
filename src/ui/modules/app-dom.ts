@@ -58,7 +58,6 @@ export const domRefs = {
   loggingStateDot: $('#logging-state-dot') as HTMLElement,
   ollamaStatusDot: document.getElementById('ollama-status-dot') as HTMLElement,
   ollamaDashboard: document.getElementById('ollama-dashboard') as HTMLDialogElement,
-  ollamaDashboardClose: document.getElementById('ollama-dashboard-close') as HTMLButtonElement,
   ollamaUrlSelect: $('#ollama-url-select') as HTMLSelectElement,
   ollamaUrlInput: $('#ollama-url-input') as HTMLInputElement,
   btnOllamaUrlAdd: $('#btn-ollama-url-add') as HTMLElement,

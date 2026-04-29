@@ -9,8 +9,8 @@ export const openPacksModal = async (): Promise<void> => {
   const modal = createModal({ title: 'Packs', width: 'max-w-2xl' })
   document.body.appendChild(modal.overlay)
 
-  // Install button in the modal header (before the × close button).
-  const closeBtn = modal.header.querySelector('button')!
+  // Install button in the modal header. createModal no longer adds an ×
+  // button; close via Escape or backdrop click.
   const installBtn = createButton({
     variant: 'ghost',
     icon: icon('plus', { size: 12 }),
@@ -22,7 +22,7 @@ export const openPacksModal = async (): Promise<void> => {
       await renderPacksInto(listEl)
     },
   })
-  modal.header.insertBefore(installBtn, closeBtn)
+  modal.header.appendChild(installBtn)
 
   const listEl = document.createElement('div')
   listEl.className = '-mx-6 -my-4'

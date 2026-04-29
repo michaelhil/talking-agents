@@ -34,7 +34,6 @@ export const openBugModal = async (): Promise<void> => {
   const titleEl = document.getElementById('bug-title') as HTMLInputElement
   const descEl = document.getElementById('bug-description') as HTMLTextAreaElement
   const ctxEl = document.getElementById('bug-context') as HTMLElement
-  const closeBtn = document.getElementById('bug-close') as HTMLButtonElement
   const cancelBtn = document.getElementById('bug-cancel') as HTMLButtonElement
   const submitBtn = document.getElementById('bug-submit') as HTMLButtonElement
 
@@ -47,7 +46,6 @@ export const openBugModal = async (): Promise<void> => {
   const ua = navigator.userAgent
   ctxEl.textContent = `Will include: samsinn ${version || '(version unknown)'} · ${ua}`
 
-  closeBtn.onclick = () => dlg.close()
   cancelBtn.onclick = () => dlg.close()
   dlg.addEventListener('cancel', () => dlg.close())
 

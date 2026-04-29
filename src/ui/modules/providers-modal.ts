@@ -13,7 +13,6 @@ import { send } from './ws-send.ts'
 
 const ollamaEls: OllamaDashboardElements = {
   dashboard: domRefs.ollamaDashboard,
-  closeBtn: domRefs.ollamaDashboardClose,
   statusDot: domRefs.ollamaStatusDot,
   urlSelect: domRefs.ollamaUrlSelect,
   urlInput: domRefs.ollamaUrlInput,

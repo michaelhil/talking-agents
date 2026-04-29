@@ -140,9 +140,10 @@ export const agentRoutes: RouteEntry[] = [
       }
     },
   },
-  // Quick "create human" endpoint used by the send-as picker when the user
-  // wants to post but has no humans in the system yet. Body: { name, roomName? }.
-  // If roomName is provided, the new human is auto-added to that room.
+  // Create a human agent. Body: { name, persona?, tags?, roomName? }.
+  // - `persona` is stored as the agent's description (same field used for AI)
+  // - `tags` enable [[tag:X]] addressing exactly like AI agents
+  // - `roomName` (optional) auto-adds the new human to that room
   {
     method: 'POST',
     pattern: /^\/api\/agents\/human$/,
@@ -150,8 +151,14 @@ export const agentRoutes: RouteEntry[] = [
       const body = await parseBody(req)
       const name = typeof body.name === 'string' ? body.name.trim() : ''
       if (!name) return errorResponse('name is required')
+      const persona = typeof body.persona === 'string' ? body.persona.trim() : undefined
+      const rawTags = Array.isArray(body.tags) ? (body.tags as unknown[]) : []
+      const tags = rawTags.filter((t): t is string => typeof t === 'string').map(t => t.trim()).filter(Boolean)
       try {
-        const agent = await system.spawnHumanAgent({ name }, () => { /* no-op transport */ })
+        const config: { name: string; description?: string; metadata?: Record<string, unknown> } = { name }
+        if (persona) config.description = persona
+        if (tags.length > 0) config.metadata = { tags }
+        const agent = await system.spawnHumanAgent(config, () => { /* no-op transport */ })
         if (typeof body.roomName === 'string' && body.roomName.trim()) {
           const room = system.house.getRoom(body.roomName.trim())
           if (room) {

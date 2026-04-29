@@ -94,7 +94,7 @@ const {
   roomModeInfo,
   nameModal, nameForm, roomModal, roomForm, agentModal, agentForm,
   agentsHeader, agentsToggle,
-  ollamaStatusDot, ollamaDashboard, ollamaDashboardClose,
+  ollamaStatusDot, ollamaDashboard,
   ollamaUrlSelect, ollamaUrlInput, btnOllamaUrlAdd, btnOllamaUrlDelete,
 } = domRefs
 
@@ -217,7 +217,6 @@ const refreshRoomControls = (): void => {
 const ollamaEls: OllamaDashboardElements = {
   statusDot: ollamaStatusDot,
   dashboard: ollamaDashboard,
-  closeBtn: ollamaDashboardClose,
   urlSelect: ollamaUrlSelect,
   urlInput: ollamaUrlInput,
   btnUrlAdd: btnOllamaUrlAdd,
@@ -794,14 +793,22 @@ agentForm.onsubmit = (e) => {
   if (!agentName) return
 
   if (agentModalKind === 'human') {
-    // POST to /api/agents/human, optionally adding to the originating room.
+    // POST to /api/agents/human with name + optional persona/tags + optional room.
     const autoAddRoom = consumeAutoAddRoom()
+    const persona = (data.get('persona') as string | null)?.trim() || undefined
+    const rawTagsHuman = (data.get('tags') as string | null)?.trim() ?? ''
+    const humanTags = rawTagsHuman ? rawTagsHuman.split(',').map(t => t.trim()).filter(Boolean) : undefined
     void (async () => {
       try {
         const res = await fetch('/api/agents/human', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: agentName, ...(autoAddRoom ? { roomName: autoAddRoom } : {}) }),
+          body: JSON.stringify({
+            name: agentName,
+            ...(persona ? { persona } : {}),
+            ...(humanTags && humanTags.length > 0 ? { tags: humanTags } : {}),
+            ...(autoAddRoom ? { roomName: autoAddRoom } : {}),
+          }),
         })
         if (!res.ok) {
           const body = await res.json().catch(() => ({})) as { error?: string }

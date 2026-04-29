@@ -565,7 +565,7 @@
         <button type="button" data-kind="human" class="px-3 py-1.5 text-sm border-b-2 border-transparent text-text-muted hover:text-text" role="tab" aria-selected="false">Human</button>
       </div>
       <input name="name" placeholder="Agent name" required class="w-full px-3 py-2 border rounded text-sm bg-surface text-text">
-      <!-- AI-only fields. Hidden when kind=human. -->
+      <!-- AI-only fields. Hidden when kind=human (humans don't pick a model). -->
       <div data-ai-fields class="space-y-3">
         <select name="model" class="w-full px-3 py-2 border rounded text-sm bg-surface text-text">
           <option value="">Loading models...</option>
@@ -574,9 +574,11 @@
           <input type="checkbox" id="model-show-all" class="rounded">
           Show all models (not just recommended)
         </label>
-        <textarea name="persona" placeholder="Agent persona..." rows="4" class="w-full px-3 py-2 border rounded text-sm bg-surface text-text"></textarea>
-        <input name="tags" placeholder="Tags (comma-separated, optional)" class="w-full px-3 py-2 border rounded text-sm bg-surface text-text">
       </div>
+      <!-- Persona + tags apply to both kinds. For humans, persona becomes
+           the description; tags drive [[tag:X]] addressing the same way. -->
+      <textarea name="persona" placeholder="Agent persona..." rows="4" class="w-full px-3 py-2 border rounded text-sm bg-surface text-text"></textarea>
+      <input name="tags" placeholder="Tags (comma-separated, optional)" class="w-full px-3 py-2 border rounded text-sm bg-surface text-text">
       <div class="flex justify-end gap-2">
         <button type="button" onclick="this.closest('dialog').close()" class="px-3 py-1 text-sm text-text">Cancel</button>
         <button type="submit" class="px-3 py-1 text-sm bg-success text-white rounded">Create</button>
@@ -589,11 +591,10 @@
        #agent-detail-body by agent-detail-modal.ts (delegates to the
        existing renderAgentInspector). -->
   <dialog id="agent-detail-modal" class="rounded-lg shadow-xl p-0 w-[720px] max-w-[95vw] bg-surface text-text" style="max-height: 90vh;">
+    <!-- v15+: no title bar, no × button. The inspector body has its own
+         header (dot · name · kind-icon) that serves as the heading.
+         Close via Escape or click outside. -->
     <div class="flex flex-col" style="max-height: 90vh;">
-      <div class="px-4 py-3 border-b flex items-center justify-between">
-        <h3 id="agent-detail-title" class="font-medium text-text-strong truncate">Agent</h3>
-        <button type="button" id="agent-detail-close" class="hidden" aria-label="Close">×</button>
-      </div>
       <div id="agent-detail-body" class="flex-1 overflow-y-auto px-4 py-3"></div>
     </div>
   </dialog>
@@ -615,7 +616,6 @@
         <div id="instances-header-actions" class="flex items-center gap-2 shrink-0">
           <!-- Populated by instances-modal.ts based on browse / bulk mode -->
         </div>
-        <button type="button" id="instances-close" class="hidden" aria-label="Close">×</button>
       </div>
       <div class="px-4 py-2 text-xs text-text-subtle border-b">
         Each instance is an isolated sandbox: its own rooms, agents, messages, and snapshot. The current instance is bound to your browser by a cookie.
@@ -631,7 +631,6 @@
     <form id="bug-form" class="flex flex-col" style="max-height: 80vh;">
       <div class="px-4 py-3 border-b flex items-center justify-between">
         <h3 class="font-medium text-text-strong inline-flex items-center gap-2"><span data-icon="bug"></span> Report a bug</h3>
-        <button type="button" id="bug-close" class="hidden" aria-label="Close">×</button>
       </div>
       <div class="px-4 py-3 space-y-3 flex-1 overflow-y-auto">
         <div>
@@ -664,7 +663,6 @@
       <!-- Fixed header — matches createModal chrome -->
       <div class="flex items-center justify-between px-6 py-3 border-b border-border flex-shrink-0">
         <h3 class="text-lg font-semibold">Providers</h3>
-        <button id="ollama-dashboard-close" class="hidden">&times;</button>
       </div>
       <!-- Scrollable body -->
       <div class="px-6 py-4 overflow-y-auto min-h-0 flex-1 space-y-3">

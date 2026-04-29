@@ -12,6 +12,7 @@ import { agentNameToId } from './identity-lookups.ts'
 import { populateModelSelect } from './model-select.ts'
 import { $pendingModelChanges } from './stores.ts'
 import { renderPromptToggles } from './prompt-toggles.ts'
+import { icon } from './icon.ts'
 
 interface MemoryStats {
   rooms: Array<{ roomId: string; roomName: string; messageCount: number; lastActiveAt?: number }>
@@ -192,6 +193,58 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
     nameEl.textContent = agentName
     header.appendChild(nameEl)
 
+    // Inline rename — humans only (AI rename deferred). Click pencil →
+    // input replaces nameEl → Enter saves via PATCH /api/agents/:name →
+    // optimistic UI; cross-tab sync via the agent_renamed WS event.
+    if (!isAI) {
+      const pencil = icon('pencil', { size: 14 })
+      pencil.classList.add('ml-1', 'cursor-pointer', 'text-text-subtle', 'hover:text-text', 'shrink-0')
+      pencil.setAttribute('aria-label', 'Rename')
+      header.insertBefore(pencil, nameEl.nextSibling)
+      const startEdit = (): void => {
+        const current = nameEl.textContent ?? agentName
+        const input = document.createElement('input')
+        input.type = 'text'
+        input.value = current
+        input.className = 'px-2 py-0.5 text-lg border rounded bg-surface text-text font-semibold'
+        input.style.width = '14rem'
+        nameEl.replaceWith(input)
+        input.focus()
+        input.select()
+        const restore = (text: string): void => {
+          nameEl.textContent = text
+          input.replaceWith(nameEl)
+        }
+        const save = async (): Promise<void> => {
+          const next = input.value.trim()
+          if (!next || next === current) { restore(current); return }
+          try {
+            const res = await fetch(`/api/agents/${encodeURIComponent(current)}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: next }),
+            })
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({})) as { error?: string }
+              showToast(document.body, body.error ?? `Rename failed (${res.status})`, { type: 'error', position: 'fixed' })
+              restore(current)
+              return
+            }
+            restore(next)
+          } catch {
+            showToast(document.body, 'Rename failed', { type: 'error', position: 'fixed' })
+            restore(current)
+          }
+        }
+        input.onkeydown = (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); void save() }
+          else if (e.key === 'Escape') { e.preventDefault(); restore(current) }
+        }
+        input.onblur = () => { void save() }
+      }
+      pencil.addEventListener('click', (e) => { e.stopPropagation(); startEdit() })
+    }
+
     if (isAI) {
       // Model selector
       const modelSelect = document.createElement('select')
@@ -239,10 +292,11 @@ export const renderAgentInspector = (container: HTMLElement, agentName: string):
       // temp / history / tools:N / thinking now live in the Model group of the
       // context panel (prompt-toggles.ts). Header keeps dot · name · model only.
     } else {
-      const kindLabel = document.createElement('span')
-      kindLabel.className = 'text-sm text-text-muted font-normal ml-2'
-      kindLabel.textContent = 'human'
-      header.appendChild(kindLabel)
+      // Use the kind icon (matches sidebar + chip row) instead of the text
+      // "human" so the inspector header doesn't restate what the icon shows.
+      const kindIcon = icon('user', { size: 14 })
+      kindIcon.classList.add('ml-2', 'text-text-subtle', 'shrink-0')
+      header.appendChild(kindIcon)
     }
 
     container.appendChild(header)

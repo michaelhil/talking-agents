@@ -11,7 +11,7 @@ import { safeFetchJson } from './fetch-helpers.ts'
 export interface OllamaDashboardElements {
   readonly statusDot: HTMLElement
   readonly dashboard: HTMLDialogElement
-  readonly closeBtn: HTMLButtonElement
+  // closeBtn dropped in v15+. Close via Escape or click outside.
   readonly urlSelect: HTMLSelectElement
   readonly urlInput: HTMLInputElement
   readonly btnUrlAdd: HTMLElement
@@ -174,12 +174,9 @@ export const wireOllamaDashboard = (
     await refreshOllamaUrls(els.urlSelect)
   }
 
-  // Metrics are polled via REST while the dashboard is open. The interval
-  // is captured in module scope so close handlers can stop it.
-  els.closeBtn.onclick = () => {
-    els.dashboard.close()
-    stopMetricsPoll()
-  }
+  // Metrics are polled via REST while the dashboard is open. The 'close'
+  // event listener below stops the poll regardless of close path (Escape,
+  // backdrop click, programmatic .close()). No explicit × button.
 
   els.dashboard.addEventListener('close', () => {
     stopMetricsPoll()
