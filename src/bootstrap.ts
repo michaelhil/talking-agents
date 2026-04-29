@@ -44,7 +44,6 @@ import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
 import { loadAllPacks } from './packs/loader.ts'
 import { loadDiscoverySources } from './core/discovery-sources.ts'
-import { loadGithubTokens, mergeWithEnv as mergeTokenWithEnv } from './core/github-tokens.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
 import { loadWikiStore } from './wiki/store.ts'
@@ -175,13 +174,8 @@ export const bootstrap = async (): Promise<void> => {
   for (const w of wikiWarnings) console.warn(`[wikis.json] ${w}`)
   try {
     const ds = await loadDiscoverySources(sharedPaths.discoverySources())
-    const tokens = mergeTokenWithEnv(await loadGithubTokens(sharedPaths.githubTokens()))
-    const { items: merged, failures } = await resolveActiveWikis(
-      sharedPaths.wikis(), shared.wikiRegistry,
-      { discoverySources: ds.wikis, storedToken: tokens.wikiRegistry.apiKey },
-    )
+    const merged = await resolveActiveWikis(sharedPaths.wikis(), shared.wikiRegistry, ds.wikis)
     console.log(`[wiki] reconciled — ${merged.filter((w) => w.enabled).length} active`)
-    for (const f of failures) console.warn(`[wiki/discovery] ${f.reason}: ${f.message}`)
   } catch (err) {
     console.warn(`[wiki] initial reconcile failed: ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -338,10 +332,6 @@ export const bootstrap = async (): Promise<void> => {
       notifyPacksChanged: crossInstanceNotifyPacksChanged,
       getDiscoverySources: async () =>
         (await loadDiscoverySources(sharedPaths.discoverySources())).packs,
-      getRegistryToken: async () => {
-        const merged = mergeTokenWithEnv(await loadGithubTokens(sharedPaths.githubTokens()))
-        return merged.packRegistry.apiKey || undefined
-      },
     }))
   }
 

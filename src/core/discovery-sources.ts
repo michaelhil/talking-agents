@@ -61,14 +61,12 @@ export const saveDiscoverySources = async (
   await rename(tmpPath, path)
 }
 
-// Merge env + stored + canonical fallback. Order: env (deploy-time, wins),
-// then stored (UI-managed), then fallback (canonical org always scanned).
+// Merge stored sources with an env-var-derived list. Env wins (deploy-time
+// config takes precedence over user UI edits, matching providers-store
+// semantics) — env entries appear first, stored entries appended unless the
+// env list explicitly overrides via empty.
 //
-// Earlier semantics dropped the fallback whenever env or stored had ANY entry.
-// That broke the user-facing claim that `samsinn-packs` / `samsinn-wikis` are
-// "scanned by default" — adding a custom org silently disabled the canonical.
-// The new contract: canonical is always included (deduped), so additional
-// sources are genuinely additional, not a replacement.
+// Both lists are deduped and trimmed.
 export const mergeSources = (
   envRaw: string | undefined,
   stored: ReadonlyArray<string>,
@@ -78,12 +76,13 @@ export const mergeSources = (
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
+  const all = [...envList, ...stored]
   const seen = new Set<string>()
   const out: string[] = []
-  for (const s of [...envList, ...stored, ...fallback]) {
+  for (const s of all) {
     if (seen.has(s)) continue
     seen.add(s)
     out.push(s)
   }
-  return out
+  return out.length > 0 ? out : fallback
 }

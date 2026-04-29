@@ -12,8 +12,6 @@
 
 import { showToast } from './toast.ts'
 import { renderSourcesEditor } from './discovery-sources.ts'
-import { renderGithubTokenEditor } from './github-tokens.ts'
-import { renderDiscoveryFailures, type DiscoveryFailure } from './discovery-failures.ts'
 
 interface InstalledPack {
   namespace: string
@@ -39,17 +37,12 @@ const fetchPacks = async (): Promise<InstalledPack[]> => {
   } catch { return [] }
 }
 
-interface RegistryResponse {
-  items: RegistryPack[]
-  failures: DiscoveryFailure[]
-}
-
-const fetchRegistry = async (): Promise<RegistryResponse> => {
+const fetchRegistry = async (): Promise<RegistryPack[]> => {
   try {
     const res = await fetch('/api/packs/registry')
-    if (!res.ok) return { items: [], failures: [] }
-    return await res.json() as RegistryResponse
-  } catch { return { items: [], failures: [] } }
+    if (!res.ok) return []
+    return await res.json() as RegistryPack[]
+  } catch { return [] }
 }
 
 const installFromBrowse = async (source: string, label: string): Promise<boolean> => {
@@ -82,17 +75,10 @@ export const renderPacksInto = async (container: HTMLElement): Promise<void> => 
   const [installed, registry] = await Promise.all([fetchPacks(), fetchRegistry()])
   container.innerHTML = ''
   renderInstalledSection(container, installed)
-  // Surface any GitHub discovery failures (rate-limit, auth, etc.) so the user
-  // doesn't have to infer "no packs == something broken upstream".
-  renderDiscoveryFailures(container, registry.failures)
-  renderBrowseSection(container, registry.items)
-
-  // Editor sections below — token first (most actionable for the rate-limit
-  // case), then additional sources (canonical orgs are scanned by default).
-  const tokenContainer = document.createElement('div')
-  container.appendChild(tokenContainer)
-  void renderGithubTokenEditor(tokenContainer, 'packRegistry')
-
+  renderBrowseSection(container, registry)
+  // Discovery-sources editor below the Available list. Independent fetch
+  // so installed/registry rendering isn't delayed by it; safe to ignore the
+  // returned Promise — the editor self-renders into its own sub-container.
   const sourcesContainer = document.createElement('div')
   container.appendChild(sourcesContainer)
   void renderSourcesEditor(sourcesContainer, 'packs')
@@ -157,11 +143,8 @@ const renderBrowseSection = (container: HTMLElement, registry: RegistryPack[]): 
   if (notInstalled.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'text-xs text-text-muted px-3 py-2 italic'
-    // Note: registry.length === 0 here can mean (a) discovery hit a failure
-    // (banner is already rendered above) or (b) no matching packs were found.
-    // The banner is the actionable signal; this line just fills the empty row.
     empty.textContent = registry.length === 0
-      ? 'No packs found in scanned sources.'
+      ? 'No pack sources configured.'
       : 'All available packs are installed.'
     container.appendChild(empty)
     return

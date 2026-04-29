@@ -59,8 +59,8 @@ const placeholderFor = (domain: Domain): string =>
 
 const helpFor = (domain: Domain): string =>
   domain === 'packs'
-    ? 'samsinn-packs is scanned by default. Add more orgs/repos here.'
-    : 'samsinn-wikis is scanned by default. Add more orgs/repos here.'
+    ? 'GitHub owners or owner/repo pairs to scan for installable packs.'
+    : 'GitHub owners or owner/repo pairs to scan for available wikis.'
 
 // Render the editor into `container`. Caller is responsible for (re-)rendering
 // when `discovery_sources_changed` fires — the editor itself doesn't subscribe
@@ -78,7 +78,7 @@ export const renderSourcesEditor = async (
 
   const header = document.createElement('div')
   header.className = 'px-3 py-2 text-[11px] uppercase tracking-wide text-text-subtle bg-surface-muted flex items-center justify-between'
-  header.innerHTML = `<span>Additional sources</span><span class="text-[10px] normal-case tracking-normal text-text-muted">${escapeHtml(helpFor(domain))}</span>`
+  header.innerHTML = `<span>Discovery sources</span><span class="text-[10px] normal-case tracking-normal text-text-muted">${escapeHtml(helpFor(domain))}</span>`
   wrap.appendChild(header)
 
   if (!sources) {

@@ -54,14 +54,14 @@ describe('discovery-sources store', () => {
 })
 
 describe('mergeSources', () => {
-  test('env first, then stored, then fallback — fallback is always appended', () => {
+  test('env first, then stored, deduped', () => {
     const out = mergeSources('a, b, c', ['c', 'd'], ['fallback'])
-    expect(out).toEqual(['a', 'b', 'c', 'd', 'fallback'])
+    expect(out).toEqual(['a', 'b', 'c', 'd'])
   })
 
-  test('env empty → stored + fallback', () => {
+  test('env empty → stored only', () => {
     const out = mergeSources(undefined, ['a', 'b'], ['fallback'])
-    expect(out).toEqual(['a', 'b', 'fallback'])
+    expect(out).toEqual(['a', 'b'])
   })
 
   test('both empty → fallback', () => {
@@ -69,18 +69,13 @@ describe('mergeSources', () => {
     expect(out).toEqual(['canonical-org'])
   })
 
-  test('all empty → empty', () => {
+  test('both empty + empty fallback → empty', () => {
     const out = mergeSources('', [], [])
     expect(out).toEqual([])
   })
 
-  test('env whitespace + commas tolerated; fallback still appears', () => {
+  test('env whitespace + commas tolerated', () => {
     const out = mergeSources('  a , ,b , ', [], ['x'])
-    expect(out).toEqual(['a', 'b', 'x'])
-  })
-
-  test('canonical fallback is deduped if user adds it explicitly', () => {
-    const out = mergeSources('samsinn-packs', ['acme-packs'], ['samsinn-packs'])
-    expect(out).toEqual(['samsinn-packs', 'acme-packs'])
+    expect(out).toEqual(['a', 'b'])
   })
 })

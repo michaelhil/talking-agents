@@ -44,13 +44,7 @@ export const packsRoutes: RouteEntry[] = [
     pattern: /^\/api\/packs\/registry$/,
     handler: async (_req, _match, { system }) => {
       const ds = await loadDiscoverySources(system.discoverySourcesStorePath)
-      const { loadGithubTokens, mergeWithEnv } = await import('../../core/github-tokens.ts')
-      const tokens = mergeWithEnv(await loadGithubTokens(system.githubTokensStorePath))
-      const result = await getAvailablePacks({
-        storedSources: ds.packs,
-        storedToken: tokens.packRegistry.apiKey,
-      })
-      const available = result.items
+      const available = await getAvailablePacks(ds.packs)
       // Get installed list to mark each available pack. Registry names are
       // canonical (registry strips `samsinn-pack-` from repo basenames before
       // returning) and install_pack writes packs under the same canonical
@@ -63,13 +57,7 @@ export const packsRoutes: RouteEntry[] = [
       const installed = installedRes.success && Array.isArray(installedRes.data)
         ? new Set((installedRes.data as Array<{ namespace: string }>).map(p => p.namespace))
         : new Set<string>()
-      // Return failures alongside the registry so the UI can render a banner
-      // when discovery hit rate limits / auth errors instead of falsely
-      // implying the registry is empty.
-      return json({
-        items: available.map(p => ({ ...p, installed: installed.has(p.name) })),
-        failures: result.failures,
-      })
+      return json(available.map(p => ({ ...p, installed: installed.has(p.name) })))
     },
   },
   {

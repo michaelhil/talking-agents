@@ -2,32 +2,34 @@
 // Pack registry resolver — discovers available packs on GitHub so the UI
 // can show a browsable list (alongside what's installed).
 //
-// Sources merge:
-//   - SAMSINN_PACK_SOURCES env (comma-separated; deploy-time, wins)
+// Sources can come from two places, merged on each call:
+//   - SAMSINN_PACK_SOURCES env (comma-separated; deploy-time)
 //   - $SAMSINN_HOME/discovery-sources.json's `packs` array (UI-managed)
-//   - canonical fallback `samsinn-packs` (real, operational org)
+// Each entry is one of:
+//   - `<owner>`         — list `<owner>/samsinn-pack-*` repos
+//   - `<owner>/<repo>`  — a single specific pack repo
 //
-// Failure plumbing: getAvailablePacks returns `{ items, failures }`. The
-// 5-min cache stores SUCCESS only — empty-with-failure is NOT cached so a
-// user setting a token after a rate-limit hit gets unblocked on next call.
-// (Same shape as the wiki boot-cache antipattern fixed in commit b660b3e —
-// caching derived state when the input is about to change.)
+// Caller passes the stored list (loaded by the API/UI plumbing) so the
+// registry stays a leaf module — no path or filesystem coupling here.
+// Default when both are empty: `samsinn-packs` (canonical org).
+//
+// The exposed `name` is the canonical install namespace — the repo basename
+// with any `samsinn-pack-` prefix stripped. This matches what install_pack
+// writes under packsDir (manifest.name first; stripped basename fallback —
+// for canonical packs the two agree). Downstream consumers can do straight
+// equality against installed-pack namespaces; no prefix-stripping shims.
+//
+// GitHub API is hit unauthenticated (60 req/hr) by default; set
+// SAMSINN_GH_TOKEN to lift to 5000/hr (the same token bug-reporting uses).
+// Results are cached for 5 min so the UI Browse view doesn't hammer the API.
 // ============================================================================
 
 import { stripPackPrefix } from './manifest.ts'
 import { mergeSources } from '../core/discovery-sources.ts'
-import {
-  discoverFromGitHub,
-  type DiscoveryResult,
-  type FetchFn,
-  type GHRepo,
-} from '../core/github-discovery.ts'
 
 const PREFIX = 'samsinn-pack-'
 const CACHE_TTL_MS = 5 * 60_000
 const FALLBACK_SOURCES = ['samsinn-packs'] as const
-
-export type { DiscoveryFailure } from '../core/github-discovery.ts'
 
 export interface RegistryPack {
   readonly name: string         // canonical install namespace (stripped repo basename)
@@ -37,26 +39,51 @@ export interface RegistryPack {
   readonly description: string
 }
 
-export type PackDiscoveryResult = DiscoveryResult<RegistryPack>
-
 interface CacheEntry {
   readonly fetchedAt: number
-  readonly result: PackDiscoveryResult
+  readonly packs: ReadonlyArray<RegistryPack>
 }
 
 let cache: CacheEntry | null = null
 
+// Resolve the active sources from env + stored. Caller passes stored (the API
+// layer loads discovery-sources.json and threads it in). Falls back to the
+// canonical placeholder org when both are empty so existing single-tenant
+// installs keep their previous behaviour.
 const resolveSources = (stored: ReadonlyArray<string>): ReadonlyArray<string> =>
   mergeSources(process.env.SAMSINN_PACK_SOURCES, stored, [...FALLBACK_SOURCES])
 
-// Token: SAMSINN_PACK_REGISTRY_TOKEN (broad public read scope).
-// SAMSINN_GH_TOKEN is intentionally NOT used here — it's a fine-grained PAT
-// scoped to the bug-report repo and 403s elsewhere.
-const resolveToken = (stored?: string): string =>
-  process.env.SAMSINN_PACK_REGISTRY_TOKEN ?? stored ?? ''
+// Tokens: registry calls list public repos under arbitrary orgs/users, so
+// the right credential is a token with broad public read — NOT the bug-
+// reporting PAT which is fine-grained to a single repo and 403s on every
+// other endpoint.
+//
+// Order:
+//   1. SAMSINN_PACK_REGISTRY_TOKEN — explicit, intended for this purpose
+//   2. unauthenticated — 60 req/hr per IP, fine for a 5-min-cached registry
+//
+// SAMSINN_GH_TOKEN is intentionally NOT used here — see commit log for
+// the symptom (org listing 403'd because the fine-grained scope denied
+// every endpoint outside michaelhil/samsinn).
+const ghHeaders = (): Record<string, string> => {
+  const h: Record<string, string> = {
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'samsinn-pack-registry',
+  }
+  const token = process.env.SAMSINN_PACK_REGISTRY_TOKEN
+  if (token) h['Authorization'] = `Bearer ${token}`
+  return h
+}
 
-const isPackOnlyOwner = (owner: string): boolean =>
-  /-packs$/.test(owner) || owner === 'samsinn-packs'
+interface GHRepo {
+  name: string
+  full_name: string
+  description: string | null
+  html_url: string
+  archived?: boolean
+  fork?: boolean
+}
 
 const repoToPack = (r: GHRepo): RegistryPack => ({
   name: stripPackPrefix(r.name),
@@ -66,36 +93,72 @@ const repoToPack = (r: GHRepo): RegistryPack => ({
   description: r.description ?? '',
 })
 
-export interface GetAvailablePacksOptions {
-  readonly storedSources?: ReadonlyArray<string>
-  readonly storedToken?: string
-  readonly fetchFn?: FetchFn
+// Owners whose repos are ALL treated as packs (no prefix filter). Anything
+// matching `<x>-packs` is assumed to be a dedicated pack-hosting org by
+// convention — `samsinn-packs`, `acme-packs`, etc. Operators putting their
+// personal account in SAMSINN_PACK_SOURCES still get the prefix filter so
+// random repos don't pollute the registry.
+const isPackOnlyOwner = (owner: string): boolean =>
+  /-packs$/.test(owner) || owner === 'samsinn-packs'
+
+const fetchOwnerRepos = async (owner: string): Promise<ReadonlyArray<RegistryPack>> => {
+  // /users/{owner}/repos works for both users and orgs.
+  const res = await fetch(`https://api.github.com/users/${encodeURIComponent(owner)}/repos?per_page=100&sort=updated`, {
+    headers: ghHeaders(),
+  })
+  if (!res.ok) {
+    console.warn(`[packs/registry] fetch ${owner} failed: HTTP ${res.status}`)
+    return []
+  }
+  const repos = await res.json() as ReadonlyArray<GHRepo>
+  const baseFilter = (r: GHRepo): boolean => !r.archived && !r.fork
+  return repos
+    .filter(r => baseFilter(r) && (isPackOnlyOwner(owner) || r.name.startsWith(PREFIX)))
+    .map(repoToPack)
+}
+
+const fetchOneRepo = async (ownerRepo: string): Promise<RegistryPack | null> => {
+  const res = await fetch(`https://api.github.com/repos/${ownerRepo}`, {
+    headers: ghHeaders(),
+  })
+  if (!res.ok) {
+    console.warn(`[packs/registry] fetch ${ownerRepo} failed: HTTP ${res.status}`)
+    return null
+  }
+  return repoToPack(await res.json() as GHRepo)
+}
+
+const dedupe = (packs: ReadonlyArray<RegistryPack>): ReadonlyArray<RegistryPack> => {
+  const seen = new Set<string>()
+  const out: RegistryPack[] = []
+  for (const p of packs) {
+    if (seen.has(p.source)) continue
+    seen.add(p.source)
+    out.push(p)
+  }
+  return out
 }
 
 export const getAvailablePacks = async (
-  options: GetAvailablePacksOptions = {},
-): Promise<PackDiscoveryResult> => {
+  storedSources: ReadonlyArray<string> = [],
+): Promise<ReadonlyArray<RegistryPack>> => {
   const now = Date.now()
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache.result
+  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache.packs
 
-  const sources = resolveSources(options.storedSources ?? [])
-  const result = await discoverFromGitHub<RegistryPack>({
-    sources,
-    ownerOnlyPolicy: isPackOnlyOwner,
-    repoFilter: (r) => r.name.startsWith(PREFIX),
-    repoToItem: (r) => repoToPack(r),
-    dedupeKey: (p) => p.source,
-    token: resolveToken(options.storedToken),
-    tokenEnvVar: 'SAMSINN_PACK_REGISTRY_TOKEN',
-    userAgent: 'samsinn-pack-registry',
-    ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
-  })
-  // Don't cache empty-with-failure — token may be set seconds from now and we
-  // want the next call to retry immediately, not after CACHE_TTL_MS.
-  if (result.items.length > 0 || result.failures.length === 0) {
-    cache = { fetchedAt: now, result }
+  const sources = resolveSources(storedSources)
+  const all: RegistryPack[] = []
+  for (const src of sources) {
+    if (src.includes('/')) {
+      const one = await fetchOneRepo(src)
+      if (one) all.push(one)
+    } else {
+      const list = await fetchOwnerRepos(src)
+      all.push(...list)
+    }
   }
-  return result
+  const packs = dedupe(all)
+  cache = { fetchedAt: now, packs }
+  return packs
 }
 
 // Test/debug helper — clears the in-memory cache so the next call refetches.

@@ -579,16 +579,6 @@ const handlers: Handlers = {
     window.dispatchEvent(new CustomEvent('wikis-changed'))
   },
 
-  github_tokens_changed(msg) {
-    // Token edit invalidated the matching discovery cache. Refresh whichever
-    // panel matches the slot; the OTHER panel's data is unaffected.
-    if (msg.slot === 'packRegistry') {
-      window.dispatchEvent(new CustomEvent('packs-changed'))
-    } else {
-      window.dispatchEvent(new CustomEvent('wikis-changed'))
-    }
-  },
-
   reset_pending(msg) {
     window.dispatchEvent(new CustomEvent('reset-pending', { detail: { commitsAtMs: msg.commitsAtMs } }))
   },

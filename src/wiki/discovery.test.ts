@@ -124,20 +124,13 @@ describe('getAvailableWikis (live GitHub API — gated by env)', () => {
   // The discovery uses real GitHub API. Skip by default; opt in by setting a
   // throwaway source that resolves to an empty list (or in CI with a real
   // public org configured). We only smoke-test the empty path here.
-  it('returns empty items + a not_found / rate_limit failure for unknown owner', async () => {
+  it('returns empty array for unknown owner', async () => {
     const prev = process.env.SAMSINN_WIKI_SOURCES
     process.env.SAMSINN_WIKI_SOURCES = 'definitely-not-a-real-github-org-zxqwerty12345'
     try {
-      // Ensure the in-memory cache from earlier tests doesn't mask this run.
-      const { invalidateDiscoveryCache } = await import('./discovery.ts')
-      invalidateDiscoveryCache()
-      const result = await getAvailableWikis()
-      expect(Array.isArray(result.items)).toBe(true)
-      expect(result.items.length).toBe(0)
-      // We expect SOME failure to be surfaced: either not_found (real GitHub
-      // 404) or rate_limit (we hit the unauthenticated cap during CI). The
-      // important contract is that empty != silent.
-      expect(result.failures.length).toBeGreaterThanOrEqual(1)
+      const wikis = await getAvailableWikis()
+      expect(Array.isArray(wikis)).toBe(true)
+      expect(wikis.length).toBe(0)
     } finally {
       if (prev === undefined) delete process.env.SAMSINN_WIKI_SOURCES
       else process.env.SAMSINN_WIKI_SOURCES = prev
