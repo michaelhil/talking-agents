@@ -83,11 +83,37 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
   const isStageCard = msg.senderId === 'system' && msg.senderName === 'Stage' && msg.type === 'chat'
   const isSystem = !isStageCard && (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.senderId === 'system')
   const isPass = msg.type === 'pass'
+  const isError = msg.type === 'error'
   const isMute = msg.type === 'mute'
   const isSelf = msg.senderId === myAgentId
   const isRoomSummary = msg.type === 'room_summary'
 
-  if (isPass) {
+  if (isError) {
+    const senderInfo = getAgent(msg.senderId)
+    const senderName = senderInfo?.name ?? msg.senderName ?? msg.senderId
+    div.className = 'msg-error text-xs py-1 px-2 border-l-2 border-danger bg-danger/5 text-danger flex items-center gap-2'
+    const label = document.createElement('span')
+    label.textContent = `⚠ ${senderName} ${msg.content}`
+    label.className = 'flex-1'
+    div.appendChild(label)
+    // Offer "Change model" affordance for failures the user can fix in config.
+    const code = msg.errorCode
+    const offersChangeModel = code === 'no_api_key' || code === 'model_unavailable' || code === 'provider_down'
+    if (offersChangeModel) {
+      const btn = document.createElement('button')
+      btn.className = 'text-xs underline hover:text-danger-strong'
+      btn.textContent = 'Change model'
+      btn.onclick = (e) => {
+        e.stopPropagation()
+        // Open the agent inspector via a custom event the app shell listens for.
+        // Falls through silently if no listener is registered.
+        window.dispatchEvent(new CustomEvent('open-agent-inspector', {
+          detail: { agentId: msg.senderId, focus: 'model' },
+        }))
+      }
+      div.appendChild(btn)
+    }
+  } else if (isPass) {
     const senderInfo = getAgent(msg.senderId)
     const senderName = senderInfo?.name ?? msg.senderName ?? msg.senderId
     div.className = 'msg-pass text-xs py-1 px-2'

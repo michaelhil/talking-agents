@@ -310,7 +310,7 @@ export const createAIAgent = (
 
     agentHistory.incoming.push(message)
 
-    if (message.type === 'system' || message.type === 'join' || message.type === 'leave' || message.type === 'pass') return
+    if (message.type === 'system' || message.type === 'join' || message.type === 'leave' || message.type === 'pass' || message.type === 'error') return
 
     tryEvaluate(message.roomId)
   }

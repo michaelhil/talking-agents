@@ -21,6 +21,8 @@ export const toUIMessage = (m: Message): UIMessage => ({
   ...(m.contextMax !== undefined ? { contextMax: m.contextMax } : {}),
   ...(m.provider !== undefined ? { provider: m.provider } : {}),
   ...(m.model !== undefined ? { model: m.model } : {}),
+  ...(m.errorCode !== undefined ? { errorCode: m.errorCode } : {}),
+  ...(m.errorProvider !== undefined ? { errorProvider: m.errorProvider } : {}),
 })
 
 export const toUIRoomProfile = (r: ServerRoomProfile): RoomProfile => ({

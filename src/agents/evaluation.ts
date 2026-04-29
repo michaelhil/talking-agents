@@ -6,13 +6,38 @@
 // responding. All tool calling uses the model's native structured format.
 // ============================================================================
 
-import type { AgentResponse, AIAgentConfig } from '../core/types/agent.ts'
+import type { AgentResponse, AgentResponseErrorCode, AIAgentConfig } from '../core/types/agent.ts'
 import type { ChatRequest, LLMCallOptions, LLMProvider } from '../core/types/llm.ts'
 import type { EvalEvent } from '../core/types/agent-eval.ts'
 import type { NativeToolCall, ToolCall, ToolDefinition, ToolExecutor, ToolResult } from '../core/types/tool.ts'
 import type { ToolTraceEntry } from '../core/types/messaging.ts'
 import type { ContextResult, FlushInfo } from './context-builder.ts'
-import { isOllamaError, isPermanent } from '../llm/errors.ts'
+import { isCloudProviderError, isGatewayError, isOllamaError, isPermanent } from '../llm/errors.ts'
+
+// === Error classification ===
+// Classify a thrown LLM-layer error into a structured AgentResponse error.
+// Cloud auth/bad_request → no_api_key/model_unavailable so the UI can offer
+// "Change model". Rate limits and provider-down are recoverable via fallback
+// or retry. Ollama 4xx is treated as model_unavailable (model name typo,
+// model not pulled). Anything else falls through to 'unknown'.
+const classifyLLMError = (err: unknown): { code: AgentResponseErrorCode; message: string; providerHint?: string } => {
+  if (isCloudProviderError(err)) {
+    if (err.code === 'auth') return { code: 'no_api_key', message: err.message, providerHint: err.provider }
+    if (err.code === 'bad_request') return { code: 'model_unavailable', message: err.message, providerHint: err.provider }
+    if (err.code === 'rate_limit' || err.code === 'quota') return { code: 'rate_limited', message: err.message, providerHint: err.provider }
+    if (err.code === 'provider_down') return { code: 'provider_down', message: err.message, providerHint: err.provider }
+  }
+  if (isOllamaError(err) && isPermanent(err)) {
+    return { code: 'model_unavailable', message: err.message, providerHint: 'ollama' }
+  }
+  if (isGatewayError(err)) {
+    return { code: 'provider_down', message: err.message }
+  }
+  if (err instanceof Error && /fetch|network|ECONN|ETIMEDOUT/i.test(err.message)) {
+    return { code: 'network', message: err.message }
+  }
+  return { code: 'unknown', message: err instanceof Error ? err.message : String(err) }
+}
 
 // === Decision — what the agent wants to do after evaluation ===
 
@@ -235,7 +260,11 @@ export const evaluate = async (
         }
 
         if (!toolExecutor) {
-          return makeResult({ response: { action: 'pass', reason: 'Tool calls not available' }, generationMs: totalGenerationMs, triggerRoomId })
+          return makeResult({
+            response: { action: 'error', code: 'tools_unavailable', message: 'Model emitted tool calls but no executor is wired' },
+            generationMs: totalGenerationMs,
+            triggerRoomId,
+          })
         }
 
         for (const call of calls) onEvent?.({ kind: 'tool_start', tool: call.tool })
@@ -260,7 +289,11 @@ export const evaluate = async (
       // No tool calls → response text is the message
       const content = streamResult.content.trim()
       if (content.length === 0) {
-        return makeResult({ response: { action: 'pass', reason: 'Empty response' }, generationMs: totalGenerationMs, triggerRoomId })
+        return makeResult({
+          response: { action: 'error', code: 'empty_response', message: 'LLM returned no content and no tool calls' },
+          generationMs: totalGenerationMs,
+          triggerRoomId,
+        })
       }
       return makeResult({ response: { action: 'respond', content }, generationMs: totalGenerationMs, triggerRoomId })
     }
@@ -280,13 +313,24 @@ export const evaluate = async (
         triggerRoomId,
       })
     }
-    return makeResult({ response: { action: 'pass', reason: loopReason }, generationMs: totalGenerationMs, triggerRoomId })
+    return makeResult({
+      response: { action: 'error', code: 'tool_loop_exceeded', message: loopReason },
+      generationMs: totalGenerationMs,
+      triggerRoomId,
+    })
   } catch (err) {
-    const errMsg = isOllamaError(err) && isPermanent(err)
-      ? `Model error: ${err.message} — check agent config`
-      : err instanceof Error ? err.message : 'unknown'
-    onEvent?.({ kind: 'warning', message: errMsg })
-    return makeResult({ response: { action: 'pass', reason: `LLM error: ${errMsg}` }, generationMs: totalGenerationMs, triggerRoomId })
+    const classified = classifyLLMError(err)
+    onEvent?.({ kind: 'warning', message: classified.message })
+    return makeResult({
+      response: {
+        action: 'error',
+        code: classified.code,
+        message: classified.message,
+        ...(classified.providerHint ? { providerHint: classified.providerHint } : {}),
+      },
+      generationMs: totalGenerationMs,
+      triggerRoomId,
+    })
   }
 }
 

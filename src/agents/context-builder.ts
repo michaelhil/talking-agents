@@ -44,7 +44,7 @@ export const formatMessage = (
   resolveName: (senderId: string) => string,
   compressedIds?: ReadonlySet<string>,
 ): { role: 'user' | 'assistant'; content: string } | null => {
-  if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.type === 'pass' || msg.type === 'mute') return null
+  if (msg.type === 'system' || msg.type === 'join' || msg.type === 'leave' || msg.type === 'pass' || msg.type === 'mute' || msg.type === 'error') return null
   if (msg.senderId === agentId) {
     const staleRef = compressedIds && msg.inReplyTo?.some(id => compressedIds.has(id))
     const suffix = staleRef ? '\n[↩ context compressed]' : ''

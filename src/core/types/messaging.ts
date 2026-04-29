@@ -8,7 +8,21 @@
 
 // === Message — the fundamental unit of communication ===
 
-export type MessageType = 'chat' | 'join' | 'leave' | 'system' | 'room_summary' | 'pass' | 'mute'
+export type MessageType = 'chat' | 'join' | 'leave' | 'system' | 'room_summary' | 'pass' | 'mute' | 'error'
+
+// Discriminator for error messages — drives UI styling and the "Change model"
+// affordance. Mirrors AgentResponseErrorCode in core/types/agent.ts; kept here
+// (not imported) so the messaging module stays leaf-level.
+export type MessageErrorCode =
+  | 'no_api_key'
+  | 'model_unavailable'
+  | 'rate_limited'
+  | 'network'
+  | 'provider_down'
+  | 'tool_loop_exceeded'
+  | 'empty_response'
+  | 'tools_unavailable'
+  | 'unknown'
 
 export interface Message {
   readonly id: string
@@ -28,6 +42,10 @@ export interface Message {
   readonly contextMax?: number        // bound provider's context window for this call
   readonly provider?: string          // bound provider name (e.g. 'gemini', 'ollama')
   readonly model?: string             // model id reported by the provider
+
+  // --- Error telemetry (set when type === 'error') ---
+  readonly errorCode?: MessageErrorCode
+  readonly errorProvider?: string     // provider hint, drives "Change model" affordance
 
   // --- Join-message agent profile (stamped by actions.ts via makeJoinMetadata) ---
   readonly agentName?: string         // joining agent's name
@@ -126,3 +144,11 @@ export type AgentDeliveryStatus = 'active' | 'waiting' | 'muted'
 
 export type ResolveAgentName = (name: string) => string | undefined  // agent name → UUID
 export type ResolveTagFn = (tag: string) => ReadonlyArray<string>    // tag → agent UUIDs
+
+// === Message-type predicates ===
+// `pass` and `error` are agent decisions/outcomes — they post to the room so
+// humans can see them, but they must not pollute LLM context, trigger summary
+// runs, or kick off another agent's evaluation.
+
+export const isAgentDecisionMessage = (msg: Pick<Message, 'type'>): boolean =>
+  msg.type === 'pass' || msg.type === 'error'

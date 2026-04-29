@@ -293,10 +293,14 @@ describe('AI Agent — unit tests', () => {
     agent.receive(makeMessage({ senderId: 'alice' }))
     await agent.whenIdle()
 
-    // LLM error produces a pass decision so the failure is not silently swallowed
+    // LLM error produces an error decision (not pass) so the failure surfaces
+    // distinctly in the UI and isn't conflated with an agent-decision pass.
     expect(decisions).toHaveLength(1)
-    expect(decisions[0]!.response.action).toBe('pass')
-    expect((decisions[0]!.response as { reason?: string }).reason).toMatch(/LLM error/)
+    expect(decisions[0]!.response.action).toBe('error')
+    if (decisions[0]!.response.action === 'error') {
+      expect(decisions[0]!.response.message).toMatch(/LLM is down/)
+      expect(decisions[0]!.response.code).toBe('unknown')
+    }
   })
 
   test('whenIdle resolves immediately when no work pending', async () => {
@@ -625,9 +629,9 @@ describe('Tool use (ReAct loop)', () => {
     await agent.whenIdle()
 
     expect(decisions).toHaveLength(1)
-    expect(decisions[0]!.response.action).toBe('pass')
-    if (decisions[0]!.response.action === 'pass') {
-      expect(decisions[0]!.response.reason).toBe('Tool calls not available')
+    expect(decisions[0]!.response.action).toBe('error')
+    if (decisions[0]!.response.action === 'error') {
+      expect(decisions[0]!.response.code).toBe('tools_unavailable')
     }
   })
 
@@ -662,7 +666,13 @@ describe('Tool use (ReAct loop)', () => {
     // 1 initial + 3 tool rounds = 4 LLM calls, then capped at max iterations
     expect(callCount).toBe(4)
     expect(decisions).toHaveLength(1)
-    expect(decisions[0]!.response.action).toBe('pass')
+    // No partial text was emitted across the 4 calls, so we should hit the
+    // tool_loop_exceeded error path (not the partial-text rescue path that
+    // returns 'respond' with a footer).
+    expect(decisions[0]!.response.action).toBe('error')
+    if (decisions[0]!.response.action === 'error') {
+      expect(decisions[0]!.response.code).toBe('tool_loop_exceeded')
+    }
   })
 
   test('native tool call with JSON arguments parses correctly', async () => {

@@ -174,7 +174,13 @@ export type RouteMessage = (target: MessageTarget, params: PostParams) => Readon
 
 export interface AIAgentConfig {
   readonly name: string
+  // `model` is the legacy field — when `preferredModel` is unset, it is treated
+  // as the user's preference. When set, `preferredModel` carries user intent
+  // (snapshot-stable) and `model` is still used as the on-disk fallback. Per
+  // request, the agent resolves an effective model from preferred + currently
+  // available providers (see src/agents/resolve-model.ts).
   readonly model: string
+  readonly preferredModel?: string
   readonly persona: string
   readonly temperature?: number
   // Deterministic seed forwarded to every LLM call the agent issues, including
@@ -199,6 +205,20 @@ export interface AIAgentConfig {
 
 // === Agent Response (parsed from LLM plain text output) ===
 
+// Error codes for `action: 'error'`. Distinguish LLM/transport failures from
+// agent-decision passes so the UI can surface them differently and offer
+// targeted remediation (e.g. "Change model" when the provider is unconfigured).
+export type AgentResponseErrorCode =
+  | 'no_api_key'         // provider has no effective key (env or store)
+  | 'model_unavailable'  // model not found / not in subscription
+  | 'rate_limited'       // 429 / quota
+  | 'network'            // transport failure
+  | 'provider_down'      // provider returned 5xx / circuit-open / all providers exhausted
+  | 'tool_loop_exceeded' // tool iteration cap hit and no partial text
+  | 'empty_response'     // LLM returned no content and no tool calls
+  | 'tools_unavailable'  // model emitted tool calls but no executor wired
+  | 'unknown'
+
 export type AgentResponse =
   | {
       readonly action: 'respond'
@@ -207,4 +227,10 @@ export type AgentResponse =
   | {
       readonly action: 'pass'
       readonly reason?: string
+    }
+  | {
+      readonly action: 'error'
+      readonly code: AgentResponseErrorCode
+      readonly message: string
+      readonly providerHint?: string
     }

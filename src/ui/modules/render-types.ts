@@ -19,6 +19,9 @@ export interface UIMessage {
   contextMax?: number
   provider?: string
   model?: string
+  // Error telemetry (set when type === 'error')
+  errorCode?: string
+  errorProvider?: string
 }
 
 export interface RoomProfile {

@@ -7,7 +7,11 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v14: current. Older versions are rejected at load — no migration ladder.
+// v16: current. Adds 'error' MessageType + errorCode/errorProvider on Message
+// (distinct from 'pass' so LLM/transport failures don't masquerade as agent
+// decisions) and `preferredModel` on AIAgentConfig (user intent, snapshot-stable;
+// effective model resolved per call). Older versions are rejected at load —
+// no migration ladder.
 //      v14 adds RoomSnapshot.wikiBindings + AIAgentConfig.wikiBindings (per-room
 //      and per-agent wiki bindings for the wiki-backed knowledge feature).
 //      v13 removes the v1 script engine entirely (replaced by the v2 reactive
@@ -31,7 +35,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 15
+export const SNAPSHOT_VERSION = 16
 
 // --- Snapshot schema ---
 
@@ -63,7 +67,7 @@ export interface HumanAgentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '15'
+  readonly version: '16'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -148,7 +152,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const artifacts = system.house.artifacts.list({ includeResolved: true })
 
   return {
-    version: '15',
+    version: '16',
     timestamp: Date.now(),
     rooms,
     agents,

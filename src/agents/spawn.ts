@@ -233,6 +233,23 @@ export const spawnAIAgent = async (
         inReplyTo: decision.inReplyTo,
         ...telemetry,
       })
+    } else {
+      // action: 'error' — LLM/transport failure, distinct from a pass decision.
+      // Renders as a red chip in the UI; the errorCode drives any "Change model"
+      // affordance. NEVER conflate with `pass` — pass is an agent decision,
+      // error is a system failure the user should see and act on.
+      const err = decision.response
+      routeMessage(target, {
+        senderId: agent.id,
+        senderName: agent.name,
+        content: `[error: ${err.code}] ${err.message}`,
+        type: 'error',
+        errorCode: err.code,
+        ...(err.providerHint ? { errorProvider: err.providerHint } : {}),
+        generationMs: decision.generationMs,
+        inReplyTo: decision.inReplyTo,
+        ...telemetry,
+      })
     }
   }
 
