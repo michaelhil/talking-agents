@@ -135,6 +135,13 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     const registry = createSystemRegistry({
       shared,
       onSystemCreated: async (system, id, autoSaver: AutoSaver) => {
+        // Simulate bootstrap.ts's first async step (logging.configure).
+        // Critical: this releases a microtask, so if buildSystem doesn't
+        // await this hook, seedFreshInstance races ahead and spawns Helper
+        // BEFORE wireAgentTracking installs its spawn-wrapper. The race-fix
+        // in system-registry.ts must await opts.onSystemCreated.
+        await new Promise(r => setImmediate(r))
+
         wireAgentTracking(system, id, {
           attach: registry.attachAgent,
           detach: registry.detachAgent,

@@ -225,7 +225,7 @@ describe('SystemRegistry', () => {
     const calls: string[] = []
     const reg = createSystemRegistry({
       shared: createSharedRuntime(),
-      onSystemCreated: (_sys, id) => calls.push(id),
+      onSystemCreated: (_sys, id) => { calls.push(id) },
     })
     const id = generateInstanceId()
     await reg.getOrLoad(id)

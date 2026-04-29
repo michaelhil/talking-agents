@@ -107,7 +107,13 @@ export interface SystemRegistryOptions {
   // would return null inside the hook. Subtle and was the source of a
   // long-running bug where streaming events never reached cookie-bound
   // instances.
-  readonly onSystemCreated?: (system: System, id: string, autoSaver: AutoSaver) => void
+  //
+  // The hook is awaited. It MUST complete (wireAgentTracking +
+  // wireSystemEvents installed) before seedFreshInstance runs — otherwise
+  // the seeded Helper bypasses the spawn-wrapper and never gets per-agent
+  // hooks (state subscription, attachAgent). Returning Promise<void> is
+  // mandatory for any hook that does async work.
+  readonly onSystemCreated?: (system: System, id: string, autoSaver: AutoSaver) => Promise<void> | void
   // Hook called immediately before a System is dropped from memory.
   // Phase F removes the WS callback wiring here.
   readonly onSystemEvicted?: (system: System, id: string) => void
@@ -208,13 +214,21 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     // is passed explicitly because the map entry isn't installed until
     // buildSystem returns; an autoSaverFor(id) lookup inside the hook
     // would return null.
-    opts.onSystemCreated?.(system, id, autoSaver)
+    //
+    // AWAITED on purpose: the hook installs wireAgentTracking (the spawn
+    // wrapper that installs per-agent state subscriptions, provider-event
+    // attach, etc.) and wireSystemEvents (the system-wide WS broadcast
+    // subscribers). seedFreshInstance below calls system.spawnAIAgent —
+    // if it ran before the wrapper was installed, the seeded Helper would
+    // bypass per-agent wiring (no thinking indicator, no state broadcasts,
+    // no provider-event scoping). The hook is async because of
+    // logging.configure; without await, the first await inside the hook
+    // releases a microtask and seedFreshInstance races ahead.
+    await opts.onSystemCreated?.(system, id, autoSaver)
 
     // First-run seeding: when no snapshot existed, drop in a demo room +
     // Helper agent so an invitee lands on something they can immediately
-    // try. Must run after onSystemCreated so the WS-broadcast wiring is in
-    // place — otherwise the seed posts/spawns wouldn't reach connected
-    // clients in race-condition cases. Failures are caught inside.
+    // try. Failures are caught inside seedFreshInstance.
     if (!snapshot) {
       await seedFreshInstance(system)
       // Persist the seed so a refresh keeps it (without waiting for the

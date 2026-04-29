@@ -149,8 +149,8 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
 const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
   raw.version === String(SNAPSHOT_VERSION)
 
-// No migration ladder — v13 is a clean break (script-engine removal). Older
-// snapshots are rejected by isValidSnapshot and the server starts fresh.
+// No migration ladder — clean break per repo policy. Older snapshots are
+// rejected by isValidSnapshot and the server starts fresh.
 
 // --- Save / Load ---
 
