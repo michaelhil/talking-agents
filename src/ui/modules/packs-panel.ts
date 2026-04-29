@@ -137,7 +137,7 @@ const renderBrowseSection = (container: HTMLElement, registry: RegistryPack[]): 
     const empty = document.createElement('div')
     empty.className = 'text-xs text-text-muted px-3 py-2 italic'
     empty.textContent = registry.length === 0
-      ? 'Registry empty — set SAMSINN_PACK_SOURCES env var to discover packs.'
+      ? 'No packs available.'
       : 'All available packs are installed.'
     container.appendChild(empty)
     return
