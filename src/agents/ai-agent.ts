@@ -246,8 +246,10 @@ export const createAIAgent = (
     // epoch guards: each cancelGeneration() increments generationEpoch so stale
     // in-flight results from a prior generation cycle are silently discarded.
     const run = async (): Promise<void> => {
+      console.error(`[DEBUG ${config.name}.run] entering, model=${evalConfig.model}, toolDefs=${effectiveToolDefs?.length ?? 0}`)
       let wasRespond = false
       try {
+        console.error(`[DEBUG ${config.name}.run] calling evaluate()`)
         const { decision, flushInfo } = await evaluate(
           contextResult, evalConfig, llmProvider, includeTools ? toolExecutor : undefined, maxToolIterationsCfg,
           triggerRoomId, {
@@ -257,6 +259,7 @@ export const createAIAgent = (
             signal: abortController.signal,
           },
         )
+        console.error(`[DEBUG ${config.name}.run] evaluate() returned action=${decision.response.action}`)
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
 
         wasRespond = decision.response.action === 'respond'
@@ -266,9 +269,13 @@ export const createAIAgent = (
         flushIncoming(flushInfo, agentHistory)
         onDecision(decision)
       } catch (err) {
-        if (!cm.isEpochCurrent(epoch)) return  // cancelled, ignore error
+        if (!cm.isEpochCurrent(epoch)) {
+          console.error(`[DEBUG ${config.name}.run] cancelled (epoch stale)`)
+          return  // cancelled, ignore error
+        }
         console.error(`[${config.name}] Evaluation error:`, err)
       } finally {
+        console.error(`[DEBUG ${config.name}.run] finally block`)
         if (cm.isEpochCurrent(epoch)) {
           cm.endGeneration(triggerRoomId)
           // Check for pending work: same room first, then any other room
