@@ -2,93 +2,69 @@
 // Wiki discovery — finds available wikis on GitHub so prod (and any new
 // instance) can pick them up without per-machine wikis.json edits.
 //
-// Mirrors src/packs/registry.ts. Sources via SAMSINN_WIKI_SOURCES (csv of
-// `<owner>` or `<owner>/<repo>`, default `samsinn-wikis`).
+// Sources merge: SAMSINN_WIKI_SOURCES env + UI-managed discovery-sources.json
+// + canonical fallback `samsinn-wikis` (real org). Failure plumbing identical
+// to packs/registry — see comment there.
 //
 // Convention:
-//   - Owner ending in `-wikis` (e.g. `samsinn-wikis`) → every non-archived /
-//     non-fork repo is treated as a wiki.
+//   - Owner ending in `-wikis` → every non-archived/non-fork repo is a wiki.
 //   - Other owners → repo basename must start with `samsinn-wiki-`.
 //
-// Token: SAMSINN_WIKI_REGISTRY_TOKEN (separate from SAMSINN_GH_TOKEN — same
-// rationale as packs/registry.ts: org listings need broad public read; the
-// fine-grained bug-report PAT 403s on every endpoint outside its scope).
+// Token: SAMSINN_WIKI_REGISTRY_TOKEN (broad public read scope; separate from
+// SAMSINN_GH_TOKEN for the same reason as packs).
 //
-// The result is ephemeral: discovered wikis are merged with the on-disk
-// store at runtime via store.ts:mergeWithDiscovery. Discovery NEVER writes
-// to wikis.json. Operator-managed entries (PATs, manual disable, displayName
+// The result is ephemeral: discovered wikis are merged with the on-disk store
+// at runtime via store.ts:mergeWithDiscovery. Discovery NEVER writes to
+// wikis.json. Operator-managed entries (PATs, manual disable, displayName
 // overrides) win on id collision.
 // ============================================================================
 
 import { isValidWikiId } from './store.ts'
 import { mergeSources } from '../core/discovery-sources.ts'
+import {
+  discoverFromGitHub,
+  type DiscoveryResult,
+  type FetchFn,
+  type GHRepo,
+} from '../core/github-discovery.ts'
 
 const PREFIX = 'samsinn-wiki-'
 const CACHE_TTL_MS = 5 * 60_000
 const FALLBACK_SOURCES = ['samsinn-wikis'] as const
 
+export type { DiscoveryFailure } from '../core/github-discovery.ts'
+
 export interface DiscoveredWiki {
-  readonly id: string           // canonical wiki id (validator-safe)
+  readonly id: string
   readonly owner: string
-  readonly repo: string         // unstripped GitHub repo name (for display + diagnostics)
-  readonly displayName: string  // repo description if present, else "{owner}/{repo}"
+  readonly repo: string
+  readonly displayName: string
   readonly description: string
   readonly repoUrl: string
-  readonly source: string       // "owner/repo" — dedupe key
+  readonly source: string
 }
+
+export type WikiDiscoveryResult = DiscoveryResult<DiscoveredWiki>
 
 interface CacheEntry {
   readonly fetchedAt: number
-  readonly wikis: ReadonlyArray<DiscoveredWiki>
+  readonly result: WikiDiscoveryResult
 }
 
 let cache: CacheEntry | null = null
 
-// Resolve the active sources from env + stored. Caller threads in the stored
-// list (loaded by the API layer from discovery-sources.json) so this module
-// stays a leaf. Falls back to canonical placeholder when both empty.
 const resolveSources = (stored: ReadonlyArray<string>): ReadonlyArray<string> =>
   mergeSources(process.env.SAMSINN_WIKI_SOURCES, stored, [...FALLBACK_SOURCES])
 
-const ghHeaders = (): Record<string, string> => {
-  const h: Record<string, string> = {
-    'Accept': 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'samsinn-wiki-registry',
-  }
-  const token = process.env.SAMSINN_WIKI_REGISTRY_TOKEN
-  if (token) h['Authorization'] = `Bearer ${token}`
-  return h
-}
+const resolveToken = (stored?: string): string =>
+  process.env.SAMSINN_WIKI_REGISTRY_TOKEN ?? stored ?? ''
 
-interface GHRepo {
-  name: string
-  full_name: string
-  description: string | null
-  html_url: string
-  archived?: boolean
-  fork?: boolean
-}
-
-// Owners whose repos are ALL treated as wikis (no prefix filter). Anything
-// matching `<x>-wikis` is assumed to be a dedicated wiki-hosting org by
-// convention. Operators putting a personal account in SAMSINN_WIKI_SOURCES
-// still get the prefix filter so unrelated repos don't pollute the registry.
 const isWikiOnlyOwner = (owner: string): boolean =>
   /-wikis$/.test(owner) || owner === 'samsinn-wikis'
 
-// Derive a validator-safe wiki id from the repo basename.
-//   - lowercase
-//   - strip `samsinn-wiki-` prefix
-//   - replace any non-`[a-z0-9-]` with `-`
-//   - collapse runs of `-`
-//   - trim leading/trailing `-`
-//   - truncate to 63 chars (validator max)
-//   - if first char isn't `[a-z0-9]`, prefix `w-`
-//   - if validation still fails, fall back to `w-<8-hex>` of the source
-//
-// Collision suffixing (-2, -3, …) is the caller's job since it depends on
-// the merge target.
+// Derive a validator-safe wiki id from the repo basename. See prior version
+// for the exhaustive rules — same logic, kept here so the discovery module
+// stays self-contained.
 export const deriveWikiId = (repoName: string): string => {
   const lower = repoName.toLowerCase()
   const stripped = lower.startsWith(PREFIX) ? lower.slice(PREFIX.length) : lower
@@ -96,7 +72,6 @@ export const deriveWikiId = (repoName: string): string => {
   if (cleaned.length > 63) cleaned = cleaned.slice(0, 63).replace(/-$/, '')
   if (cleaned && !/^[a-z0-9]/.test(cleaned)) cleaned = `w-${cleaned}`.slice(0, 63).replace(/-$/, '')
   if (!cleaned || !isValidWikiId(cleaned)) {
-    // Hash fallback for empty/invalid cleaned ids. Deterministic given the repo name.
     let h = 0
     for (let i = 0; i < repoName.length; i++) h = ((h << 5) - h + repoName.charCodeAt(i)) | 0
     cleaned = `w-${(h >>> 0).toString(16).padStart(8, '0')}`
@@ -104,85 +79,65 @@ export const deriveWikiId = (repoName: string): string => {
   return cleaned
 }
 
-// Caller passes the set of ids already taken (by stored entries or earlier
-// discovered entries). Suffix `-2`, `-3`, … until free.
 export const ensureUniqueId = (base: string, taken: ReadonlySet<string>): string => {
   if (!taken.has(base)) return base
   for (let i = 2; i < 1000; i++) {
     const candidate = `${base}-${i}`.slice(0, 63).replace(/-$/, '')
     if (!taken.has(candidate)) return candidate
   }
-  // Should never happen — 1000 collisions on the same base means a config bug.
   throw new Error(`could not allocate unique wiki id from base ${base}`)
 }
 
-const repoToWiki = (r: GHRepo, taken: Set<string>): DiscoveredWiki => {
-  const base = deriveWikiId(r.name)
-  const id = ensureUniqueId(base, taken)
-  taken.add(id)
-  const description = r.description ?? ''
-  return {
-    id,
-    owner: r.full_name.split('/')[0] ?? '',
-    repo: r.name,
-    displayName: description.trim() || `${r.full_name}`,
-    description,
-    repoUrl: r.html_url,
-    source: r.full_name,
+// repoToItem closure carries the running `taken` set so collision suffixing
+// stays deterministic across the iteration.
+const makeRepoToItem = () => {
+  const taken = new Set<string>()
+  return (r: GHRepo): DiscoveredWiki => {
+    const base = deriveWikiId(r.name)
+    const id = ensureUniqueId(base, taken)
+    taken.add(id)
+    const description = r.description ?? ''
+    return {
+      id,
+      owner: r.full_name.split('/')[0] ?? '',
+      repo: r.name,
+      displayName: description.trim() || `${r.full_name}`,
+      description,
+      repoUrl: r.html_url,
+      source: r.full_name,
+    }
   }
 }
 
-const fetchOwnerRepos = async (owner: string): Promise<ReadonlyArray<GHRepo>> => {
-  const res = await fetch(
-    `https://api.github.com/users/${encodeURIComponent(owner)}/repos?per_page=100&sort=updated`,
-    { headers: ghHeaders() },
-  )
-  if (!res.ok) {
-    console.warn(`[wiki/discovery] fetch ${owner} failed: HTTP ${res.status}`)
-    return []
-  }
-  const repos = await res.json() as ReadonlyArray<GHRepo>
-  return repos.filter((r) => !r.archived && !r.fork && (isWikiOnlyOwner(owner) || r.name.startsWith(PREFIX)))
-}
-
-const fetchOneRepo = async (ownerRepo: string): Promise<GHRepo | null> => {
-  const res = await fetch(`https://api.github.com/repos/${ownerRepo}`, { headers: ghHeaders() })
-  if (!res.ok) {
-    console.warn(`[wiki/discovery] fetch ${ownerRepo} failed: HTTP ${res.status}`)
-    return null
-  }
-  return await res.json() as GHRepo
+export interface GetAvailableWikisOptions {
+  readonly storedSources?: ReadonlyArray<string>
+  readonly storedToken?: string
+  readonly fetchFn?: FetchFn
 }
 
 export const getAvailableWikis = async (
-  storedSources: ReadonlyArray<string> = [],
-): Promise<ReadonlyArray<DiscoveredWiki>> => {
+  options: GetAvailableWikisOptions = {},
+): Promise<WikiDiscoveryResult> => {
   const now = Date.now()
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache.wikis
+  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache.result
 
-  const sources = resolveSources(storedSources)
-  const repos: GHRepo[] = []
-  const seenSource = new Set<string>()
-  for (const src of sources) {
-    if (src.includes('/')) {
-      const one = await fetchOneRepo(src)
-      if (one && !seenSource.has(one.full_name)) {
-        seenSource.add(one.full_name)
-        repos.push(one)
-      }
-    } else {
-      for (const r of await fetchOwnerRepos(src)) {
-        if (seenSource.has(r.full_name)) continue
-        seenSource.add(r.full_name)
-        repos.push(r)
-      }
-    }
+  const sources = resolveSources(options.storedSources ?? [])
+  const repoToItem = makeRepoToItem()
+  const result = await discoverFromGitHub<DiscoveredWiki>({
+    sources,
+    ownerOnlyPolicy: isWikiOnlyOwner,
+    repoFilter: (r) => r.name.startsWith(PREFIX),
+    repoToItem,
+    dedupeKey: (w) => w.source,
+    token: resolveToken(options.storedToken),
+    tokenEnvVar: 'SAMSINN_WIKI_REGISTRY_TOKEN',
+    userAgent: 'samsinn-wiki-registry',
+    ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
+  })
+  if (result.items.length > 0 || result.failures.length === 0) {
+    cache = { fetchedAt: now, result }
   }
-  const taken = new Set<string>()
-  const wikis = repos.map((r) => repoToWiki(r, taken))
-  cache = { fetchedAt: now, wikis }
-  return wikis
+  return result
 }
 
-// Test/debug helper — clears the in-memory cache so the next call refetches.
 export const invalidateDiscoveryCache = (): void => { cache = null }

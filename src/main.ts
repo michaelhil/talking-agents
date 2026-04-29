@@ -123,6 +123,10 @@ export interface System {
   // SAMSINN_PACK_SOURCES / SAMSINN_WIKI_SOURCES env vars at call time so env
   // wins (deploy-time config) but UI users still get a real path.
   readonly discoverySourcesStorePath: string
+  // GitHub registry tokens (separate from SAMSINN_GH_TOKEN bug-report PAT).
+  // Used by pack + wiki discovery to lift past the 60/hr unauthenticated cap.
+  // UI-managed via /api/github-tokens; never returned in plaintext over the wire.
+  readonly githubTokensStorePath: string
   // Shared wiki registry — read by tools and the wiki admin endpoints.
   readonly wikiRegistry: import('./wiki/registry.ts').WikiRegistry
   // OllamaUrls editor — no-op when Ollama isn't configured.
@@ -785,6 +789,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     providersStorePath: sharedPaths.providers(),
     wikisStorePath: sharedPaths.wikis(),
     discoverySourcesStorePath: sharedPaths.discoverySources(),
+    githubTokensStorePath: sharedPaths.githubTokens(),
     wikiRegistry: shared.wikiRegistry,
     ollamaUrls,
     removeAgent,

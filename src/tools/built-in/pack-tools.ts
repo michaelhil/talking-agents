@@ -66,6 +66,9 @@ export interface PackToolsDeps {
   // merge with the SAMSINN_PACK_SOURCES env. Lazy (called per-invocation) so
   // changes to discovery-sources.json take effect without a tool re-register.
   readonly getDiscoverySources?: () => Promise<ReadonlyArray<string>>
+  // Returns the UI-managed registry token (SAMSINN_PACK_REGISTRY_TOKEN slot).
+  // Env still wins on merge inside the registry; this is the stored fallback.
+  readonly getRegistryToken?: () => Promise<string | undefined>
 }
 
 // --- URL resolution ---
@@ -121,19 +124,29 @@ const resolveBareName = async (
   if (!VALID_NS.test(bareName)) {
     return { error: `Invalid pack name "${bareName}" — use letters, digits, underscores, hyphens` }
   }
-  let available
+  let result
   try {
     const stored = deps.getDiscoverySources ? await deps.getDiscoverySources() : []
-    available = await getAvailablePacks(stored)
+    const storedToken = deps.getRegistryToken ? await deps.getRegistryToken() : undefined
+    result = await getAvailablePacks({
+      storedSources: stored,
+      ...(storedToken !== undefined ? { storedToken } : {}),
+    })
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     return { error: `Could not consult pack registry: ${reason}` }
   }
-  const match = available.find(
+  const match = result.items.find(
     p => p.name === bareName || stripPackPrefix(p.name) === bareName,
   )
   if (!match) {
-    return { error: `No pack named "${bareName}" in the registry. Configured sources: SAMSINN_PACK_SOURCES env. Use \`user/repo\` or a full URL to install from elsewhere.` }
+    // Surface the underlying GitHub failure (rate limit / auth / etc) so the
+    // agent can tell the user something useful instead of "name not found"
+    // when the real cause was discovery never running successfully.
+    const fHint = result.failures.length > 0
+      ? ` Discovery had issues: ${result.failures.map(f => f.message).join('; ')}`
+      : ''
+    return { error: `No pack named "${bareName}" in the registry.${fHint} Use \`user/repo\` or a full URL to install from elsewhere.` }
   }
   return { url: `${match.repoUrl}.git`, sourceLabel: stripPackPrefix(match.name) }
 }
@@ -404,9 +417,13 @@ export const createListAvailablePacksTool = (deps: PackToolsDeps): Tool => ({
   execute: async () => {
     try {
       const stored = deps.getDiscoverySources ? await deps.getDiscoverySources() : []
-      const available = await getAvailablePacks(stored)
+      const storedToken = deps.getRegistryToken ? await deps.getRegistryToken() : undefined
+      const result = await getAvailablePacks({
+        storedSources: stored,
+        ...(storedToken !== undefined ? { storedToken } : {}),
+      })
       const installed = new Set((await scanPacks(deps.packsDir)).map(p => p.namespace))
-      const data = available.map(p => ({
+      const items = result.items.map(p => ({
         name: p.name,
         repoName: p.repoName,
         source: p.source,
@@ -414,7 +431,9 @@ export const createListAvailablePacksTool = (deps: PackToolsDeps): Tool => ({
         description: p.description,
         installed: installed.has(p.name),
       }))
-      return { success: true, data }
+      // Return failures alongside items so an agent can surface "rate limit
+      // hit" to the user instead of an opaque empty list.
+      return { success: true, data: { items, failures: result.failures } }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       return { success: false, error: `registry fetch failed: ${reason}` }

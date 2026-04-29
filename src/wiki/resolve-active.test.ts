@@ -39,8 +39,8 @@ describe('resolveActiveWikis', () => {
     const registry = createWikiRegistry({ wikis: [] })
 
     // First call: empty store + empty discovery → registry is empty.
-    let merged = await resolveActiveWikis(storePath, registry)
-    expect(merged).toEqual([])
+    let result = await resolveActiveWikis(storePath, registry)
+    expect(result.items).toEqual([])
     expect(registry.list()).toEqual([])
 
     // Now the store gains a stored wiki. resolveActiveWikis should see it.
@@ -48,8 +48,8 @@ describe('resolveActiveWikis', () => {
       version: 1,
       wikis: [{ id: 'late', owner: 'u', repo: 'r' }],
     }))
-    merged = await resolveActiveWikis(storePath, registry)
-    expect(merged.map((w) => w.id)).toEqual(['late'])
+    result = await resolveActiveWikis(storePath, registry)
+    expect(result.items.map((w) => w.id)).toEqual(['late'])
     // Reconcile installed the adapter — the registry now knows about it.
     expect(registry.getState('late')).toBeDefined()
   })

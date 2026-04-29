@@ -91,6 +91,9 @@ export type WSOutbound =
   // Fired after PUT /api/discovery-sources. UI panels refetch the GitHub
   // discovery views; in-memory pack/wiki caches are already invalidated.
   | { readonly type: 'discovery_sources_changed' }
+  // Fired after PUT /api/github-tokens/:slot. UI panels refetch the masked
+  // token state; in-memory pack/wiki caches are already invalidated.
+  | { readonly type: 'github_tokens_changed'; readonly slot: 'packRegistry' | 'wikiRegistry' }
   // Fired after a wiki is created/updated/deleted/warmed/bound. UI panels refresh.
   | {
       readonly type: 'wiki_changed'

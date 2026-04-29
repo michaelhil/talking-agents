@@ -12,6 +12,8 @@
 import { showToast } from './toast.ts'
 import { createModal } from './detail-modal.ts'
 import { renderSourcesEditor } from './discovery-sources.ts'
+import { renderGithubTokenEditor } from './github-tokens.ts'
+import { renderDiscoveryFailures, type DiscoveryFailure } from './discovery-failures.ts'
 
 interface WikiEntry {
   id: string
@@ -33,13 +35,18 @@ interface RoomEntry { id: string; name: string }
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c))
 
-const fetchWikis = async (): Promise<WikiEntry[]> => {
+interface WikisListResponse {
+  wikis: WikiEntry[]
+  failures: DiscoveryFailure[]
+}
+
+const fetchWikis = async (): Promise<WikisListResponse> => {
   try {
     const res = await fetch('/api/wikis')
-    if (!res.ok) return []
-    const data = await res.json() as { wikis?: WikiEntry[] }
-    return data.wikis ?? []
-  } catch { return [] }
+    if (!res.ok) return { wikis: [], failures: [] }
+    const data = await res.json() as { wikis?: WikiEntry[]; failures?: DiscoveryFailure[] }
+    return { wikis: data.wikis ?? [], failures: data.failures ?? [] }
+  } catch { return { wikis: [], failures: [] } }
 }
 
 const fetchRooms = async (): Promise<RoomEntry[]> => {
@@ -79,21 +86,35 @@ const formatLastWarm = (ts: number | null): string => {
   return `${Math.floor(hr / 24)}d ago`
 }
 
+// Mount the token + sources editors below the wiki list. Shared between the
+// "no wikis" early-return path and the populated list so both render the
+// same admin surface — users always have a path to fix discovery failures.
+const renderEditorSections = (container: HTMLElement): void => {
+  const tokenContainer = document.createElement('div')
+  container.appendChild(tokenContainer)
+  void renderGithubTokenEditor(tokenContainer, 'wikiRegistry')
+
+  const sourcesContainer = document.createElement('div')
+  container.appendChild(sourcesContainer)
+  void renderSourcesEditor(sourcesContainer, 'wikis')
+}
+
 export const renderWikisInto = async (container: HTMLElement): Promise<void> => {
   container.innerHTML = '<div class="text-xs text-text-muted px-3 py-2 italic">Loading…</div>'
-  const [wikis, rooms] = await Promise.all([fetchWikis(), fetchRooms()])
+  const [wikisData, rooms] = await Promise.all([fetchWikis(), fetchRooms()])
+  const { wikis, failures } = wikisData
   container.innerHTML = ''
+
+  // Surface discovery failures so an empty wiki list isn't silently confused
+  // with a working-but-rate-limited GitHub call.
+  renderDiscoveryFailures(container, failures)
 
   if (wikis.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'text-xs text-text-muted px-3 py-3 italic'
     empty.textContent = 'No wikis configured. Use + to add one (e.g. owner=michaelhil repo=nuclear-wiki).'
     container.appendChild(empty)
-    // Discovery-sources editor still renders so users can configure where to
-    // discover wikis from even before adding any manually.
-    const sourcesContainer = document.createElement('div')
-    container.appendChild(sourcesContainer)
-    void renderSourcesEditor(sourcesContainer, 'wikis')
+    renderEditorSections(container)
     return
   }
 
@@ -175,11 +196,9 @@ export const renderWikisInto = async (container: HTMLElement): Promise<void> => 
     void renderBindingsCell(row.querySelector<HTMLElement>('[data-bindings]')!, w.id, rooms)
   }
 
-  // Discovery-sources editor below the configured-wikis list. Self-renders
-  // into its own sub-container; safe to ignore the returned Promise.
-  const sourcesContainer = document.createElement('div')
-  container.appendChild(sourcesContainer)
-  void renderSourcesEditor(sourcesContainer, 'wikis')
+  // Token + additional sources editors below the configured wikis. Same as
+  // the "no wikis" path — users always have a route to fix auth/discovery.
+  renderEditorSections(container)
 }
 
 const renderBindingsCell = async (cell: HTMLElement, wikiId: string, rooms: RoomEntry[]): Promise<void> => {
