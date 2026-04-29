@@ -142,6 +142,7 @@
     .prompt-tooltip { display: none; position: absolute; z-index: 40; background: var(--surface-inverse); color: #f9fafb; padding: 6px 10px; border-radius: 6px; font-size: 11px; max-width: 280px; white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
     .prompt-icon:hover + .prompt-tooltip { display: block; }
     .msg-self { background: var(--msg-self); }
+    .msg-human { background: var(--msg-self); }
     .msg-agent { background: var(--msg-agent); }
     .typing-indicator { animation: pulse 1.5s infinite; }
     .msg-fading { opacity: 0; transition: opacity 500ms ease-out; }
@@ -440,7 +441,7 @@
           <!-- Room switcher: room name + chevron. Click to open the popover
                with the room list + "create new" entry. Always visible so it
                works in both full-screen and sidebar-open modes. -->
-          <button id="room-switcher" class="inline-flex items-center gap-1 text-base font-semibold text-text-strong truncate hover:text-accent-hover" aria-haspopup="true" aria-expanded="false">
+          <button id="room-switcher" class="inline-flex items-center gap-1 text-base font-semibold text-text-strong truncate hover:text-text" aria-haspopup="true" aria-expanded="false">
             <span id="room-name" class="truncate"></span>
             <span data-icon="chevron-down" data-icon-size="14"></span>
           </button>

@@ -99,7 +99,14 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     div.className = 'msg-system text-xs py-1 px-2'
     div.textContent = msg.content
   } else {
-    div.className = `rounded-md px-3 py-2 text-sm border border-border shadow-sm ${isSelf ? 'msg-self' : 'msg-agent'}`
+    // Tint by sender kind so the room reads as a conversation between two
+    // distinct populations: humans (blue) vs AI (green). Falls back to the
+    // legacy msg-self/msg-agent split for unresolved senders.
+    const senderInfo = getAgent(msg.senderId)
+    const kindClass = senderInfo?.kind === 'human' ? 'msg-human'
+      : senderInfo?.kind === 'ai' ? 'msg-agent'
+      : (isSelf ? 'msg-self' : 'msg-agent')
+    div.className = `rounded-md px-3 py-2 text-sm border border-border shadow-sm ${kindClass}`
 
     const header = document.createElement('div')
     header.className = 'flex items-center gap-2 mb-1'

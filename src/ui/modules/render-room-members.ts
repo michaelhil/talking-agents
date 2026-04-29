@@ -164,14 +164,22 @@ const renderChip = (
   inspectAgent: (agentId: string) => void,
 ): HTMLElement => {
   const chip = document.createElement('span')
-  const bg = isMuted ? 'bg-surface-strong text-text-subtle' : 'bg-surface-muted text-accent'
+  // Chip text is white (text-text) on a muted bg; the legacy `text-accent`
+  // made names link-blue inside the chip which read as "clickable link"
+  // when these are agent identities, not links. Use text-text everywhere
+  // so the name reads as a label.
+  const bg = isMuted ? 'bg-surface-strong text-text-subtle' : 'bg-surface-muted text-text'
   chip.className = `inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${bg} group/chip`
+  // Selected humans get an additional 1px white inner border on the chip
+  // pill itself — pairs with the dot inner border for stronger affordance.
+  if (agent.kind === 'human' && isSelected) {
+    chip.style.boxShadow = 'inset 0 0 0 1px white'
+  }
 
   const isHuman = agent.kind === 'human'
 
-  // Dot. For humans: green (default) or green with inner accent ring (selected).
-  //   - Click toggles per-room selection; existing entry deselects.
-  //   - We DON'T set bg-text-muted for humans (no human mute concept).
+  // Dot. For humans: green (default) or green with thin white inner ring
+  // when selected. Dot size never changes — the ring is an inset shadow.
   // For AI: existing bg-text-muted on mute, click toggles set_muted.
   const dot = document.createElement('button')
   let dotColor: string
@@ -183,11 +191,10 @@ const renderChip = (
       : 'bg-success'
   }
   dot.className = `inline-block w-2 h-2 rounded-full shrink-0 cursor-pointer ${dotColor}`
-  // Inner border for selected humans — inset box-shadow keeps dot size unchanged.
+  // Single thin white inner ring on the selected human's dot — no outline,
+  // no stacked shadows. Half-pixel value renders as a thin line on hi-DPI.
   if (isHuman && isSelected) {
-    dot.style.boxShadow = 'inset 0 0 0 1px var(--accent, currentColor)'
-    dot.style.outline = '1px solid var(--accent, currentColor)'
-    dot.style.outlineOffset = '-2px'
+    dot.style.boxShadow = 'inset 0 0 0 0.5px white'
   }
   if (isHuman) {
     dot.title = isSelected ? `Deselect ${agent.name}` : `Post as ${agent.name}`

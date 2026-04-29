@@ -32,7 +32,11 @@ const renderAgentRow = (
   div.appendChild(dot)
 
   const name = document.createElement('span')
-  name.className = `text-xs truncate cursor-pointer font-medium ${isInspectSelected ? 'text-accent' : 'text-text'}`
+  // Sidebar agent names are labels, not links — keep them in the regular
+  // text color even when "inspect-selected" (the row tint already signals
+  // selection). Inspect-selected gets a slightly stronger text via
+  // text-text-strong so it's still visually distinct.
+  name.className = `text-xs truncate cursor-pointer font-medium ${isInspectSelected ? 'text-text-strong' : 'text-text'}`
   name.textContent = agent.name
   name.onclick = (e) => { e.stopPropagation(); onInspect(agent.name) }
   div.appendChild(name)
