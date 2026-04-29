@@ -62,10 +62,6 @@ export interface PackToolsDeps {
   readonly skillStore: SkillStore
   readonly refreshAllAgentTools: RefreshAllFn
   readonly notifyPacksChanged?: NotifyPacksChanged
-  // Returns the UI-managed list of GitHub <owner> / <owner>/<repo> sources to
-  // merge with the SAMSINN_PACK_SOURCES env. Lazy (called per-invocation) so
-  // changes to discovery-sources.json take effect without a tool re-register.
-  readonly getDiscoverySources?: () => Promise<ReadonlyArray<string>>
 }
 
 // --- URL resolution ---
@@ -114,17 +110,13 @@ const resolveSource = (source: string): ResolvedUrl | { error: string } => {
 // (registry already strips `samsinn-pack-` from repo names, see registry.ts)
 // OR by the full repo basename — both forms are accepted so an agent that
 // remembers either spelling resolves the same pack.
-const resolveBareName = async (
-  bareName: string,
-  deps: PackToolsDeps,
-): Promise<ResolvedUrl | { error: string }> => {
+const resolveBareName = async (bareName: string): Promise<ResolvedUrl | { error: string }> => {
   if (!VALID_NS.test(bareName)) {
     return { error: `Invalid pack name "${bareName}" — use letters, digits, underscores, hyphens` }
   }
   let available
   try {
-    const stored = deps.getDiscoverySources ? await deps.getDiscoverySources() : []
-    available = await getAvailablePacks(stored)
+    available = await getAvailablePacks()
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     return { error: `Could not consult pack registry: ${reason}` }
@@ -162,7 +154,7 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
       !source.includes('/') &&
       !/^(https?:|ssh:|git:|file:)/i.test(source) &&
       !source.includes('@')
-    const resolved = isBareName ? await resolveBareName(source, deps) : resolveSource(source)
+    const resolved = isBareName ? await resolveBareName(source) : resolveSource(source)
     if ('error' in resolved) return { success: false, error: resolved.error }
 
     // Ensure parent exists, then clone into a *temp* dir under packsDir so
@@ -403,8 +395,7 @@ export const createListAvailablePacksTool = (deps: PackToolsDeps): Tool => ({
   parameters: { type: 'object', properties: {} },
   execute: async () => {
     try {
-      const stored = deps.getDiscoverySources ? await deps.getDiscoverySources() : []
-      const available = await getAvailablePacks(stored)
+      const available = await getAvailablePacks()
       const installed = new Set((await scanPacks(deps.packsDir)).map(p => p.namespace))
       const data = available.map(p => ({
         name: p.name,

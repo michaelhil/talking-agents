@@ -35,7 +35,6 @@ export const sharedPaths = {
   root: (): string => samsinnHome(),
   providers: (): string => join(samsinnHome(), 'providers.json'),
   wikis: (): string => join(samsinnHome(), 'wikis.json'),
-  discoverySources: (): string => join(samsinnHome(), 'discovery-sources.json'),
   packs: (): string => join(samsinnHome(), 'packs'),
   skills: (): string => join(samsinnHome(), 'skills'),
   scripts: (): string => join(samsinnHome(), 'scripts'),

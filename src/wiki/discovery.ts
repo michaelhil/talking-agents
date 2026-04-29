@@ -21,11 +21,9 @@
 // ============================================================================
 
 import { isValidWikiId } from './store.ts'
-import { mergeSources } from '../core/discovery-sources.ts'
 
 const PREFIX = 'samsinn-wiki-'
 const CACHE_TTL_MS = 5 * 60_000
-const FALLBACK_SOURCES = ['samsinn-wikis'] as const
 
 export interface DiscoveredWiki {
   readonly id: string           // canonical wiki id (validator-safe)
@@ -44,11 +42,12 @@ interface CacheEntry {
 
 let cache: CacheEntry | null = null
 
-// Resolve the active sources from env + stored. Caller threads in the stored
-// list (loaded by the API layer from discovery-sources.json) so this module
-// stays a leaf. Falls back to canonical placeholder when both empty.
-const resolveSources = (stored: ReadonlyArray<string>): ReadonlyArray<string> =>
-  mergeSources(process.env.SAMSINN_WIKI_SOURCES, stored, [...FALLBACK_SOURCES])
+const parseSources = (raw: string | undefined): ReadonlyArray<string> => {
+  const fallback = ['samsinn-wikis']
+  if (!raw) return fallback
+  const parts = raw.split(',').map((s) => s.trim()).filter(Boolean)
+  return parts.length > 0 ? parts : fallback
+}
 
 const ghHeaders = (): Record<string, string> => {
   const h: Record<string, string> = {
@@ -154,13 +153,11 @@ const fetchOneRepo = async (ownerRepo: string): Promise<GHRepo | null> => {
   return await res.json() as GHRepo
 }
 
-export const getAvailableWikis = async (
-  storedSources: ReadonlyArray<string> = [],
-): Promise<ReadonlyArray<DiscoveredWiki>> => {
+export const getAvailableWikis = async (): Promise<ReadonlyArray<DiscoveredWiki>> => {
   const now = Date.now()
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache.wikis
 
-  const sources = resolveSources(storedSources)
+  const sources = parseSources(process.env.SAMSINN_WIKI_SOURCES)
   const repos: GHRepo[] = []
   const seenSource = new Set<string>()
   for (const src of sources) {

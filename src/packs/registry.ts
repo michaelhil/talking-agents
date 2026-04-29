@@ -2,16 +2,12 @@
 // Pack registry resolver — discovers available packs on GitHub so the UI
 // can show a browsable list (alongside what's installed).
 //
-// Sources can come from two places, merged on each call:
-//   - SAMSINN_PACK_SOURCES env (comma-separated; deploy-time)
-//   - $SAMSINN_HOME/discovery-sources.json's `packs` array (UI-managed)
-// Each entry is one of:
+// Sources are configured via SAMSINN_PACK_SOURCES (comma-separated). Each
+// entry is one of:
 //   - `<owner>`         — list `<owner>/samsinn-pack-*` repos
 //   - `<owner>/<repo>`  — a single specific pack repo
 //
-// Caller passes the stored list (loaded by the API/UI plumbing) so the
-// registry stays a leaf module — no path or filesystem coupling here.
-// Default when both are empty: `samsinn-packs` (canonical org).
+// Default: `samsinn-packs` (the canonical org once it exists).
 //
 // The exposed `name` is the canonical install namespace — the repo basename
 // with any `samsinn-pack-` prefix stripped. This matches what install_pack
@@ -25,11 +21,9 @@
 // ============================================================================
 
 import { stripPackPrefix } from './manifest.ts'
-import { mergeSources } from '../core/discovery-sources.ts'
 
 const PREFIX = 'samsinn-pack-'
 const CACHE_TTL_MS = 5 * 60_000
-const FALLBACK_SOURCES = ['samsinn-packs'] as const
 
 export interface RegistryPack {
   readonly name: string         // canonical install namespace (stripped repo basename)
@@ -46,12 +40,12 @@ interface CacheEntry {
 
 let cache: CacheEntry | null = null
 
-// Resolve the active sources from env + stored. Caller passes stored (the API
-// layer loads discovery-sources.json and threads it in). Falls back to the
-// canonical placeholder org when both are empty so existing single-tenant
-// installs keep their previous behaviour.
-const resolveSources = (stored: ReadonlyArray<string>): ReadonlyArray<string> =>
-  mergeSources(process.env.SAMSINN_PACK_SOURCES, stored, [...FALLBACK_SOURCES])
+const parseSources = (raw: string | undefined): ReadonlyArray<string> => {
+  const fallback = ['samsinn-packs']
+  if (!raw) return fallback
+  const parts = raw.split(',').map(s => s.trim()).filter(Boolean)
+  return parts.length > 0 ? parts : fallback
+}
 
 // Tokens: registry calls list public repos under arbitrary orgs/users, so
 // the right credential is a token with broad public read — NOT the bug-
@@ -139,13 +133,11 @@ const dedupe = (packs: ReadonlyArray<RegistryPack>): ReadonlyArray<RegistryPack>
   return out
 }
 
-export const getAvailablePacks = async (
-  storedSources: ReadonlyArray<string> = [],
-): Promise<ReadonlyArray<RegistryPack>> => {
+export const getAvailablePacks = async (): Promise<ReadonlyArray<RegistryPack>> => {
   const now = Date.now()
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache.packs
 
-  const sources = resolveSources(storedSources)
+  const sources = parseSources(process.env.SAMSINN_PACK_SOURCES)
   const all: RegistryPack[] = []
   for (const src of sources) {
     if (src.includes('/')) {

@@ -43,7 +43,6 @@ import { resolve } from 'node:path'
 import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
 import { loadAllPacks } from './packs/loader.ts'
-import { loadDiscoverySources } from './core/discovery-sources.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
 import { loadWikiStore } from './wiki/store.ts'
@@ -173,8 +172,7 @@ export const bootstrap = async (): Promise<void> => {
   const { warnings: wikiWarnings } = await loadWikiStore(sharedPaths.wikis())
   for (const w of wikiWarnings) console.warn(`[wikis.json] ${w}`)
   try {
-    const ds = await loadDiscoverySources(sharedPaths.discoverySources())
-    const merged = await resolveActiveWikis(sharedPaths.wikis(), shared.wikiRegistry, ds.wikis)
+    const merged = await resolveActiveWikis(sharedPaths.wikis(), shared.wikiRegistry)
     console.log(`[wiki] reconciled — ${merged.filter((w) => w.enabled).length} active`)
   } catch (err) {
     console.warn(`[wiki] initial reconcile failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -330,8 +328,6 @@ export const bootstrap = async (): Promise<void> => {
       skillStore: shared.sharedSkillStore,
       refreshAllAgentTools: crossInstanceRefreshAllAgentTools,
       notifyPacksChanged: crossInstanceNotifyPacksChanged,
-      getDiscoverySources: async () =>
-        (await loadDiscoverySources(sharedPaths.discoverySources())).packs,
     }))
   }
 
