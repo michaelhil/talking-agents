@@ -94,8 +94,11 @@ Create `/etc/samsinn/env` (mode 0600, owned by root):
 ```bash
 mkdir -p /etc/samsinn
 cat > /etc/samsinn/env <<'EOF'
-# Auth — required in deploy mode. Generate with `openssl rand -base64 32`.
-SAMSINN_TOKEN=PASTE-GENERATED-TOKEN-HERE
+# Auth — OPTIONAL. Leave unset for an open sandbox (anyone with the URL,
+# including share-links via /?join=<id>, can use it). Set to require a
+# token prompt before any HTTP/WS access. Generate with:
+#   openssl rand -base64 32
+# SAMSINN_TOKEN=PASTE-GENERATED-TOKEN-HERE
 
 # SAMSINN_HOME and SAMSINN_SECURE_COOKIES are set by the systemd unit;
 # override here only if you keep the old layout (option A above).
@@ -107,6 +110,17 @@ SAMSINN_TOKEN=PASTE-GENERATED-TOKEN-HERE
 EOF
 chmod 0600 /etc/samsinn/env
 ```
+
+**To disable auth on an existing deploy:**
+
+```bash
+ssh root@<your-host>
+sed -i 's/^SAMSINN_TOKEN=/# SAMSINN_TOKEN=/' /etc/samsinn/env
+systemctl restart samsinn
+```
+
+After that, `https://<your-host>/?join=<instance-id>` lands the recipient
+directly in that instance with no token prompt.
 
 Optional tunables (defaults shown):
 
