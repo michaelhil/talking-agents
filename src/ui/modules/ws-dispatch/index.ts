@@ -258,6 +258,13 @@ const handlers: Handlers = {
     } else if (event.kind === 'warning') {
       const existing = $agentWarnings.get()[id] ?? []
       $agentWarnings.setKey(id, [...existing, event.message])
+    } else if (event.kind === 'model_fallback') {
+      // Non-blocking notice that the agent's preferred model is unavailable
+      // and the call fell through. Surface as a warning string so existing
+      // warnings UI picks it up — distinct text makes the cause obvious.
+      const existing = $agentWarnings.get()[id] ?? []
+      const note = `Falling back from "${event.preferred}" to "${event.effective}" (preferred unavailable)`
+      $agentWarnings.setKey(id, [...existing, note])
     }
   },
 

@@ -229,6 +229,12 @@ export const providersRoutes: RouteEntry[] = [
         requiresRestart = true
       }
 
+      // Refresh the per-call effective-model cache so any agent whose preferred
+      // model became available (or unavailable) on this change resolves the
+      // updated state on its next eval. Mirrors resolveActiveWikis: derive on
+      // read, no boot-time freeze.
+      void system.refreshAvailableModels()
+
       // Notify UIs so open model dropdowns re-render.
       try { broadcast({ type: 'providers_changed', providers: [name] }) } catch { /* ignore */ }
 

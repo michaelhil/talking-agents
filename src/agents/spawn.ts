@@ -180,6 +180,15 @@ export interface SpawnOptions {
   // intersects the agent's spawn-time toolset with this room's skill
   // whitelist on every call. See createToolExecutor for semantics.
   readonly getAllowedToolsForRoom?: GetAllowedToolsForRoom
+  // Per-call effective-model resolver (Phase 4 / commit-pending). Forwarded
+  // verbatim into createAIAgent's options so each eval picks an effective
+  // model from the user's preferred + currently-available providers, without
+  // ever mutating the agent's stored model.
+  readonly resolveEffectiveModel?: (preferred: string) => {
+    readonly model: string
+    readonly fallback: boolean
+    readonly reason: string
+  }
 }
 
 export const spawnAIAgent = async (
@@ -278,6 +287,7 @@ export const spawnAIAgent = async (
     getWikisCatalog: spawnOptions?.getWikisCatalog,
     getScriptContext: spawnOptions?.getScriptContext,
     onEvalEvent: spawnOptions?.onEvalEvent,
+    ...(spawnOptions?.resolveEffectiveModel ? { resolveEffectiveModel: spawnOptions.resolveEffectiveModel } : {}),
   }, spawnOptions?.overrideId)
 
   // Fill agentRef so the lazy ToolContext in resolveAgentTools resolves correctly

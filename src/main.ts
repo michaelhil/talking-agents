@@ -36,6 +36,7 @@ import type { LimitMetrics } from './core/limit-metrics.ts'
 import type { ProviderGateway } from './llm/provider-gateway.ts'
 import { createOverlayToolRegistry } from './core/tool-registry.ts'
 import { spawnAIAgent, spawnHumanAgent, buildToolSupport, type SpawnOptions } from './agents/spawn.ts'
+import { resolveEffectiveModel as resolveEffectiveModelFn } from './agents/resolve-model.ts'
 import { callLLM } from './agents/evaluation.ts'
 import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
@@ -98,6 +99,11 @@ export interface System {
   // Per-provider gateways — exposed so admin endpoints can refresh model
   // caches when keys change.
   readonly gateways: Record<string, ProviderGateway>
+  // Refresh the cached available-models snapshot used by per-call effective-
+  // model resolution. Called at boot and after any provider config change so
+  // agents picking up a fallback get the latest list. Mirrors the wiki
+  // resolveActiveWikis "derive on read" pattern (no boot-time freeze).
+  readonly refreshAvailableModels: () => Promise<void>
   readonly toolRegistry: ToolRegistry
   // Refresh every AI agent's ToolExecutor / ToolDefinitions to reflect the
   // current registry. Called by the tool-rescan endpoint and by write_tool.
@@ -603,6 +609,30 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     return buildWikisCatalog(shared.wikiRegistry, ids).text
   }
 
+  // --- Effective-model cache (Phase 4: derive-on-read) ---
+  // Cache of currently-available models from llm.models(), refreshed in the
+  // background. Used by every agent's per-call effective-model resolver so the
+  // hot path stays sync. Misses (cache empty / preferred unavailable) fall
+  // through to the first available model in router order — Phase 1 surfaces
+  // the failure as a typed error if even that is unreachable.
+  let availableModelsCache: ReadonlyArray<string> = []
+  const refreshAvailableModels = async (): Promise<void> => {
+    try {
+      const fromRouter = await llm.models()
+      const fromOllama = ollama?.getHealth().availableModels ?? []
+      // Router returns prefixed (`name:model`); Ollama health returns unprefixed.
+      // Keep both so an agent's `model: 'qwen2.5-coder'` (legacy unprefixed)
+      // resolves alongside `groq:llama-3.3-70b-versatile`.
+      availableModelsCache = [...fromRouter, ...fromOllama]
+    } catch { /* keep prior cache on transient failure */ }
+  }
+  const resolveEffectiveModel: SpawnOptions['resolveEffectiveModel'] = (preferred) => {
+    const isAvailable = (m: string): boolean => availableModelsCache.includes(m)
+    // Fallback = first model in cache (router emits in priority order).
+    const fallback = availableModelsCache[0] ?? ''
+    return resolveEffectiveModelFn(preferred, isAvailable, fallback)
+  }
+
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
     spawnAIAgent(config, llm, house, team, routeMessage, toolRegistry, {
       ...options,
@@ -611,6 +641,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       getScriptContext: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
       getAllowedToolsForRoom,
       onEvalEvent: evalEvent.proxy,
+      resolveEffectiveModel,
     })
 
   // Provider-routing-event listener lives on the shared router (see
@@ -739,6 +770,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const system: System = {
     house, team, routeMessage,
     llm, ollama, providerConfig, providerKeys, gateways,
+    refreshAvailableModels,
     toolRegistry, refreshAllAgentTools, skillStore, skillsDir,
     scriptStore, scriptsDir,
     scriptRunner,
@@ -790,6 +822,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     limitMetrics: shared.limitMetrics,
   }
   systemRef.current = system
+  // Populate the available-models cache before any agent eval runs. Fire and
+  // forget — first eval's resolver returns identity if the cache is still cold,
+  // which falls through cleanly to Phase 1's typed error if the model is
+  // genuinely unreachable.
+  void refreshAvailableModels()
   return system
 }
 

@@ -81,6 +81,16 @@ export interface AIAgentOptions {
     | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
     | undefined
   readonly onEvalEvent?: (agentName: string, event: EvalEvent) => void
+  // Per-call effective-model resolution. When provided, the agent calls this
+  // before each LLM request to derive the actual model from the user's
+  // preference. Returns the resolved model + whether a fallback was used.
+  // Sync to keep the eval hot-path simple; the callback should rely on cached
+  // provider state (router.models() snapshot, etc.).
+  readonly resolveEffectiveModel?: (preferred: string) => {
+    readonly model: string
+    readonly fallback: boolean
+    readonly reason: string
+  }
 }
 
 // === Factory ===
@@ -159,6 +169,12 @@ export const createAIAgent = (
   const getWikisCatalogOpt = options?.getWikisCatalog
   const getScriptContext = options?.getScriptContext
   const onEvalEvent = options?.onEvalEvent
+  const resolveEffective = options?.resolveEffectiveModel
+
+  // One-shot notice tracking for model fallback. Key = effective-model id we
+  // last fell back to; cleared the moment the agent successfully resolves to
+  // its preferred model again, so a subsequent outage re-emits the notice.
+  let lastFallbackTarget: string | null = null
 
   // Active abort controller for stream cancellation
   let activeAbortController: AbortController | null = null
@@ -214,9 +230,33 @@ export const createAIAgent = (
     const contextResult = buildContext(contextDeps(), triggerRoomId)
     const epoch = cm.epochAtStart()
 
+    // Resolve effective model per call. `currentModel` is the user's intent
+    // (preferred); the resolver decides whether to fall through to a default
+    // when the preferred provider isn't currently usable. Identity if no
+    // resolver was wired (tests, MCP-only mode).
+    const resolved = resolveEffective
+      ? resolveEffective(currentModel)
+      : { model: currentModel, fallback: false, reason: 'preferred_available' }
+    const effectiveModel = resolved.model
+    if (resolved.fallback && effectiveModel !== currentModel) {
+      // One-shot per fallback target — re-emit only when the target changes
+      // (which it does when the preferred model recovers and then breaks again).
+      if (lastFallbackTarget !== effectiveModel && onEvalEvent) {
+        onEvalEvent(config.name, {
+          kind: 'model_fallback',
+          preferred: currentModel,
+          effective: effectiveModel,
+          reason: resolved.reason,
+        })
+      }
+      lastFallbackTarget = effectiveModel
+    } else if (!resolved.fallback) {
+      lastFallbackTarget = null
+    }
+
     const evalConfig = {
       ...config,
-      model: currentModel,
+      model: effectiveModel,
       persona: currentPersona,
       temperature: currentTemperature,
       thinking: currentThinking,
