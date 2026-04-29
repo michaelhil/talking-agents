@@ -30,8 +30,9 @@ export interface HumanAgent extends Agent {
 export const createHumanAgent = (
   config: HumanAgentConfig,
   initialSend: TransportSend,
+  overrideId?: string,
 ): HumanAgent => {
-  const agentId = crypto.randomUUID()
+  const agentId = overrideId ?? crypto.randomUUID()
   let send = initialSend
   let isInactive = false
   let description = config.description ?? ''

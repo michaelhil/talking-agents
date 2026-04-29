@@ -129,7 +129,7 @@ export interface System {
   readonly addAgentToRoom: (agentId: string, roomId: string, invitedBy?: string) => Promise<void>
   readonly removeAgentFromRoom: (agentId: string, roomId: string, removedBy?: string) => void
   readonly spawnAIAgent: (config: AIAgentConfig, options?: SpawnOptions) => Promise<Agent>
-  readonly spawnHumanAgent: (config: HumanAgentConfig, send: TransportSend) => Promise<HumanAgent>
+  readonly spawnHumanAgent: (config: HumanAgentConfig, send: TransportSend, options?: { overrideId?: string }) => Promise<HumanAgent>
   // Manual-mode activation: catch the agent up and force one eval.
   readonly activateAgentInRoom: (agentId: string, roomId: string) => { ok: boolean; queued: boolean; reason?: string }
   readonly setOnMessagePosted: (callback: OnMessagePosted) => void
@@ -620,8 +620,12 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // events to *this* System's late-bound subscribers. Multi-instance
   // boot overrides this when registry sets its own dispatcher.
 
-  const boundSpawnHumanAgent = async (config: HumanAgentConfig, send: TransportSend): Promise<HumanAgent> => {
-    const agent = createHumanAgent(config, send)
+  const boundSpawnHumanAgent = async (
+    config: HumanAgentConfig,
+    send: TransportSend,
+    options?: { overrideId?: string },
+  ): Promise<HumanAgent> => {
+    const agent = createHumanAgent(config, send, options?.overrideId)
     await spawnHumanAgent(agent, house, team, routeMessage)
     return agent
   }

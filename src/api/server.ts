@@ -6,6 +6,7 @@
 // ============================================================================
 
 import type { Message } from '../core/types/messaging.ts'
+import type { HumanAgent } from '../agents/human-agent.ts'
 import type { WSOutbound } from '../core/types/ws-protocol.ts'
 import type { SystemRegistry } from '../core/system-registry.ts'
 import type { WSManager } from './ws-handler.ts'
@@ -220,9 +221,13 @@ export const createServer = (config: ServerConfig) => {
         // Resolve the per-instance system to scope reclaim + spawn.
         const targetSystem = await registry.getOrLoad(instanceId)
 
-        // Name-based reclaim: find inactive human agent with same name
+        // Name-based reclaim: find a human with same name. We no longer
+        // require `inactive` — the seeded Human (and any persisted human in
+        // v15+) is never marked inactive because no prior WS was bound to it.
+        // Reclaim regardless; the WS open handler reuses the existing agent
+        // and reattaches its transport, replacing any prior one.
         const existingAgent = targetSystem.team.listAgents().find(a =>
-          a.kind === 'human' && a.name === name && a.inactive,
+          a.kind === 'human' && a.name === name,
         )
         if (existingAgent) {
           // Find and reuse the old session for this agent
@@ -291,7 +296,20 @@ export const createServer = (config: ServerConfig) => {
     websocket: {
       async open(ws) {
         if (ws.data.reconnect) {
-          const session = wsManager.sessions.get(ws.data.sessionToken)
+          let session = wsManager.sessions.get(ws.data.sessionToken)
+          // First WS open after a name-based reclaim: the session map has no
+          // entry yet because the upgrade route only sets `reconnect: true`
+          // and hands us the reclaim'd name. Look up the existing agent by
+          // name in this instance, then build the session here.
+          if (!session && ws.data.name) {
+            const sys = registry.tryGetLive(ws.data.instanceId)
+              ?? await registry.getOrLoad(ws.data.instanceId)
+            const existing = sys.team.listAgents().find(a => a.kind === 'human' && a.name === ws.data.name) as HumanAgent | undefined
+            if (existing) {
+              session = { agent: existing, instanceId: ws.data.instanceId, lastActivity: Date.now() }
+              wsManager.sessions.set(ws.data.sessionToken, session)
+            }
+          }
           if (!session) return
           const newTransport = (msg: Message) => {
             wsManager.safeSend(ws, JSON.stringify({ type: 'message', message: msg } satisfies WSOutbound))
@@ -347,21 +365,14 @@ export const createServer = (config: ServerConfig) => {
 
       close(ws) {
         const session = wsManager.sessions.get(ws.data.sessionToken)
+        // v15+ humans are persistent. Closing the WS does NOT remove the
+        // bound human from rooms or mark them inactive — they keep their
+        // place and the next viewer (same browser, different tab, or a
+        // colleague via /?join=) sees them as members. Legacy "phantom
+        // member accumulation" risk is gone: humans are addressable by id,
+        // duplicates can be deleted via the agent-list × button.
         if (session?.agent.kind === 'human') {
           session.agent.setInactive?.(true)
-          // Remove from all rooms to prevent phantom member accumulation —
-          // scope to the originating instance.
-          // System may have been evicted; if so, skip cleanup (the snapshot
-          // captured pre-evict state and lazy reload won't see this human).
-          ;(async () => {
-            try {
-              const sys = await registry.getOrLoad(ws.data.instanceId)
-              for (const room of sys.house.getRoomsForAgent(session.agent.id)) {
-                room.removeMember(session.agent.id)
-              }
-              wsManager.broadcastToInstance(ws.data.instanceId, { type: 'agent_removed', agentName: session.agent.name })
-            } catch { /* evicted; skip */ }
-          })()
         }
         wsManager.wsConnections.delete(ws.data.sessionToken)
       },

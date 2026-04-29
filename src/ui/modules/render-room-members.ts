@@ -11,6 +11,7 @@
 import { $agentListView, $agents, type AgentEntry } from './stores.ts'
 import { showToast } from './toast.ts'
 import { roomIdToName } from './identity-lookups.ts'
+import { icon } from './icon.ts'
 
 // --- Pending create-then-add state ---
 
@@ -163,9 +164,9 @@ const renderChip = (
   name.onclick = (e) => { e.stopPropagation(); inspectAgent(agent.id) }
   chip.appendChild(name)
 
-  const emoji = document.createElement('span')
-  emoji.textContent = agent.kind === 'ai' ? '🤖' : '🧠'
-  chip.appendChild(emoji)
+  const kindIcon = icon(agent.kind === 'ai' ? 'cpu' : 'user', { size: 12 })
+  kindIcon.classList.add('shrink-0', 'text-text-subtle')
+  chip.appendChild(kindIcon)
 
   // In manual mode, show a ▶ on AI agent chips (hidden when muted). Click
   // fires activate_agent — the server catches the agent up on missed
@@ -267,11 +268,11 @@ const buildPicker = (opts: RenderOpts, roomName: string): HTMLElement => {
     for (const agent of eligible) {
       const row = document.createElement('div')
       row.className = 'px-3 py-1 cursor-pointer hover:bg-surface-muted flex items-center gap-1.5'
-      const emoji = document.createElement('span')
-      emoji.textContent = agent.kind === 'ai' ? '🤖' : '🧠'
+      const kindIcon2 = icon(agent.kind === 'ai' ? 'cpu' : 'user', { size: 12 })
+      kindIcon2.classList.add('shrink-0', 'text-text-subtle')
       const name = document.createElement('span')
       name.textContent = agent.name
-      row.appendChild(emoji)
+      row.appendChild(kindIcon2)
       row.appendChild(name)
       row.onclick = () => {
         opts.send({ type: 'add_to_room', roomName, agentName: agent.name })

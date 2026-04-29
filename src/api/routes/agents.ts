@@ -140,6 +140,33 @@ export const agentRoutes: RouteEntry[] = [
       }
     },
   },
+  // Quick "create human" endpoint used by the send-as picker when the user
+  // wants to post but has no humans in the system yet. Body: { name, roomName? }.
+  // If roomName is provided, the new human is auto-added to that room.
+  {
+    method: 'POST',
+    pattern: /^\/api\/agents\/human$/,
+    handler: async (req, _match, { system, instanceId, broadcast, broadcastToInstance }) => {
+      const body = await parseBody(req)
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      if (!name) return errorResponse('name is required')
+      try {
+        const agent = await system.spawnHumanAgent({ name }, () => { /* no-op transport */ })
+        if (typeof body.roomName === 'string' && body.roomName.trim()) {
+          const room = system.house.getRoom(body.roomName.trim())
+          if (room) {
+            await system.addAgentToRoom(agent.id, room.profile.id)
+          }
+        }
+        const evt = { type: 'agent_joined' as const, agent: { id: agent.id, name: agent.name, kind: agent.kind } }
+        if (broadcastToInstance) broadcastToInstance(instanceId, evt)
+        else broadcast(evt)
+        return json({ id: agent.id, name: agent.name }, 201)
+      } catch (err) {
+        return errorResponse(err instanceof Error ? err.message : 'Failed to create human')
+      }
+    },
+  },
   {
     method: 'PATCH',
     pattern: /^\/api\/agents\/([^/]+)$/,

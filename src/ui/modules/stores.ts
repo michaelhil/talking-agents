@@ -43,6 +43,30 @@ export const $connected = atom(false)
 export const $selectedRoomId = atom<string | null>(null)
 export const $selectedAgentId = atom<string | null>(null)
 
+// === Per-room "post as" human selection ===
+// Map<roomId, agentId>. Persisted in localStorage. Stale entries (room/agent
+// no longer exists) are GC'd on app boot via reconcileSelectedHumans().
+const SELECTED_HUMAN_KEY = 'ta_selected_human_per_room'
+const loadSelectedHumans = (): Record<string, string> => {
+  if (typeof localStorage === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(SELECTED_HUMAN_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (typeof parsed !== 'object' || parsed === null) return {}
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof k === 'string' && typeof v === 'string') out[k] = v
+    }
+    return out
+  } catch { return {} }
+}
+export const $selectedHumanByRoom = map<Record<string, string>>(loadSelectedHumans())
+$selectedHumanByRoom.subscribe((value) => {
+  if (typeof localStorage === 'undefined') return
+  try { localStorage.setItem(SELECTED_HUMAN_KEY, JSON.stringify(value)) } catch { /* quota / privacy mode */ }
+})
+
 // === Rooms ===
 
 export const $rooms = map<Record<string, RoomProfile>>({})

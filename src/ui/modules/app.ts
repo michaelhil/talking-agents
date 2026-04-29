@@ -77,6 +77,7 @@ import {
   $messageWarnings,
   $roomListView,
   $agentListView,
+  $selectedHumanByRoom,
   type AgentEntry,
 } from './stores.ts'
 
@@ -262,24 +263,100 @@ $roomListView.subscribe(({ rooms, selectedRoomId, pausedRooms, unreadCounts, gen
 // --- Agent list (batched: agents + identity + selection + members) ---
 // Per-room actions (add/remove/mute) live in the room-members chip row;
 // this sidebar list is now a read-only global registry with in-room tint.
-$agentListView.subscribe(({ agents, myAgentId, selectedAgentId, selectedRoomId, roomMemberIds }) => {
+$agentListView.subscribe(({ agents, selectedAgentId, selectedRoomId, roomMemberIds }) => {
+  // Per-room "post as" highlight. selectedHumanByRoom[roomId] === agentId.
+  const posterMap = $selectedHumanByRoom.get()
+  const selectedPosterId = selectedRoomId ? (posterMap[selectedRoomId] ?? null) : null
   renderAgents(agentList, {
     agents: agents as unknown as Record<string, AgentInfo>,
-    myAgentId,
+    selectedPosterId,
     selectedAgentId,
     roomMemberIds,
     hasSelectedRoom: selectedRoomId !== null,
     onInspect: (agentId) => {
-      // Inspector is a modal — keep the user in the room (no
-      // $selectedRoomId.set(null)) so the modal layers over the room view.
       $selectedAgentId.set(agentId)
     },
     onDelete: (agentName) => {
       if (!confirm(`Delete agent ${agentName}? This cannot be undone.`)) return
       void safeFetchJson(`/api/agents/${encodeURIComponent(agentName)}`, { method: 'DELETE' })
     },
+    onSelectAsPoster: (agentId) => {
+      const roomId = $selectedRoomId.get()
+      if (!roomId) return
+      // Confirm-add if the human isn't a member of the current room.
+      const isMember = roomMemberIds.includes(agentId)
+      const ag = $agents.get()[agentId]
+      if (!ag) return
+      const roomName = roomIdToName(roomId)
+      if (!isMember && roomName) {
+        if (!confirm(`Add ${ag.name} to ${roomName}?`)) return
+        send({ type: 'add_to_room', roomName, agentName: ag.name })
+      }
+      $selectedHumanByRoom.setKey(roomId, agentId)
+    },
   })
   updateAgentsLabel()
+})
+
+// Re-render when poster selection changes (lights the dot/ring).
+$selectedHumanByRoom.subscribe(() => {
+  const view = $agentListView.get()
+  const posterMap = $selectedHumanByRoom.get()
+  const selectedPosterId = view.selectedRoomId ? (posterMap[view.selectedRoomId] ?? null) : null
+  renderAgents(agentList, {
+    agents: view.agents as unknown as Record<string, AgentInfo>,
+    selectedPosterId,
+    selectedAgentId: view.selectedAgentId,
+    roomMemberIds: view.roomMemberIds,
+    hasSelectedRoom: view.selectedRoomId !== null,
+    onInspect: (agentId) => $selectedAgentId.set(agentId),
+    onDelete: (agentName) => {
+      if (!confirm(`Delete agent ${agentName}? This cannot be undone.`)) return
+      void safeFetchJson(`/api/agents/${encodeURIComponent(agentName)}`, { method: 'DELETE' })
+    },
+    onSelectAsPoster: (agentId) => {
+      const roomId = $selectedRoomId.get()
+      if (roomId) $selectedHumanByRoom.setKey(roomId, agentId)
+    },
+  })
+})
+
+// Auto-select / GC on room enter:
+//   - GC stale per-room selections (selected agent was deleted)
+//   - If exactly one human is a member of the room and no valid selection,
+//     set them as poster.
+const reconcileSelectionForRoom = (roomId: string): void => {
+  const posterMap = $selectedHumanByRoom.get()
+  const view = $agentListView.get()
+  const memberSet = new Set(view.roomMemberIds)
+  const allAgents = view.agents
+
+  const current = posterMap[roomId]
+  const currentValid = current && allAgents[current] && allAgents[current].kind === 'human'
+  if (!currentValid && current) {
+    // Drop stale entry. setKey with undefined removes via the underlying map.
+    const next = { ...posterMap }
+    delete next[roomId]
+    $selectedHumanByRoom.set(next)
+  }
+  if (currentValid) return
+
+  const humansInRoom = Object.values(allAgents).filter(a => a.kind === 'human' && memberSet.has(a.id))
+  if (humansInRoom.length === 1) {
+    $selectedHumanByRoom.setKey(roomId, humansInRoom[0]!.id)
+  }
+}
+
+$selectedRoomId.subscribe((roomId) => {
+  if (!roomId) return
+  reconcileSelectionForRoom(roomId)
+})
+
+// Also reconcile when the agent list changes (e.g. snapshot just arrived
+// after a fresh page load — auto-select fires once agents are visible).
+$agents.listen(() => {
+  const roomId = $selectedRoomId.get()
+  if (roomId) reconcileSelectionForRoom(roomId)
 })
 
 // --- Room members chip row (chip row + Add picker at top of room page) ---
@@ -512,8 +589,132 @@ chatForm.onsubmit = (e) => {
   const roomName = roomIdToName(roomId)
   if (!roomName) return
 
-  send({ type: 'post_message', target: { rooms: [roomName] }, content })
+  const posterMap = $selectedHumanByRoom.get()
+  let senderId = posterMap[roomId]
+
+  // If no human selected for this room, try to resolve. Auto-select the
+  // single human in the room; otherwise open the picker modal.
+  if (!senderId) {
+    const view = $agentListView.get()
+    const memberSet = new Set(view.roomMemberIds)
+    const humansInRoom = Object.values(view.agents).filter(a => a.kind === 'human' && memberSet.has(a.id))
+    if (humansInRoom.length === 1) {
+      senderId = humansInRoom[0]!.id
+      $selectedHumanByRoom.setKey(roomId, senderId)
+    } else {
+      // Hand off to the send-as picker. It re-submits when the user selects.
+      void openSendAsPicker(roomId, content)
+      return
+    }
+  }
+
+  send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId })
   chatInput.value = ''
+}
+
+// Quick "create human" path used by the send-as picker when no humans exist.
+// Inline prompt → POST /api/agents/human → add to current room → select → re-send.
+const createHumanInline = async (roomId: string, content: string): Promise<void> => {
+  const name = window.prompt('Name for the new human:')?.trim()
+  if (!name) return
+  const roomName = roomIdToName(roomId)
+  if (!roomName) return
+  try {
+    const res = await fetch('/api/agents/human', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, roomName }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { error?: string }
+      showToast(document.body, data.error ?? `Create failed (${res.status})`, { type: 'error', position: 'fixed' })
+      return
+    }
+    const { id } = await res.json() as { id: string }
+    $selectedHumanByRoom.setKey(roomId, id)
+    if (content) {
+      send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId: id })
+      chatInput.value = ''
+    }
+  } catch {
+    showToast(document.body, 'Create failed', { type: 'error', position: 'fixed' })
+  }
+}
+
+// Send-as picker — modal listing humans (in-room first, then others).
+// On select: sets per-room selection, closes modal, re-fires the send.
+// If no humans exist anywhere, opens the create-agent modal pre-filled with
+// kind=human; the new human is added to the current room and selected.
+const openSendAsPicker = async (roomId: string, content: string): Promise<void> => {
+  const allAgents = Object.values($agents.get())
+  const humans = allAgents.filter(a => a.kind === 'human')
+  const memberSet = new Set($agentListView.get().roomMemberIds)
+  const roomName = roomIdToName(roomId)
+  if (!roomName) return
+
+  if (humans.length === 0) {
+    // No humans in the system. Open the existing agent-create modal,
+    // pre-fill the human path. On creation, auto-add to current room,
+    // select, and (best-effort) re-send the queued message.
+    await createHumanInline(roomId, content)
+    return
+  }
+
+  const overlay = document.createElement('div')
+  overlay.className = 'fixed inset-0 flex items-center justify-center z-50 p-4'
+  overlay.style.background = 'var(--shadow-overlay)'
+  const card = document.createElement('div')
+  card.className = 'rounded-lg shadow-xl w-full max-w-md bg-surface text-text overflow-hidden'
+  const header = document.createElement('div')
+  header.className = 'px-6 py-3 border-b border-border'
+  header.innerHTML = `<h3 class="text-base font-semibold">Post as…</h3><div class="text-xs text-text-muted mt-1">Pick a human to attribute this message to in <strong>${roomName}</strong>.</div>`
+  card.appendChild(header)
+
+  const body = document.createElement('div')
+  body.className = 'px-6 py-3 max-h-[60vh] overflow-y-auto'
+  const inRoom = humans.filter(h => memberSet.has(h.id))
+  const elsewhere = humans.filter(h => !memberSet.has(h.id))
+
+  const close = (): void => overlay.remove()
+  overlay.onclick = (e) => { if (e.target === overlay) close() }
+  const onEsc = (e: KeyboardEvent): void => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc) } }
+  document.addEventListener('keydown', onEsc)
+
+  const buildRow = (h: AgentInfo, needsAdd: boolean): HTMLElement => {
+    const row = document.createElement('div')
+    row.className = 'py-2 flex items-center gap-2 border-b border-border last:border-b-0 cursor-pointer hover:bg-surface-muted px-2 -mx-2 rounded'
+    row.innerHTML = `<span class="font-medium flex-1">${h.name}</span><span class="text-[10px] uppercase tracking-wide text-text-subtle">${needsAdd ? 'add to room' : 'in room'}</span>`
+    row.onclick = () => {
+      if (needsAdd) {
+        if (!confirm(`Add ${h.name} to ${roomName}?`)) return
+        send({ type: 'add_to_room', roomName, agentName: h.name })
+      }
+      $selectedHumanByRoom.setKey(roomId, h.id)
+      send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId: h.id })
+      chatInput.value = ''
+      close()
+    }
+    return row
+  }
+  for (const h of inRoom) body.appendChild(buildRow(h, false))
+  for (const h of elsewhere) body.appendChild(buildRow(h, true))
+
+  const footer = document.createElement('div')
+  footer.className = 'px-6 py-3 border-t border-border flex justify-between gap-2'
+  const newBtn = document.createElement('button')
+  newBtn.className = 'px-3 py-1 text-xs border border-border-strong rounded hover:bg-surface-muted'
+  newBtn.textContent = '+ New human'
+  newBtn.onclick = async () => { close(); await createHumanInline(roomId, content) }
+  const cancel = document.createElement('button')
+  cancel.className = 'px-3 py-1 text-xs text-text-muted'
+  cancel.textContent = 'Cancel'
+  cancel.onclick = close
+  footer.appendChild(newBtn)
+  footer.appendChild(cancel)
+  card.appendChild(body)
+  card.appendChild(footer)
+  overlay.appendChild(card)
+  document.body.appendChild(overlay)
 }
 
 document.getElementById('btn-create-room')!.onclick = (e) => {
@@ -723,17 +924,16 @@ const connect = (name: string) => {
   setWSClient(client)
 }
 
-const savedName = localStorage.getItem('ta_name')
+// Pre-existing localStorage `ta_name` from old versions. Used as the WS
+// connect name (legacy reclaim-by-name keeps working). For fresh visitors,
+// we connect with the seeded "Human" agent's name. Server reclaims it.
+const DEFAULT_HUMAN_NAME = 'Human'
+const savedName = localStorage.getItem('ta_name') ?? DEFAULT_HUMAN_NAME
 
-nameForm.onsubmit = (e) => {
-  e.preventDefault()
-  const name = (new FormData(nameForm).get('name') as string).trim()
-  if (!name) return
-  $myName.set(name)
-  localStorage.setItem('ta_name', name)
-  nameModal.close()
-  connect(name)
-}
+// Legacy: the old name-modal form is hidden and never shown. Keep the
+// element in the HTML for now — removing it requires an index.html edit
+// that's noisy for this PR. The form's submit handler is dropped because
+// the modal never opens.
 
 // Boot order: auth gate must complete before we open a WebSocket — the
 // upgrade rejects unauthenticated connections in deploy mode and would
@@ -741,10 +941,6 @@ nameForm.onsubmit = (e) => {
 void (async () => {
   const { ensureAuthenticated } = await import('./auth.ts')
   await ensureAuthenticated()
-  if (savedName) {
-    $myName.set(savedName)
-    connect(savedName)
-  } else {
-    nameModal.showModal()
-  }
+  $myName.set(savedName)
+  connect(savedName)
 })()

@@ -31,7 +31,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 14
+export const SNAPSHOT_VERSION = 15
 
 // --- Snapshot schema ---
 
@@ -54,11 +54,20 @@ export interface AgentSnapshot {
   readonly roomIds: ReadonlyArray<string>
 }
 
+// Humans are now persistent across restarts. The legacy model (humans live
+// only as long as a WS session is bound to them) is gone in v15.
+export interface HumanAgentSnapshot {
+  readonly id: string
+  readonly name: string
+  readonly roomIds: ReadonlyArray<string>
+}
+
 export interface SystemSnapshot {
-  readonly version: '14'
+  readonly version: '15'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
-  readonly agents: ReadonlyArray<AgentSnapshot>
+  readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
+  readonly humans: ReadonlyArray<HumanAgentSnapshot>        // human agents
   readonly artifacts: ReadonlyArray<Artifact>
   readonly bookmarks?: ReadonlyArray<Bookmark>
   readonly ollamaUrls?: ReadonlyArray<string>
@@ -115,26 +124,35 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   }
 
   const agents: AgentSnapshot[] = []
+  const humans: HumanAgentSnapshot[] = []
   for (const agent of system.team.listAgents()) {
-    if (agent.kind !== 'ai') continue
-    const aiAgent = asAIAgent(agent)
-    if (!aiAgent) continue
     const agentRooms = system.house.getRoomsForAgent(agent.id)
-    agents.push({
-      id: agent.id,
-      config: aiAgent.getConfig(),
-      roomIds: agentRooms.map(r => r.profile.id),
-    })
+    if (agent.kind === 'ai') {
+      const aiAgent = asAIAgent(agent)
+      if (!aiAgent) continue
+      agents.push({
+        id: agent.id,
+        config: aiAgent.getConfig(),
+        roomIds: agentRooms.map(r => r.profile.id),
+      })
+    } else if (agent.kind === 'human') {
+      humans.push({
+        id: agent.id,
+        name: agent.name,
+        roomIds: agentRooms.map(r => r.profile.id),
+      })
+    }
   }
 
   // Include all artifacts (resolved and unresolved) for full state persistence
   const artifacts = system.house.artifacts.list({ includeResolved: true })
 
   return {
-    version: '14',
+    version: '15',
     timestamp: Date.now(),
     rooms,
     agents,
+    humans,
     artifacts: [...artifacts],
     bookmarks: [...system.house.listBookmarks()],
     ...(system.ollamaUrls ? {
@@ -156,17 +174,17 @@ const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
 
 // A snapshot is "skippable" iff persisting it adds no value the user would
 // notice — either truly empty, or matches the seed-only shape exactly
-// (one demo room, one Helper agent, no chat messages, no artifacts, no
-// bookmarks). Used by createAutoSaver to skip persistence so cookieless
-// drive-by visits and seed-only instances don't leave dirs on disk.
+// (one Cafe room, one AI agent, one Human agent, no chat messages, no
+// artifacts, no bookmarks). Used by createAutoSaver to skip persistence
+// so cookieless drive-by visits and seed-only instances don't leave dirs
+// on disk.
 //
-// First real chat message, custom room, custom agent, artifact, or bookmark
-// flips this to non-skippable and the autosaver writes through normally.
+// First real chat message, custom room, additional/custom agent, artifact,
+// or bookmark flips this to non-skippable and the autosaver writes through
+// normally.
 //
-// Defining "seed-only" by structural match: rooms.length === 1 with name
-// 'demo', agents.length === 1 with name 'Helper', and every message in the
-// demo room is non-'chat' (join/system/leave/etc — pure boilerplate). If
-// seed-example.ts changes its output shape, update this predicate.
+// Shape is pinned by SEED_ROOM_NAME / SEED_AI_NAME / SEED_HUMAN_NAME in
+// seed-example.ts — there's a unit test that fails if the seed drifts.
 export const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
   if (snap.artifacts && snap.artifacts.length > 0) return false
   if (snap.bookmarks && snap.bookmarks.length > 0) return false
@@ -177,10 +195,13 @@ export const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
   // Seed-only: exactly the shape produced by seedFreshInstance.
   if (snap.rooms.length !== 1) return false
   if (snap.agents.length !== 1) return false
+  if (snap.humans.length !== 1) return false
   const room = snap.rooms[0]!
-  const agent = snap.agents[0]!
-  if (room.profile.name !== 'demo') return false
-  if (agent.config.name !== 'Helper') return false
+  const ai = snap.agents[0]!
+  const human = snap.humans[0]!
+  if (room.profile.name !== 'Cafe') return false
+  if (ai.config.name !== 'AI') return false
+  if (human.name !== 'Human') return false
   for (const msg of room.messages) {
     if (msg.type === 'chat') return false
   }
@@ -235,6 +256,7 @@ interface RestorableSystem {
     readonly restoreBookmarks: (entries: ReadonlyArray<Bookmark>) => void
   }
   readonly spawnAIAgent: (config: AIAgentConfig, options?: { overrideId?: string }) => Promise<unknown>
+  readonly spawnHumanAgent?: (config: { name: string }, send: (msg: unknown) => void, options?: { overrideId?: string }) => Promise<unknown>
   readonly team?: {
     readonly getAgent: (idOrName: string) => { readonly id: string; readonly join: (room: Room) => Promise<void> } | undefined
   }
@@ -277,6 +299,26 @@ export const restoreFromSnapshot = async (
       if (room) {
         room.addMember(agentSnap.id)
         if (agent) await agent.join(room)
+      }
+    }
+  }
+
+  // 2b. Restore human agents (preserved IDs, no-op transport — clients
+  // reattach via the per-instance broadcast, not per-agent transport).
+  if (system.spawnHumanAgent) {
+    for (const humanSnap of snapshot.humans ?? []) {
+      await system.spawnHumanAgent(
+        { name: humanSnap.name },
+        () => { /* no-op default; UI doesn't bind transport in v15 */ },
+        { overrideId: humanSnap.id },
+      )
+      const agent = system.team?.getAgent(humanSnap.id)
+      for (const roomId of humanSnap.roomIds) {
+        const room = roomMap.get(roomId)
+        if (room) {
+          room.addMember(humanSnap.id)
+          if (agent) await agent.join(room)
+        }
       }
     }
   }

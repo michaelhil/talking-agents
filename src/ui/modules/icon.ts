@@ -36,6 +36,8 @@ export type IconName =
   | 'skip-forward'         // force-advance step
   | 'copy'                 // copy-to-clipboard hover button
   | 'check'                // copy-confirmation feedback
+  | 'cpu'                  // AI agent kind glyph (replaces 🤖)
+  | 'user'                 // human agent kind glyph (replaces 🧠)
 
 // Path fragments only (no SVG wrapper). Each string is the inner markup of
 // a 24×24 viewBox. Keep alphabetical.
@@ -54,6 +56,8 @@ const PATHS: Readonly<Record<IconName, string>> = {
     '<path d="m9 18 6-6-6-6"/>',
   'copy':
     '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  'cpu':
+    '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
   'clapperboard':
     '<path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"/><path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   'corner-down-left':
@@ -94,6 +98,8 @@ const PATHS: Readonly<Record<IconName, string>> = {
     '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
   'trash':
     '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  'user':
+    '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   'x':
     '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 }

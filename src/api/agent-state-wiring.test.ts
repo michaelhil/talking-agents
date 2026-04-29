@@ -180,11 +180,11 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     // this assertion catches it.
     const rooms = sys.house.listAllRooms()
     expect(rooms.length).toBe(1)
-    expect(rooms[0]?.name).toBe('demo')
+    expect(rooms[0]?.name).toBe('Cafe')
     const aiAgents = sys.team.listAgents().filter(a => a.kind === 'ai')
     expect(aiAgents.length).toBe(1)
     const helper = aiAgents[0]!
-    expect(helper.name).toBe('Helper')
+    expect(helper.name).toBe('AI')
 
     // 2. Per-agent subscription must have been routed through the wrapper.
     // Pre-fix: zero entries — the only places that called subscribeAgentState
@@ -212,7 +212,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     while (Date.now() < deadline) {
       stateEvents = broadcasts.filter(b =>
         b.instanceId === cookieId && b.msg.type === 'agent_state' &&
-        (b.msg as { agentName?: string }).agentName === 'Helper',
+        (b.msg as { agentName?: string }).agentName === 'AI',
       )
       if (stateEvents.length > 0) break
       await new Promise(r => setTimeout(r, 25))
@@ -256,7 +256,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
 
     const sys = await registry.getOrLoad('cookieinst123abc')
     const helper = sys.team.listAgents().find(a => a.kind === 'ai')!
-    expect(helper.name).toBe('Helper')
+    expect(helper.name).toBe('AI')
 
     sys.removeAgent(helper.id)
     expect(unsubscribed).toContain(helper.id)
