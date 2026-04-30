@@ -121,7 +121,13 @@ export interface StreamChunk {
   readonly thinking?: string  // qwen3 CoT thinking tokens (before visible response)
   readonly toolCalls?: ReadonlyArray<NativeToolCall>  // native tool calls from final chunk
   // Populated on the final done=true chunk when available (per-provider).
-  readonly tokensUsed?: { readonly prompt: number; readonly completion: number }
+  readonly tokensUsed?: {
+    readonly prompt: number
+    readonly completion: number
+    // Anthropic-only; absent on every other provider.
+    readonly cacheCreation?: number
+    readonly cacheRead?: number
+  }
   // Attached by the router on the final done=true chunk.
   readonly provider?: string
   readonly contextMax?: number

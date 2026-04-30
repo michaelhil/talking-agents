@@ -107,6 +107,8 @@ interface OAIStreamChunk {
   usage?: {
     prompt_tokens?: number
     completion_tokens?: number
+    cache_creation_input_tokens?: number
+    cache_read_input_tokens?: number
   }
 }
 
@@ -475,7 +477,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
     // Accumulators for final-chunk metadata (finish_reason may arrive before
     // [DONE]; usage typically arrives AFTER finish_reason but BEFORE [DONE]).
     let finishSeen = false
-    let usageTokens: { prompt: number; completion: number } | undefined
+    let usageTokens: { prompt: number; completion: number; cacheCreation?: number; cacheRead?: number } | undefined
 
     const emitFinal = (): StreamChunk => {
       const toolCalls: NativeToolCall[] | undefined = toolAccum.length
@@ -535,6 +537,8 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
               usageTokens = {
                 prompt: parsed.usage.prompt_tokens ?? 0,
                 completion: parsed.usage.completion_tokens ?? 0,
+                ...(parsed.usage.cache_creation_input_tokens !== undefined ? { cacheCreation: parsed.usage.cache_creation_input_tokens } : {}),
+                ...(parsed.usage.cache_read_input_tokens !== undefined ? { cacheRead: parsed.usage.cache_read_input_tokens } : {}),
               }
             }
 

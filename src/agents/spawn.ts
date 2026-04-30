@@ -214,6 +214,8 @@ export const spawnAIAgent = async (
     const telemetry = {
       ...(m.promptTokens !== undefined ? { promptTokens: m.promptTokens } : {}),
       ...(m.completionTokens !== undefined ? { completionTokens: m.completionTokens } : {}),
+      ...(m.cacheCreation !== undefined ? { cacheCreation: m.cacheCreation } : {}),
+      ...(m.cacheRead !== undefined ? { cacheRead: m.cacheRead } : {}),
       ...(m.contextMax !== undefined && m.contextMax > 0 ? { contextMax: m.contextMax } : {}),
       ...(m.provider ? { provider: m.provider } : {}),
       ...(m.model ? { model: m.model } : {}),

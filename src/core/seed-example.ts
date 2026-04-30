@@ -43,7 +43,7 @@ const pickSeedModel = (system: System): string => {
       models: (CURATED_MODELS[name] ?? []).map(m => ({ id: m.id })),
     }
   })
-  return resolveDefaultModel(providers) || 'gemini-2.5-flash'
+  return resolveDefaultModel(providers) || 'gemini-2.5-pro'
 }
 
 const AI_PERSONA = [

@@ -98,6 +98,11 @@ const LLM_RETRY_DELAY_MS = 1000
 export interface LLMCallMetrics {
   readonly promptTokens?: number
   readonly completionTokens?: number
+  // Anthropic-only: tokens written to / read from prompt cache. Absent on
+  // every other provider. Surfaced through the posted message so cache
+  // efficacy is observable in the JSONL log without dashboard inspection.
+  readonly cacheCreation?: number
+  readonly cacheRead?: number
   readonly contextMax?: number
   readonly provider?: string
   readonly model?: string
@@ -131,6 +136,8 @@ const streamWithRetry = async (
             metrics = {
               promptTokens: chunk.tokensUsed?.prompt,
               completionTokens: chunk.tokensUsed?.completion,
+              ...(chunk.tokensUsed?.cacheCreation !== undefined ? { cacheCreation: chunk.tokensUsed.cacheCreation } : {}),
+              ...(chunk.tokensUsed?.cacheRead !== undefined ? { cacheRead: chunk.tokensUsed.cacheRead } : {}),
               contextMax: chunk.contextMax,
               provider: chunk.provider,
               model: request.model,
@@ -152,6 +159,8 @@ const streamWithRetry = async (
         metrics: {
           promptTokens: response.tokensUsed.prompt,
           completionTokens: response.tokensUsed.completion,
+          ...(response.tokensUsed.cacheCreation !== undefined ? { cacheCreation: response.tokensUsed.cacheCreation } : {}),
+          ...(response.tokensUsed.cacheRead !== undefined ? { cacheRead: response.tokensUsed.cacheRead } : {}),
           contextMax: response.contextMax,
           provider: response.provider,
           model: request.model,

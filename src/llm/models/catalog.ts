@@ -29,9 +29,9 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5 (balanced)'   },
   ],
   gemini: [
-    { id: 'gemini-2.5-flash-lite', label: 'Flash-Lite (cheapest)' },
-    { id: 'gemini-2.5-flash',      label: 'Flash (default)'       },
-    { id: 'gemini-2.5-pro',        label: 'Pro (premium)'         },
+    { id: 'gemini-2.5-pro',        label: 'Pro (default)'   },
+    { id: 'gemini-2.5-flash',      label: 'Flash (faster)'  },
+    { id: 'gemini-2.5-flash-lite', label: 'Flash-Lite (cheapest, weaker reasoning)' },
   ],
   groq: [
     { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (fast)'    },

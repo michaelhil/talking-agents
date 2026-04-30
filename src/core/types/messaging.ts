@@ -39,6 +39,9 @@ export interface Message {
   // --- Chat / eval telemetry (set by spawn.onDecision on chat/pass messages) ---
   readonly promptTokens?: number
   readonly completionTokens?: number
+  // Anthropic-only prompt-cache telemetry. Absent on every other provider.
+  readonly cacheCreation?: number
+  readonly cacheRead?: number
   readonly contextMax?: number        // bound provider's context window for this call
   readonly provider?: string          // bound provider name (e.g. 'gemini', 'ollama')
   readonly model?: string             // model id reported by the provider
