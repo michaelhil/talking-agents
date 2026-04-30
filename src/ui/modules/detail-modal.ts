@@ -193,7 +193,10 @@ export const createModal = (config: ModalConfig): ModalElements => {
   overlay.style.background = 'var(--shadow-overlay)'
 
   const card = document.createElement('div')
-  card.className = `rounded-lg shadow-xl w-full ${config.width ?? 'max-w-lg'} flex flex-col overflow-hidden bg-surface text-text`
+  // `modal-card` hooks the global form-control theming in input.css so any
+  // <input>, <select>, or <textarea> rendered inside this modal picks up the
+  // theme tokens (no per-element class sprawl).
+  card.className = `modal-card rounded-lg shadow-xl w-full ${config.width ?? 'max-w-lg'} flex flex-col overflow-hidden bg-surface text-text`
   card.style.maxHeight = config.maxHeight ?? '90vh'
 
   const header = document.createElement('div')

@@ -58,3 +58,107 @@
   --radius-lg: var(--radius-lg);
 }
 
+/* ============================================================================
+ * Modal form-control theming
+ *
+ * Native <dialog> elements and the <div class="modal-card"> built by
+ * createModal both host form controls (inputs, selects, textareas) that
+ * inherited browser-default colours — typically white-on-black or vice
+ * versa, which collided with the modal's themed background and rendered
+ * black-text-on-dark-blue in dark mode.
+ *
+ * Bind these controls to the same design tokens that drive the rest of the
+ * app so they flip cleanly between light and dark with no per-element class
+ * sprawl. Inputs use surface-strong (slightly raised) so they read as
+ * distinct from the modal background; borders match the rest of the app.
+ *
+ * Scoped to dialogs and modal cards on purpose — non-modal forms across
+ * the app are sparse and already use Tailwind utility classes that work.
+ * ========================================================================= */
+@layer components {
+  dialog,
+  .modal-card {
+    background-color: var(--surface);
+    color: var(--text);
+  }
+
+  dialog input[type="text"],
+  dialog input[type="number"],
+  dialog input[type="email"],
+  dialog input[type="password"],
+  dialog input[type="search"],
+  dialog input[type="url"],
+  dialog input[type="tel"],
+  dialog input[type="date"],
+  dialog input[type="time"],
+  dialog input:not([type]),
+  dialog textarea,
+  dialog select,
+  .modal-card input[type="text"],
+  .modal-card input[type="number"],
+  .modal-card input[type="email"],
+  .modal-card input[type="password"],
+  .modal-card input[type="search"],
+  .modal-card input[type="url"],
+  .modal-card input[type="tel"],
+  .modal-card input[type="date"],
+  .modal-card input[type="time"],
+  .modal-card input:not([type]),
+  .modal-card textarea,
+  .modal-card select {
+    background-color: var(--surface-strong);
+    color: var(--text);
+    border-color: var(--border);
+  }
+
+  /* Placeholder text — softer so it reads as hint, not value. */
+  dialog input::placeholder,
+  dialog textarea::placeholder,
+  .modal-card input::placeholder,
+  .modal-card textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+  }
+
+  /* Disabled controls — desaturate so users can tell. */
+  dialog input:disabled,
+  dialog textarea:disabled,
+  dialog select:disabled,
+  .modal-card input:disabled,
+  .modal-card textarea:disabled,
+  .modal-card select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* Fieldset borders + legend text track the same tokens. */
+  dialog fieldset,
+  .modal-card fieldset {
+    border-color: var(--border);
+  }
+  dialog legend,
+  .modal-card legend {
+    color: var(--text);
+  }
+
+  /* Native checkbox / radio — accent-color picks up the brand colour
+     in browsers that support it (all modern). */
+  dialog input[type="checkbox"],
+  dialog input[type="radio"],
+  .modal-card input[type="checkbox"],
+  .modal-card input[type="radio"] {
+    accent-color: var(--accent);
+  }
+
+  /* Focus ring uses the existing accent-ring token for consistency. */
+  dialog input:focus-visible,
+  dialog textarea:focus-visible,
+  dialog select:focus-visible,
+  .modal-card input:focus-visible,
+  .modal-card textarea:focus-visible,
+  .modal-card select:focus-visible {
+    outline: 2px solid var(--accent-ring);
+    outline-offset: 1px;
+  }
+}
+

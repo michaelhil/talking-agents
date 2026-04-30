@@ -542,7 +542,7 @@
   </main>
 
   <!-- Create Room Modal -->
-  <dialog id="room-modal" class="rounded-lg shadow-xl p-0 w-96">
+  <dialog id="room-modal" class="rounded-lg shadow-xl p-0 w-96 bg-surface text-text">
     <form id="room-form" class="p-4 space-y-3">
       <h3 class="font-medium text-text-strong">Create Room</h3>
       <input name="name" placeholder="Room name" required class="w-full px-3 py-2 border rounded text-sm">
@@ -600,7 +600,7 @@
   </dialog>
 
   <!-- Name prompt modal -->
-  <dialog id="name-modal" class="rounded-lg shadow-xl p-0 w-80">
+  <dialog id="name-modal" class="rounded-lg shadow-xl p-0 w-80 bg-surface text-text">
     <form id="name-form" class="p-4 space-y-3">
       <p class="text-sm text-text">Enter your name to join:</p>
       <input name="name" placeholder="Your name" required autofocus class="w-full px-3 py-2 border rounded text-sm">
@@ -743,7 +743,7 @@
   </dialog>
 
   <!-- Summary settings modal -->
-  <dialog id="summary-settings-modal" class="rounded-lg shadow-xl p-0 w-[520px] max-w-[95vw]">
+  <dialog id="summary-settings-modal" class="rounded-lg shadow-xl p-0 w-[520px] max-w-[95vw] bg-surface text-text">
     <form id="summary-settings-form" method="dialog" class="p-4 space-y-3">
       <h2 class="text-lg font-semibold">Summary & Compression</h2>
       <div class="text-xs text-text-subtle">Per-room settings for <span id="summary-settings-roomname" class="font-mono"></span></div>
@@ -790,7 +790,7 @@
   </dialog>
 
   <!-- Summary inspect modal -->
-  <dialog id="summary-inspect-modal" class="rounded-lg shadow-xl p-0 w-[720px] max-w-[95vw] max-h-[85vh]">
+  <dialog id="summary-inspect-modal" class="rounded-lg shadow-xl p-0 w-[720px] max-w-[95vw] max-h-[85vh] bg-surface text-text">
     <div class="p-4 space-y-3 flex flex-col max-h-[85vh]">
       <div class="flex items-center justify-between">
         <h2 class="text-lg font-semibold">Inspect — <span id="summary-inspect-roomname" class="font-mono"></span></h2>
