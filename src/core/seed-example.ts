@@ -58,18 +58,26 @@ const ROOM_PROMPT = [
   'Be welcoming. If you see no recent activity, you can ask "what would you like to explore first?"',
 ].join(' ')
 
-const WELCOME_MESSAGE = [
-  '👋 Welcome to the Cafe.',
-  '',
-  'You have one AI companion (**AI**) and one human seat (**Human**) here. A few things to try:',
-  '',
-  '1. Type a message and hit Send — AI will reply, attributed to **Human**.',
-  '2. Click your name in the sidebar to rename yourself.',
-  '3. Add another human (sidebar → **+** next to **Agents**, kind=human) and click their dot to post as them.',
-  '4. Address an agent with `[[AI]] your question` — only they reply.',
-  '',
-  'Click the agent name in the sidebar to inspect them. The 🐛 icon in the header reports issues.',
-].join('\n')
+const buildWelcomeMessage = (wikiNames: ReadonlyArray<string>): string => {
+  const wikiLine = wikiNames.length === 0
+    ? ''
+    : wikiNames.length === 1
+      ? `5. AI can look things up in the **${wikiNames[0]}** wiki — just ask.`
+      : `5. AI can look things up in these wikis — just ask: ${wikiNames.map(n => `**${n}**`).join(', ')}.`
+  return [
+    '👋 Welcome to the Cafe.',
+    '',
+    'You have one AI companion (**AI**) and one human seat (**Human**) here. A few things to try:',
+    '',
+    '1. Type a message and hit Send — AI will reply, attributed to **Human**.',
+    '2. Click your name in the sidebar to rename yourself.',
+    '3. Add another human (sidebar → **+** next to **Agents**, kind=human) and click their dot to post as them.',
+    '4. Address an agent with `[[AI]] your question` — only they reply.',
+    ...(wikiLine ? [wikiLine] : []),
+    '',
+    'Click the agent name in the sidebar to inspect them. The 🐛 icon in the header reports issues.',
+  ].join('\n')
+}
 
 // Constants exported so isEmptySnapshot can match the seed shape exactly.
 export const SEED_ROOM_NAME = 'Cafe'
@@ -109,9 +117,18 @@ export const seedFreshInstance = async (system: System): Promise<void> => {
     await system.addAgentToRoom(ai.id, room.profile.id)
     await system.addAgentToRoom(human.id, room.profile.id)
 
+    // Bind every wiki the registry knows about so a brand-new visitor can ask
+    // questions answered from the wiki without first learning where wiki
+    // bindings live in the UI. Power users can unbind via the room settings.
+    // If discovery hasn't surfaced any wikis yet (no SAMSINN_WIKI_SOURCES,
+    // empty registry), this is a clean no-op.
+    const wikiList = system.wikiRegistry.list()
+    const wikiIds = wikiList.map(w => w.id)
+    if (wikiIds.length > 0) room.setWikiBindings(wikiIds)
+
     room.post({
       senderId: 'system',
-      content: WELCOME_MESSAGE,
+      content: buildWelcomeMessage(wikiList.map(w => w.displayName)),
       type: 'system',
     })
   } catch (err) {
