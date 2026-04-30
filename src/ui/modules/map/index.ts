@@ -72,7 +72,19 @@ const buildMap = (
   // host is visible, not a silent grey grid.
   let tileErrors = 0
   let tileErrorOverlay: HTMLElement | null = null
-  const tileLayer = L.tileLayer(OSM_TILE_URL, { attribution: OSM_ATTRIBUTION, maxZoom: 19 })
+  // referrerPolicy on tile <img>s: OSM's volunteer-run servers reject
+  // requests with no/weak Referer ("Referer is required" 403 tile).
+  // 'no-referrer-when-downgrade' forces the browser to attach the full
+  // page Referer on HTTPS→HTTPS tile fetches, overriding any stricter
+  // page-level Referrer-Policy. crossOrigin is set so the browser uses
+  // CORS on the tile request — required by some tile providers; OSM
+  // accepts it.
+  const tileLayer = L.tileLayer(OSM_TILE_URL, {
+    attribution: OSM_ATTRIBUTION,
+    maxZoom: 19,
+    crossOrigin: '',
+    referrerPolicy: 'no-referrer-when-downgrade',
+  })
   ;(tileLayer as unknown as { on: (e: string, h: () => void) => void }).on('tileerror', () => {
     tileErrors++
     if (tileErrors === TILE_ERROR_THRESHOLD && !tileErrorOverlay) {
