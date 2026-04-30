@@ -35,6 +35,10 @@ export const showToast = (
   }
 
   toast.textContent = message
+  // Multi-line toasts (e.g. Test-all summary) use '\n' as a separator. The
+  // Tailwind whitespace-pre-line utility isn't reliably in the bundle, so
+  // set it inline — single-line toasts are unaffected.
+  if (message.includes('\n')) toast.style.whiteSpace = 'pre-line'
   toast.title = 'click to dismiss'
   toast.addEventListener('click', () => toast.remove(), { once: true })
   const fadeAt = Math.max(500, durationMs - 700)

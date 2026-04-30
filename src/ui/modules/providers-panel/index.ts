@@ -235,6 +235,11 @@ const refresh = async (): Promise<void> => {
 // sequence (avoid hammering all upstreams in parallel). Each result pushes
 // into the monitor (server-side) and triggers a providers_changed broadcast,
 // so the panel rerenders automatically — no manual refresh needed here.
+//
+// The summary toast carries per-provider detail — caller wants to know
+// *which* provider failed and *why*, not just an aggregate "x/y failed"
+// count. One toast per provider would flood the screen, so we collapse
+// into one toast with multiple lines.
 const testAll = async (): Promise<void> => {
   const btn = document.getElementById('providers-test-all') as HTMLButtonElement | null
   if (btn) { btn.disabled = true; btn.textContent = 'Testing…' }
@@ -242,18 +247,39 @@ const testAll = async (): Promise<void> => {
     const res = await fetch('/api/providers')
     if (!res.ok) return
     const data = await res.json() as ProvidersResponse
-    let ok = 0, fail = 0
+    const lines: string[] = []
+    let okCount = 0, failCount = 0, skipCount = 0
     for (const p of data.providers) {
-      // Skip no_key cloud providers — there's nothing to test.
-      if (p.kind === 'cloud' && !p.hasKey) continue
+      if (p.kind === 'cloud' && !p.hasKey) {
+        lines.push(`• ${p.name}: skipped (no API key)`)
+        skipCount++
+        continue
+      }
+      let result
       try {
-        const r = await testKey(p.name)
-        if (r.ok) ok++
-        else fail++
-      } catch { fail++ }
+        result = await testKey(p.name)
+      } catch (err) {
+        result = { ok: false, error: err instanceof Error ? err.message : String(err), elapsedMs: 0 } as const
+      }
+      const tag = result.ok ? '✓' : '✗'
+      // Reuse the same one-line formatter the per-row Test button uses so
+      // detail (concurrency capacity / latency / model count) stays
+      // consistent across both call sites. Errors are truncated to keep
+      // the toast a sensible size when many providers fail at once.
+      const detail = formatTestToast(p.name, result).replace(/^[^:]+:\s*/, '')
+      lines.push(`${tag} ${p.name}: ${detail.length > 90 ? detail.slice(0, 90) + '…' : detail}`)
+      if (result.ok) okCount++
+      else failCount++
     }
-    showToast(document.body, `Tested ${ok + fail} providers — ${ok} ok, ${fail} failed`,
-      { type: fail === 0 ? 'success' : 'error', position: 'fixed' })
+    const header = `Tested ${okCount + failCount + skipCount} providers — ${okCount} ok, ${failCount} failed${skipCount ? `, ${skipCount} skipped` : ''}`
+    // Multi-line via \n + the toast's whitespace handling. The toast
+    // container already has max-w-md so long lines wrap; the duration is
+    // bumped so the user has time to read each line.
+    showToast(document.body, `${header}\n${lines.join('\n')}`, {
+      type: failCount === 0 ? 'success' : 'error',
+      position: 'fixed',
+      durationMs: Math.min(20_000, 4_000 + lines.length * 1_500),
+    })
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Test all' }
     // Force one final refresh in case the WS broadcast was missed.
