@@ -346,6 +346,15 @@ export const bootstrap = async (): Promise<void> => {
     limitMetrics: shared.limitMetrics,
   })
 
+  // Wire the per-provider monitor heartbeat to the live WS-client count.
+  // While at least one client is connected the heartbeats run on their
+  // adaptive cadence; with zero clients the heartbeats become no-ops and
+  // an idle Samsinn (no open tab) consumes zero requests. Providers were
+  // built before WSManager existed, so this is a post-construction wire-up.
+  for (const monitor of Object.values(providerSetup.monitors)) {
+    monitor.setIsActive(() => wsManager.sessionCount() > 0)
+  }
+
   // === Provider routing event dispatcher (registry-aware) ===
   shared.setProviderEventDispatcher((event) => {
     if (!event.agentId) return   // events without an agentId can't be routed

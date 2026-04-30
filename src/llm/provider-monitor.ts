@@ -97,6 +97,12 @@ export interface ProviderMonitor {
   readonly recordHeartbeat: (ok: boolean, modelCount?: number, error?: unknown) => void
   readonly setHasKey: (has: boolean) => void
   readonly setUserEnabled: (enabled: boolean) => void
+  // Replace the isActive predicate after construction. Bootstrap uses this
+  // to wire the WS-client counter once the WSManager exists (the providers
+  // are built before the WSManager). When isActive returns false the
+  // heartbeat becomes a no-op, so an idle Samsinn (no clients) hits zero
+  // network traffic.
+  readonly setIsActive: (fn: () => boolean) => void
   readonly recordFailure: (entry: Omit<FailureRecord, 'when' | 'provider'>) => void
   readonly getRecentFailures: () => ReadonlyArray<FailureRecord>
   readonly onChange: (listener: MonitorListener) => () => void
@@ -119,7 +125,9 @@ export const createProviderMonitor = (
   const now = deps.now ?? Date.now
   const setT = deps.setTimeout ?? setTimeout
   const clearT = deps.clearTimeout ?? clearTimeout
-  const isActive = config.isActive ?? (() => true)
+  // Mutable so bootstrap can rewire it after WSManager is constructed.
+  // The providers stack is built before the WSManager exists.
+  let isActive: () => boolean = config.isActive ?? (() => true)
   const healthyMs = config.healthyIntervalMs ?? DEFAULT_HEALTHY_MS
   const unhealthySeq = config.unhealthyBackoffMsSequence ?? DEFAULT_UNHEALTHY_SEQ
   const rateLimitMs = config.defaultRateLimitCooldownMs ?? DEFAULT_RATE_LIMIT_MS
@@ -335,6 +343,7 @@ export const createProviderMonitor = (
 
   const setHasKey = (_: boolean): void => { refreshStaticIfNeeded() }
   const setUserEnabled = (_: boolean): void => { refreshStaticIfNeeded() }
+  const setIsActive = (fn: () => boolean): void => { isActive = fn }
 
   const recordFailure = (entry: Omit<FailureRecord, 'when' | 'provider'>): void => {
     pushFailure(entry)
@@ -420,6 +429,15 @@ export const createProviderMonitor = (
     // Seed modelCount from current gateway health (warm-up may have run).
     const currentCount = gw.getHealth().availableModels.length
     if (currentCount !== state.modelCount) setState({ modelCount: currentCount })
+    // Subscribe so warm-up's later refreshModels() (which fires onHealthChange)
+    // updates the monitor immediately rather than waiting for the next
+    // heartbeat tick — otherwise the API reports modelCount=0 for the first
+    // 90s after every server restart.
+    gw.onHealthChange((h) => {
+      if (h.availableModels.length !== state.modelCount) {
+        setState({ modelCount: h.availableModels.length })
+      }
+    })
     scheduleNextHeartbeat()
   }
 
@@ -445,6 +463,7 @@ export const createProviderMonitor = (
     recordHeartbeat,
     setHasKey,
     setUserEnabled,
+    setIsActive,
     recordFailure,
     getRecentFailures,
     onChange,

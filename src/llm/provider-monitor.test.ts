@@ -351,6 +351,42 @@ describe('provider-monitor — heartbeat scheduling', () => {
   })
 })
 
+describe('provider-monitor — setIsActive rewire', () => {
+  test('rewiring isActive after construction takes effect on next heartbeat', async () => {
+    const timers = makeFakeTimers()
+    let active = true
+    const monitor = createProviderMonitor(
+      baseConfig({ isActive: () => active, healthyIntervalMs: 1_000 }),
+      { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout },
+    )
+    let calls = 0
+    const gw = {
+      chat: async () => { throw new Error('x') },
+      models: async () => [],
+      runningModels: async () => [],
+      getMetrics: () => ({} as never),
+      getHealth: () => ({ status: 'healthy' as const, latencyMs: 0, availableModels: [], lastCheckedAt: 0 }),
+      getConfig: () => ({} as never),
+      updateConfig: () => {},
+      onHealthChange: () => {},
+      resetCircuitBreaker: () => {},
+      refreshModels: async () => { calls++ },
+      recordExternalFailure: () => {},
+      dispose: () => {},
+    }
+    monitor.start(gw as never)
+    timers.advance(1_000)
+    await Promise.resolve(); await Promise.resolve()
+    expect(calls).toBe(1)
+    // Rewire to "always inactive" — heartbeat should now skip the network.
+    monitor.setIsActive(() => false)
+    timers.advance(1_000)
+    await Promise.resolve(); await Promise.resolve()
+    expect(calls).toBe(1)
+    monitor.dispose()
+  })
+})
+
 describe('provider-monitor — recovery after disable/re-enable', () => {
   test('toggling user-enabled flips static state', () => {
     let enabled = true
