@@ -268,4 +268,120 @@ describe('createOpenAICompatibleProvider', () => {
       expect(response.toolCalls?.[0]?.function.arguments).toEqual({ x: 42 })
     } finally { fx.stop() }
   })
+
+  // === Anthropic prompt-cache markers ===
+
+  const okBody = JSON.stringify({
+    choices: [{ message: { role: 'assistant', content: 'ok' } }],
+    usage: { prompt_tokens: 1, completion_tokens: 1 },
+  })
+
+  const sampleTools = [
+    { type: 'function' as const, function: { name: 'a', description: 'A', parameters: { type: 'object' } } },
+    { type: 'function' as const, function: { name: 'b', description: 'B', parameters: { type: 'object' } } },
+    { type: 'function' as const, function: { name: 'c', description: 'C', parameters: { type: 'object' } } },
+  ]
+
+  test('Anthropic + tools: cache_control on last tool top-level (not inside .function); earlier tools clean', async () => {
+    const fx = startFixture(() => ({ status: 200, body: okBody }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }], tools: sampleTools })
+      const tools = (fx.last.body as { tools?: ReadonlyArray<Record<string, unknown>> }).tools!
+      expect(tools).toHaveLength(3)
+      expect(tools[0]).not.toHaveProperty('cache_control')
+      expect(tools[1]).not.toHaveProperty('cache_control')
+      expect(tools[2]?.cache_control).toEqual({ type: 'ephemeral' })
+      // Top-level on the entry, NOT nested under .function
+      expect((tools[2]?.function as Record<string, unknown> | undefined)?.cache_control).toBeUndefined()
+    } finally { fx.stop() }
+  })
+
+  test('Anthropic + systemBlocks + tools: BOTH markers present (two breakpoints)', async () => {
+    const fx = startFixture(() => ({ status: 200, body: okBody }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      await provider.chat({
+        model: 'm',
+        messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'x' }],
+        systemBlocks: [
+          { text: 'stable', cacheable: true },
+          { text: 'volatile', cacheable: false },
+        ],
+        tools: sampleTools,
+      })
+      const body = fx.last.body as { tools?: ReadonlyArray<Record<string, unknown>>; messages?: ReadonlyArray<{ role: string; content: ReadonlyArray<{ text: string; cache_control?: { type: string } }> }> }
+      // Tools-side marker on last entry
+      expect(body.tools![2]?.cache_control).toEqual({ type: 'ephemeral' })
+      // System-side marker on the last cacheable part
+      const sysParts = body.messages![0]!.content
+      const stable = sysParts.find(p => p.text === 'stable')!
+      const volatile = sysParts.find(p => p.text === 'volatile')!
+      expect(stable.cache_control).toEqual({ type: 'ephemeral' })
+      expect(volatile.cache_control).toBeUndefined()
+    } finally { fx.stop() }
+  })
+
+  test('Anthropic + systemBlocks + no tools: system marker still present (regression guard)', async () => {
+    const fx = startFixture(() => ({ status: 200, body: okBody }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      await provider.chat({
+        model: 'm',
+        messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'x' }],
+        systemBlocks: [{ text: 'stable', cacheable: true }],
+      })
+      const body = fx.last.body as { tools?: unknown; messages: ReadonlyArray<{ role: string; content: ReadonlyArray<{ text: string; cache_control?: { type: string } }> }> }
+      expect(body.tools).toBeUndefined()
+      expect(body.messages[0]!.content[0]!.cache_control).toEqual({ type: 'ephemeral' })
+    } finally { fx.stop() }
+  })
+
+  test('Anthropic + empty tools array: no marker, no crash', async () => {
+    const fx = startFixture(() => ({ status: 200, body: okBody }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }], tools: [] })
+      const body = fx.last.body as { tools?: unknown }
+      expect(body.tools).toBeUndefined()
+    } finally { fx.stop() }
+  })
+
+  test('non-Anthropic providers: no cache_control leaks anywhere on tools or system', async () => {
+    const others = ['gemini', 'groq', 'cerebras', 'openrouter', 'mistral', 'sambanova', 'ollama'] as const
+    for (const name of others) {
+      const fx = startFixture(() => ({ status: 200, body: okBody }))
+      try {
+        const provider = createOpenAICompatibleProvider({ name, baseUrl: fx.url, getApiKey: () => 'k' })
+        await provider.chat({
+          model: 'm',
+          messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'x' }],
+          systemBlocks: [{ text: 'stable', cacheable: true }],
+          tools: sampleTools,
+        })
+        const body = fx.last.body as { tools?: ReadonlyArray<Record<string, unknown>>; messages: ReadonlyArray<{ content: unknown }> }
+        for (const t of body.tools ?? []) {
+          expect(t.cache_control).toBeUndefined()
+        }
+        // System message stays a plain string for non-Anthropic.
+        expect(typeof body.messages[0]!.content).toBe('string')
+      } finally { fx.stop() }
+    }
+  })
+
+  test('failover safety: input ChatRequest.tools reference is unchanged after Anthropic call', async () => {
+    const fx = startFixture(() => ({ status: 200, body: okBody }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      const tools = sampleTools
+      await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }], tools })
+      // Caller's array and entries remain untouched — adapter must not
+      // mutate the shared reference (router uses the same ChatRequest
+      // across failover attempts to other providers).
+      expect(tools).toHaveLength(3)
+      for (const t of tools) {
+        expect(t).not.toHaveProperty('cache_control')
+      }
+    } finally { fx.stop() }
+  })
 })

@@ -181,6 +181,23 @@ const mapHttpError = (
   })
 }
 
+// === Cache-marker helper ===
+// Spread-clones the array AND its last entry, attaches `cache_control:
+// ephemeral` to the cloned tail entry, and returns a new array. Pure and
+// non-mutating — safe to use on a `ChatRequest.tools` reference shared with
+// the router's failover path. Aliasing risk is the load-bearing concern
+// here: an in-place mutation would leak the marker into a subsequent
+// failover call to a non-Anthropic provider whose OpenAI-compat shim may
+// reject the unknown field.
+const markLastCacheable = <T>(arr: ReadonlyArray<T>): T[] => {
+  if (arr.length === 0) return []
+  const out = [...arr]
+  const tail = { ...out[out.length - 1] } as Record<string, unknown>
+  tail.cache_control = { type: 'ephemeral' }
+  out[out.length - 1] = tail as unknown as T
+  return out
+}
+
 // === Request conversion ===
 
 const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[] => {
@@ -234,7 +251,19 @@ const buildOAIBody = (request: ChatRequest, stream: boolean, providerName: strin
   if (request.seed !== undefined) body.seed = request.seed
   if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens
   if (request.jsonMode) body.response_format = { type: 'json_object' }
-  if (request.tools && request.tools.length > 0) body.tools = request.tools
+  if (request.tools && request.tools.length > 0) {
+    // Anthropic-only: attach `cache_control: ephemeral` (top-level on the
+    // last tool entry, NOT nested inside `function`). Anthropic caches
+    // tools and system on separate axes, so this marker is independent of
+    // the system-block marker — both are needed to cache both prefixes.
+    // Every other provider receives the array unchanged. The helper
+    // spread-clones to avoid leaking the marker into a router-failover
+    // call whose next provider is e.g. Gemini, where an unknown
+    // cache_control field on a tool may be rejected.
+    body.tools = providerName === 'anthropic'
+      ? markLastCacheable(request.tools)
+      : request.tools
+  }
   if (request.toolChoice !== undefined && request.tools && request.tools.length > 0) {
     if (request.toolChoice === 'auto' || request.toolChoice === 'required') {
       body.tool_choice = request.toolChoice

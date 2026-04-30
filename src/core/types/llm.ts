@@ -70,6 +70,11 @@ export interface ChatRequest {
   readonly seed?: number
   readonly maxTokens?: number
   readonly jsonMode?: boolean
+  // Treated as deep-frozen across the full request lifecycle (router
+  // failover sends the same ChatRequest to multiple providers in sequence).
+  // Provider adapters that need to attach wire-format markers
+  // (`cache_control` etc.) MUST clone before mutating — see
+  // `markLastCacheable` in openai-compatible.ts.
   readonly tools?: ReadonlyArray<ToolDefinition>
   // Force tool-call behaviour for providers that support it (OpenAI Chat
   // Completions family + Ollama on supported models). 'auto' is the default
