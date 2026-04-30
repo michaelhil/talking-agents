@@ -123,6 +123,7 @@ export const createAIAgent = (
   let currentTools: ReadonlyArray<string> | undefined = config.tools
   let currentTags: ReadonlyArray<string> = config.tags ?? []
   let currentWikiBindings: ReadonlyArray<string> = config.wikiBindings ?? []
+  let currentTriggers: ReadonlyArray<import('../core/triggers/types.ts').Trigger> = config.triggers ?? []
   // Context & Prompts toggles — resolve defaults to preserve current behavior
   const includePromptsState: Required<IncludePrompts> = {
     persona: config.includePrompts?.persona ?? true,
@@ -532,6 +533,7 @@ export const createAIAgent = (
       maxToolResultChars: maxToolResultCharsCfg,
       maxToolIterations: maxToolIterationsCfg,
       ...(currentWikiBindings.length > 0 ? { wikiBindings: [...currentWikiBindings] } : {}),
+      ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
     }),
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },
     refreshTools: (support) => {
@@ -597,6 +599,108 @@ export const createAIAgent = (
       if (idx === -1) return false
       ctx.history = [...ctx.history.slice(0, idx), ...ctx.history.slice(idx + 1)]
       return true
+    },
+    // --- Triggers ---
+    getTriggers: () => currentTriggers,
+    addTrigger: (t) => { currentTriggers = [...currentTriggers, t] },
+    updateTrigger: (id, patch) => {
+      const idx = currentTriggers.findIndex(x => x.id === id)
+      if (idx < 0) return false
+      const next = [...currentTriggers]
+      next[idx] = { ...next[idx]!, ...patch, id }
+      currentTriggers = next
+      return true
+    },
+    deleteTrigger: (id) => {
+      const before = currentTriggers.length
+      currentTriggers = currentTriggers.filter(x => x.id !== id)
+      return currentTriggers.length < before
+    },
+    markTriggerFired: (id, when) => {
+      const idx = currentTriggers.findIndex(x => x.id === id)
+      if (idx < 0) return
+      const next = [...currentTriggers]
+      next[idx] = { ...next[idx]!, lastFiredAt: when }
+      currentTriggers = next
+    },
+    // Trigger execute-mode dispatch. Runs the prompt as a transient trailing
+    // user message in a normal eval. Pending incoming user messages are held
+    // aside (NOT consumed by the trigger) and re-queued after the trigger
+    // eval completes — so a user post mid-trigger still gets processed.
+    // The trigger prompt is never persisted: not in incoming, not in room
+    // history. action='pass' suppresses posting (handles "report only changes").
+    fireTriggerExecute: async (prompt: string, roomId: string): Promise<void> => {
+      if (cm.isBusy()) return  // defensive; scheduler should have skipped
+
+      const heldIncoming = agentHistory.incoming.splice(0, agentHistory.incoming.length)
+      cm.startGeneration(roomId)
+      cm.notifyState('generating', roomId)
+
+      const epoch = cm.epochAtStart()
+      const abortController = new AbortController()
+      activeAbortController = abortController
+
+      try {
+        // Resolve effective model (mirrors tryEvaluate).
+        const resolved = resolveEffective
+          ? resolveEffective(currentModel)
+          : { model: currentModel, fallback: false, reason: 'preferred_available' as const }
+        const effectiveModel = resolved.model
+
+        const baseCtx = buildContext(contextDeps(), roomId)
+        // Append the trigger prompt as a transient trailing user message.
+        // Not in incoming, so flushIncoming has nothing to do; the prompt
+        // never lands in room history.
+        const messages = [
+          ...baseCtx.messages,
+          { role: 'user' as const, content: prompt },
+        ]
+        const contextResult = {
+          ...baseCtx,
+          messages,
+          flushInfo: { ids: new Set<string>(), triggerRoomId: roomId },
+        }
+
+        const evalConfig = {
+          ...config,
+          model: effectiveModel,
+          persona: currentPersona,
+          temperature: currentTemperature,
+          thinking: currentThinking,
+          historyLimit,
+          maxToolResultChars: maxToolResultCharsCfg ?? config.maxToolResultChars,
+          maxToolIterations: maxToolIterationsCfg,
+        }
+
+        const { decision } = await evaluate(
+          contextResult, evalConfig, llmProvider,
+          includeTools ? toolExecutor : undefined,
+          maxToolIterationsCfg, roomId,
+          {
+            toolDefinitions: includeTools ? toolDefinitions : undefined,
+            signal: abortController.signal,
+          },
+        )
+        if (!cm.isEpochCurrent(epoch)) return  // cancelled
+        onDecision(decision)
+      } catch (err) {
+        if (cm.isEpochCurrent(epoch)) {
+          console.error(`[${config.name}] trigger execute failed:`, err)
+        }
+      } finally {
+        // Restore held incoming at the front; new arrivals during eval are
+        // already at the back. Order preserved: held first, then new.
+        if (heldIncoming.length > 0) {
+          agentHistory.incoming.unshift(...heldIncoming)
+        }
+        if (cm.isEpochCurrent(epoch)) {
+          cm.endGeneration(roomId)
+          // Resume normal eval if anything is queued.
+          if (agentHistory.incoming.length > 0) {
+            tryEvaluate(agentHistory.incoming[0]!.roomId)
+          }
+        }
+      }
     },
   }
 }

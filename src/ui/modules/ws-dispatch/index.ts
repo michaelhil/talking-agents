@@ -570,6 +570,12 @@ const handlers: Handlers = {
     window.dispatchEvent(new CustomEvent('wikis-changed'))
   },
 
+  triggers_changed(_msg) {
+    // A trigger was created / updated / deleted on some agent. Open
+    // triggers modals re-fetch their data.
+    window.dispatchEvent(new CustomEvent('triggers-changed'))
+  },
+
   reset_pending(msg) {
     window.dispatchEvent(new CustomEvent('reset-pending', { detail: { commitsAtMs: msg.commitsAtMs } }))
   },

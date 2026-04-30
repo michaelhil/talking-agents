@@ -906,6 +906,16 @@ btnBookmarks.onclick = async () => {
   })
 }
 
+const btnTriggers = $('#btn-triggers') as HTMLButtonElement
+btnTriggers.onclick = async () => {
+  const roomId = $selectedRoomId.get()
+  if (!roomId) return
+  const room = $rooms.get()[roomId]
+  if (!room) return
+  const { openTriggersModal } = await import('./triggers-panel.ts')
+  await openTriggersModal({ id: roomId, name: room.name })
+}
+
 const btnRoomPrompt = $('#btn-room-prompt') as HTMLButtonElement
 btnRoomPrompt.onclick = () => {
   const roomId = $selectedRoomId.get()

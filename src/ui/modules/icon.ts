@@ -39,6 +39,7 @@ export type IconName =
   | 'cpu'                  // AI agent kind glyph (replaces 🤖)
   | 'user'                 // human agent kind glyph (replaces 🧠)
   | 'pencil'               // inline edit / rename
+  | 'clock'                // triggers — scheduled prompts
 
 // Path fragments only (no SVG wrapper). Each string is the inner markup of
 // a 24×24 viewBox. Keep alphabetical.
@@ -55,6 +56,8 @@ const PATHS: Readonly<Record<IconName, string>> = {
     '<path d="m6 9 6 6 6-6"/>',
   'chevron-right':
     '<path d="m9 18 6-6-6-6"/>',
+  'clock':
+    '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   'copy':
     '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   'cpu':

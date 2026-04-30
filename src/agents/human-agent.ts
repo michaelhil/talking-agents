@@ -13,6 +13,7 @@
 import type { Agent, AgentState } from '../core/types/agent.ts'
 import type { Message } from '../core/types/messaging.ts'
 import type { Room } from '../core/types/room.ts'
+import type { Trigger } from '../core/triggers/types.ts'
 import { DEFAULTS } from '../core/types/constants.ts'
 
 export interface HumanAgentConfig {
@@ -73,6 +74,8 @@ export const createHumanAgent = (
   let currentTags: ReadonlyArray<string> = seededTags
   const liveMetadata: Record<string, unknown> = { ...(config.metadata ?? {}), tags: currentTags }
 
+  let triggers: ReadonlyArray<Trigger> = []
+
   return {
     id: agentId,
     get name() { return currentName },
@@ -92,6 +95,28 @@ export const createHumanAgent = (
     updateTags: (tags: ReadonlyArray<string>) => {
       currentTags = tags
       liveMetadata.tags = tags
+    },
+    getTriggers: () => triggers,
+    addTrigger: (t: Trigger) => { triggers = [...triggers, t] },
+    updateTrigger: (id: string, patch: Partial<Trigger>): boolean => {
+      const idx = triggers.findIndex(x => x.id === id)
+      if (idx < 0) return false
+      const next = [...triggers]
+      next[idx] = { ...next[idx]!, ...patch, id } as Trigger
+      triggers = next
+      return true
+    },
+    deleteTrigger: (id: string): boolean => {
+      const before = triggers.length
+      triggers = triggers.filter(x => x.id !== id)
+      return triggers.length < before
+    },
+    markTriggerFired: (id: string, when: number): void => {
+      const idx = triggers.findIndex(x => x.id === id)
+      if (idx < 0) return
+      const next = [...triggers]
+      next[idx] = { ...next[idx]!, lastFiredAt: when } as Trigger
+      triggers = next
     },
   }
 }

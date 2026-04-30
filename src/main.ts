@@ -16,6 +16,7 @@ import type {
 import type { SummaryScheduler, SummaryTarget } from './core/summary-scheduler.ts'
 import { createSummaryEngine } from './core/summary-engine.ts'
 import { createSummaryScheduler } from './core/summary-scheduler.ts'
+import { createTriggerScheduler, type TriggerScheduler } from './core/triggers/scheduler.ts'
 import type { OnArtifactChanged } from './core/types/artifact.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
 import type { ToolRegistry } from './core/types/tool.ts'
@@ -120,6 +121,11 @@ export interface System {
   readonly wikisStorePath: string
   // Shared wiki registry — read by tools and the wiki admin endpoints.
   readonly wikiRegistry: import('./wiki/registry.ts').WikiRegistry
+  // Trigger scheduler — REST handlers call invalidate() after mutating an
+  // agent's trigger list so the cached "any triggers exist" flag stays
+  // accurate and the timer starts/stops correctly. See lever 2 in
+  // src/core/triggers/scheduler.ts.
+  readonly triggerScheduler: import('./core/triggers/scheduler.ts').TriggerScheduler
   // OllamaUrls editor — no-op when Ollama isn't configured.
   readonly ollamaUrls: OllamaUrlRegistry
   readonly removeAgent: (id: string) => boolean
@@ -357,6 +363,13 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   })
   schedulerRef = summaryScheduler
 
+  // Trigger scheduler — per-agent scheduled prompts. Idle when no triggers
+  // exist (lever 1+2 in createTriggerScheduler); restarts on first add.
+  const triggerScheduler: TriggerScheduler = createTriggerScheduler({
+    team,
+    house,
+  })
+
   // Register built-in artifact types — task_list needs store reference for checkAutoResolve
   house.artifactTypes.register(createTaskListArtifactType(house.artifacts))
   house.artifactTypes.register(pollArtifactType)
@@ -399,6 +412,17 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
           house.artifacts.remove(artifact.id)
         }
       }
+      // Cascade-clean triggers pinned to the deleted room. Without this,
+      // triggers become orphans — the scheduler skips them silently
+      // (room.getRoom returns undefined) but they pile up in storage and
+      // confuse the UI.
+      for (const agent of team.listAgents()) {
+        const triggers = agent.getTriggers?.() ?? []
+        for (const t of triggers) {
+          if (t.roomId === roomId) agent.deleteTrigger?.(t.id)
+        }
+      }
+      triggerScheduler.invalidate()
     }
     return removed
   }
@@ -497,6 +521,9 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
         const ai = asAIAgent(other)
         ai?.forgetAgent?.(id)
       }
+      // Triggers live on the agent — they go with it. The scheduler's
+      // anyTriggers cache might be stale; refresh it.
+      triggerScheduler.invalidate()
     }
     return removed
   }
@@ -809,6 +836,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     providersStorePath: sharedPaths.providers(),
     wikisStorePath: sharedPaths.wikis(),
     wikiRegistry: shared.wikiRegistry,
+    triggerScheduler,
     ollamaUrls,
     removeAgent,
     removeRoom: systemRemoveRoom,

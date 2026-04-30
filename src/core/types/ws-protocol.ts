@@ -98,6 +98,15 @@ export type WSOutbound =
       readonly pageCount?: number
       readonly error?: string
     }
+  // Fired after an agent's trigger is created/updated/deleted. UI re-fetches
+  // the trigger list. The scheduler itself doesn't broadcast on fire — fired
+  // triggers post to the room and surface as a normal `message.posted` event.
+  | {
+      readonly type: 'triggers_changed'
+      readonly agentId: string
+      readonly triggerId?: string
+      readonly action: 'created' | 'updated' | 'deleted'
+    }
   // Sandbox reset lifecycle. `commitsAtMs` is an absolute epoch ms — UI
   // computes its own countdown (no clock-skew handshake needed for ±1 s).
   | { readonly type: 'reset_pending'; readonly commitsAtMs: number }

@@ -4,6 +4,7 @@
 import type { Message, MessageTarget, PostParams } from './messaging.ts'
 import type { ToolDefinition, ToolExecutor } from './tool.ts'
 import type { Room, House } from './room.ts'
+import type { Trigger } from '../triggers/types.ts'
 
 // === Agent State — subscribe/get pattern for observability ===
 
@@ -39,6 +40,17 @@ export interface Agent {
   // Capability/role tags — used for [[tag:X]] addressing via team.listByTag.
   readonly getTags?: () => ReadonlyArray<string>
   readonly updateTags?: (tags: ReadonlyArray<string>) => void
+  // Triggers — per-agent scheduled prompts. Both AI and human agents support
+  // them; the trigger scheduler walks every agent uniformly.
+  // CRUD lives on the agent so trigger state stays co-located with the
+  // owning entity (and snapshots through the existing serialise path).
+  // Dispatch is split: 'post' mode is handled by the scheduler directly via
+  // room.post; 'execute' mode is on the AIAgent (humans never execute).
+  readonly getTriggers?: () => ReadonlyArray<Trigger>
+  readonly addTrigger?: (trigger: Trigger) => void
+  readonly updateTrigger?: (id: string, patch: Partial<Trigger>) => boolean
+  readonly deleteTrigger?: (id: string) => boolean
+  readonly markTriggerFired?: (id: string, when: number) => void
 }
 
 // === AIAgent — extended Agent with observability ===
@@ -116,6 +128,13 @@ export interface AIAgent extends Agent {
   // regardless of the room's delivery mode.
   readonly ingestHistory?: (roomId: string, messages: ReadonlyArray<Message>) => void
   readonly forceEvaluate?: (roomId: string) => void
+  // Trigger execute-mode dispatch (AI only; humans never execute).
+  // Runs the prompt as a transient trailing user message in a normal eval
+  // for `roomId`. The Decision is routed through the agent's existing
+  // onDecision callback (so respond posts to the room, pass suppresses,
+  // error renders as the typed error bubble). Never throws; logs on
+  // internal failure.
+  readonly fireTriggerExecute?: (prompt: string, roomId: string) => Promise<void>
 }
 
 export interface ContextPreviewSection {
@@ -201,6 +220,7 @@ export interface AIAgentConfig {
   readonly promptsEnabled?: boolean             // master for all per-section prompt toggles (default: true)
   readonly contextEnabled?: boolean             // master for all context sub-section toggles (default: true)
   readonly wikiBindings?: ReadonlyArray<string> // optional per-agent wiki override (effective set = room ∪ agent override)
+  readonly triggers?: ReadonlyArray<Trigger>    // scheduled prompts; see src/core/triggers/types.ts
 }
 
 // === Agent Response (parsed from LLM plain text output) ===

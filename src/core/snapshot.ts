@@ -7,7 +7,12 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v16: current. Adds 'error' MessageType + errorCode/errorProvider on Message
+// v17: current. Adds per-agent `triggers` (scheduled prompts) on AIAgentConfig
+// and HumanAgentSnapshot. Both AI and human agents support triggers. The
+// scheduler runs server-side; persisted state is the trigger list +
+// lastFiredAt timestamps so triggers resume across restart. Cascade-cleaned
+// when the pinned room is deleted.
+// v16: adds 'error' MessageType + errorCode/errorProvider on Message
 // (distinct from 'pass' so LLM/transport failures don't masquerade as agent
 // decisions) and `preferredModel` on AIAgentConfig (user intent, snapshot-stable;
 // effective model resolved per call). Older versions are rejected at load —
@@ -29,13 +34,14 @@ import type { Artifact } from './types/artifact.ts'
 import type { DeliveryMode, Message, RoomProfile } from './types/messaging.ts'
 import type { Bookmark, Room } from './types/room.ts'
 import type { SummaryConfig } from './types/summary.ts'
+import type { Trigger } from './triggers/types.ts'
 import { asAIAgent } from '../agents/shared.ts'
 import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 16
+export const SNAPSHOT_VERSION = 17
 
 // --- Snapshot schema ---
 
@@ -64,10 +70,11 @@ export interface HumanAgentSnapshot {
   readonly id: string
   readonly name: string
   readonly roomIds: ReadonlyArray<string>
+  readonly triggers?: ReadonlyArray<Trigger>
 }
 
 export interface SystemSnapshot {
-  readonly version: '16'
+  readonly version: '17'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -140,10 +147,12 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
         roomIds: agentRooms.map(r => r.profile.id),
       })
     } else if (agent.kind === 'human') {
+      const triggers = agent.getTriggers?.() ?? []
       humans.push({
         id: agent.id,
         name: agent.name,
         roomIds: agentRooms.map(r => r.profile.id),
+        ...(triggers.length > 0 ? { triggers: [...triggers] } : {}),
       })
     }
   }
@@ -152,7 +161,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const artifacts = system.house.artifacts.list({ includeResolved: true })
 
   return {
-    version: '16',
+    version: '17',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -262,7 +271,11 @@ interface RestorableSystem {
   readonly spawnAIAgent: (config: AIAgentConfig, options?: { overrideId?: string }) => Promise<unknown>
   readonly spawnHumanAgent?: (config: { name: string }, send: (msg: unknown) => void, options?: { overrideId?: string }) => Promise<unknown>
   readonly team?: {
-    readonly getAgent: (idOrName: string) => { readonly id: string; readonly join: (room: Room) => Promise<void> } | undefined
+    readonly getAgent: (idOrName: string) => {
+      readonly id: string
+      readonly join: (room: Room) => Promise<void>
+      readonly addTrigger?: (trigger: Trigger) => void
+    } | undefined
   }
   readonly ollamaUrls?: {
     readonly add: (url: string) => void
@@ -323,6 +336,10 @@ export const restoreFromSnapshot = async (
           room.addMember(humanSnap.id)
           if (agent) await agent.join(room)
         }
+      }
+      // Restore triggers (lastFiredAt persists; scheduler resumes naturally).
+      if (humanSnap.triggers && agent?.addTrigger) {
+        for (const t of humanSnap.triggers) agent.addTrigger(t)
       }
     }
   }
