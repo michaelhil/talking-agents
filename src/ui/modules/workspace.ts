@@ -38,6 +38,12 @@ const DEFAULT_BODIES: Readonly<Record<string, Record<string, unknown>>> = {
     votes: {},
   },
   mermaid: { source: 'graph TD\n  A-->B' },
+  map: {
+    view: { center: [60.32, 24.97], zoom: 8 },
+    features: [
+      { type: 'marker', lat: 60.32, lng: 24.97, label: 'EFHK Helsinki' },
+    ],
+  },
 }
 
 export const createWorkspace = (deps: WorkspaceDeps): Workspace => {
@@ -84,6 +90,7 @@ export const createWorkspace = (deps: WorkspaceDeps): Workspace => {
       ['document', 'Document'],
       ['poll', 'Poll'],
       ['mermaid', 'Mermaid'],
+      ['map', 'Map'],
     ] as const) {
       const opt = document.createElement('option')
       opt.value = value; opt.textContent = label

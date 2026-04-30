@@ -249,6 +249,36 @@ export const renderMermaidArtifact = (
   return div
 }
 
+// === Map ===
+
+import { renderMapSource } from './map/index.ts'
+
+export const renderMapArtifact = (
+  artifact: ArtifactInfo,
+  onAction: (action: ArtifactAction) => void,
+): HTMLElement => {
+  const div = document.createElement('div')
+  div.className = 'group relative'
+  const header = document.createElement('div')
+  header.className = 'flex items-center gap-2 mb-1'
+  const title = document.createElement('span')
+  title.className = 'text-xs font-medium text-teal-700'
+  title.textContent = artifact.title
+  header.appendChild(title)
+  const removeBtn = document.createElement('button')
+  removeBtn.className = 'text-xs text-danger hover:text-danger-hover opacity-0 group-hover:opacity-100 ml-auto'
+  removeBtn.textContent = '✕'
+  removeBtn.onclick = () => onAction({ kind: 'remove', artifactId: artifact.id })
+  header.appendChild(removeBtn)
+  const container = document.createElement('div')
+  // The map renderer sets its own height/width inside renderMapSource; the
+  // wrapper just provides a clean border + bg.
+  void renderMapSource(container, JSON.stringify(artifact.body ?? {}))
+  div.appendChild(header)
+  div.appendChild(container)
+  return div
+}
+
 // === Generic fallback ===
 
 export const renderGenericArtifact = (

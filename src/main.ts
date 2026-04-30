@@ -62,6 +62,7 @@ import { createTaskListArtifactType } from './core/artifact-types/task-list.ts'
 import { pollArtifactType } from './core/artifact-types/poll.ts'
 import { documentArtifactType } from './core/artifact-types/document.ts'
 import { mermaidArtifactType } from './core/artifact-types/mermaid.ts'
+import { mapArtifactType } from './core/artifact-types/map.ts'
 // Native-only tool calling — no capability probing needed
 import { type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/script-store.ts'
@@ -378,6 +379,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   house.artifactTypes.register(pollArtifactType)
   house.artifactTypes.register(documentArtifactType)
   house.artifactTypes.register(mermaidArtifactType)
+  house.artifactTypes.register(mapArtifactType)
 
 
   // System-level membership operations

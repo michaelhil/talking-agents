@@ -197,3 +197,13 @@ const blackboardModule: ArtifactModule<BlackboardEntry> = {
 
 Agents in any room see the blackboard in their `=== SHARED KNOWLEDGE ===` context section.
 Any agent in any room can write to it. Cross-room coordination without coupling rooms.
+
+---
+
+## Built-in artifact types (current)
+
+- **task_list** — checkboxes per item; `complete_task` tool toggles state.
+- **document** — block-structured rich text; `write_document_section` tool.
+- **poll** — multi-option vote with `cast_vote` tool.
+- **mermaid** — `body: { source: string }`. Re-renders on `update_artifact`.
+- **map** — OpenStreetMap rendering. `body` is either a custom envelope (`{view?, features:[marker|line|polygon|circle]}`) or a raw GeoJSON `FeatureCollection`. Whole-body replace on `update_artifact` — agents send the full new feature set each tick. `formatForContext` returns a one-line summary (not the full body) to avoid burning tokens on a 500-feature live VATSIM feed. Inline form: ` ```map ` or ` ```geojson ` fenced blocks in messages render once. Tile source is OSM by default; the Caddy CSP must allow `https://*.tile.openstreetmap.org` and `https://cdn.jsdelivr.net` for the Leaflet stylesheet — see [deploy/Caddyfile](../deploy/Caddyfile).

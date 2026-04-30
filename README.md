@@ -189,6 +189,45 @@ From the UI, **Settings → Packs** has an **Available** browse list (one-click 
 
 Bind GitHub-hosted [`llm-wiki-skills`](https://github.com/michaelhil/llm-wiki-skills) wikis (e.g. `nuclear-wiki`, `ai-human-factors-wiki`) to a room so agents can ground answers on vetted content via `wiki_search` / `wiki_get_page`. Configured under **Settings → Wikis**. See [docs/wikis.md](docs/wikis.md) for setup, multi-account PAT, and REST surface.
 
+### Maps (OpenStreetMap)
+
+Agents can render interactive maps in two ways:
+
+- **Inline in a message** — fence with ` ```map ` (custom envelope) or ` ```geojson ` (raw FeatureCollection). Renders once into the message.
+- **As a persistent artifact** — `add_artifact { type: "map", body: { ... } }`. Lives in the workspace pane and re-renders on `update_artifact` — perfect for live tracking (VATSIM flights, vehicle positions).
+
+**Custom envelope** (easier to teach to weaker agents):
+
+````
+```map
+{
+  "view": { "center": [60.32, 24.97], "zoom": 8 },
+  "features": [
+    { "type": "marker",  "lat": 60.32, "lng": 24.97, "label": "EFHK" },
+    { "type": "line",    "coords": [[60.32,24.97],[60.50,25.10]], "color": "red", "weight": 3 },
+    { "type": "polygon", "coords": [[60,24],[61,24],[61,25],[60,25]], "fillColor": "#f00" },
+    { "type": "circle",  "lat": 60.32, "lng": 24.97, "radius": 5000 }
+  ]
+}
+```
+````
+
+`view` is optional — when omitted the map auto-fits to the feature bounds. Feature types: `marker`, `line` (alias `track`), `polygon`, `circle`.
+
+**Raw GeoJSON** also works — every model already knows it:
+
+````
+```geojson
+{ "type": "FeatureCollection", "features": [ ... ] }
+```
+````
+
+**Live VATSIM tracking pattern**: configure a per-agent trigger that fires every 30 s, calls `vatsim_traffic`, then `update_artifact` with the new feature list. The map artifact re-renders in place — no new chat message per tick.
+
+**Tile policy**: Maps use OSM tiles (`*.tile.openstreetmap.org`). OSM's [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) limits heavy automated load — keep refresh intervals reasonable (≥10 s) for live feeds, or self-host tiles if you need higher volume.
+
+**Prod CSP**: tiles need `img-src https://*.tile.openstreetmap.org` and Leaflet's stylesheet needs `style-src https://cdn.jsdelivr.net`. The bundled [deploy/Caddyfile](deploy/Caddyfile) covers both. Custom Caddy/nginx setups must mirror it.
+
 ### Tools
 
 Agents invoke tools using the `::TOOL::` syntax (or native function-calling on supported models):

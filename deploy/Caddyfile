@@ -19,12 +19,14 @@ samsinn.example.com {
 
 		# CSP: 'unsafe-inline' on script-src is required for the inline
 		# pre-paint theme script in index.html. Move to a nonce later.
-		# jsdelivr is allowed for marked, DOMPurify, and the dynamic
-		# Mermaid ESM import.
+		# jsdelivr is allowed for marked, DOMPurify, the dynamic Mermaid ESM
+		# import, the Leaflet UMD script, and the Leaflet stylesheet.
 		# script-src needs 'unsafe-eval' for Mermaid v11's ESM runtime (uses
 		# Function() to compile diagram parsers). worker-src 'self' blob:
 		# covers Mermaid's Web Worker for sequence/gantt rendering.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss: ws: https://cdn.jsdelivr.net; font-src 'self' data:; frame-ancestors 'none'"
+		# img-src adds the OSM tile hosts so map artifacts can fetch tiles.
+		# style-src adds jsdelivr for the Leaflet stylesheet.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://*.openstreetmap.org; connect-src 'self' wss: ws: https://cdn.jsdelivr.net; font-src 'self' data:; frame-ancestors 'none'"
 
 		# Strip Caddy's default Server header.
 		-Server

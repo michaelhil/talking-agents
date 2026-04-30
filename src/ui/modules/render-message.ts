@@ -3,6 +3,16 @@
 
 import type { UIMessage, AgentInfo } from './render-types.ts'
 import { renderMermaidBlocks } from './mermaid/index.ts'
+import { renderMapBlocks } from './map/index.ts'
+
+// Post-processors run on the rendered markdown container in order. Each
+// looks for its own fenced-block class and replaces matching <pre><code>
+// nodes with a rendered widget. Adding a new processor (charts, sortable
+// tables, ...) is one push to this array — don't grow the call site.
+const postRenderProcessors: ReadonlyArray<(c: HTMLElement) => Promise<void>> = [
+  renderMermaidBlocks,
+  renderMapBlocks,
+]
 import { icon } from './icon.ts'
 import { appendWhisperBadge } from './whisper-badge.ts'
 import { showToast } from './toast.ts'
@@ -49,7 +59,7 @@ const renderMarkdownContent = (el: HTMLElement, text: string): void => {
   if (markedLib?.parse && purifyLib?.sanitize) {
     el.className += ' msg-prose'
     el.innerHTML = purifyLib.sanitize(markedLib.parse(text))
-    void renderMermaidBlocks(el)
+    for (const proc of postRenderProcessors) void proc(el)
   } else {
     el.textContent = text
   }
