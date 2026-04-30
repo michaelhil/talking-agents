@@ -74,10 +74,39 @@ const injectScript = (): Promise<LeafletApi | null> => new Promise((resolve) => 
   script.dataset.leaflet = '1'
   script.onload = () => {
     const L = (window as unknown as { L?: LeafletApi }).L
-    if (L) { resolve(L) } else {
+    if (!L) {
       console.warn('[map] leaflet loaded but window.L not present')
       resolve(null)
+      return
     }
+    // Pin default marker icon URLs to the CDN. Leaflet's default icon
+    // resolves PNG paths relative to the script's URL, which fails when
+    // the script is loaded from jsdelivr — markers render as empty grey
+    // rectangles. Setting Default.prototype.options applies to every
+    // marker created via L.marker() without a custom icon.
+    const Lwithicon = L as unknown as {
+      Icon?: {
+        Default?: {
+          prototype?: { options?: Record<string, unknown> }
+          mergeOptions?: (opts: Record<string, unknown>) => void
+        }
+      }
+    }
+    const iconBase = `https://cdn.jsdelivr.net/npm/leaflet@${LEAFLET_VERSION}/dist/images`
+    if (Lwithicon.Icon?.Default?.mergeOptions) {
+      Lwithicon.Icon.Default.mergeOptions({
+        iconUrl: `${iconBase}/marker-icon.png`,
+        iconRetinaUrl: `${iconBase}/marker-icon-2x.png`,
+        shadowUrl: `${iconBase}/marker-shadow.png`,
+      })
+    } else if (Lwithicon.Icon?.Default?.prototype?.options) {
+      Object.assign(Lwithicon.Icon.Default.prototype.options, {
+        iconUrl: `${iconBase}/marker-icon.png`,
+        iconRetinaUrl: `${iconBase}/marker-icon-2x.png`,
+        shadowUrl: `${iconBase}/marker-shadow.png`,
+      })
+    }
+    resolve(L)
   }
   script.onerror = (err) => {
     console.warn('[map] leaflet script load failed:', err)
