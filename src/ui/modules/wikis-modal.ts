@@ -19,8 +19,7 @@ export const openWikisModal = async (): Promise<void> => {
     title: 'Register a new wiki',
     className: 'mr-2',
     onClick: async () => {
-      await promptAddWiki()
-      await renderWikisInto(listEl)
+      await promptAddWiki(async () => { await renderWikisInto(listEl) })
     },
   })
   modal.header.appendChild(addBtn)

@@ -10,7 +10,17 @@
 // ============================================================================
 
 import { showToast } from './toast.ts'
-import { createModal } from './detail-modal.ts'
+import { createModal, createInput, createButtonRow, setButtonPending } from './detail-modal.ts'
+import { icon } from './icon.ts'
+
+// Mirrors `ID_PATTERN` in src/wiki/store.ts — keep in sync if the server
+// regex changes. Exported for the unit test.
+export const validateWikiId = (id: string): string | null => {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(id)) {
+    return 'Lowercase letters, digits, and dashes. Must start with a letter or digit. Max 63 chars.'
+  }
+  return null
+}
 
 interface WikiEntry {
   id: string
@@ -78,6 +88,232 @@ const formatLastWarm = (ts: number | null): string => {
   return `${Math.floor(hr / 24)}d ago`
 }
 
+// === Edit modal (replaces the cog double-prompt) ===
+// Available for BOTH discovered and stored wikis. discovered → POST creates
+// the stored override; stored → PUT updates. Native prompt() calls are
+// banished from this surface — PAT input is masked, no plaintext history.
+export const openEditWikiModal = async (w: WikiEntry, onSaved: () => void | Promise<void>): Promise<void> => {
+  const modal = createModal({ title: `Edit wiki — ${w.id}`, width: 'max-w-md' })
+  document.body.appendChild(modal.overlay)
+
+  const body = modal.scrollBody
+  body.className = 'px-6 py-4 overflow-y-auto min-h-0 flex-1 space-y-3'
+
+  // --- Display name ---
+  const nameLabel = document.createElement('label')
+  nameLabel.className = 'block text-xs text-text-muted'
+  nameLabel.textContent = 'Display name'
+  const nameInput = createInput({ value: w.displayName, placeholder: w.id })
+  body.appendChild(nameLabel)
+  body.appendChild(nameInput)
+
+  // --- PAT ---
+  const patLabel = document.createElement('label')
+  patLabel.className = 'block text-xs text-text-muted mt-3'
+  patLabel.textContent = 'GitHub PAT'
+  const patPlaceholder = w.hasKey ? `set (${w.keyMask})` : 'anonymous'
+  const patInput = createInput({ type: 'password', placeholder: patPlaceholder })
+  // Track explicit-clear separately from "left blank" — a user clicking
+  // Clear means "remove the stored PAT" (sends apiKey: ''); leaving blank
+  // means "no change" (sends nothing). Without this distinction we'd have
+  // no way to remove a stored PAT through the UI.
+  let patCleared = false
+  const patHint = document.createElement('div')
+  patHint.className = 'text-[11px] text-text-muted'
+  patHint.textContent = w.hasKey
+    ? 'Leave blank to keep current. Type to change. Click Clear to remove.'
+    : 'Type to add a token. Per-wiki token used for fetching pages.'
+  body.appendChild(patLabel)
+  body.appendChild(patInput)
+  body.appendChild(patHint)
+  if (w.hasKey) {
+    const clearBtn = document.createElement('button')
+    clearBtn.type = 'button'
+    clearBtn.className = 'text-[11px] text-text-subtle hover:text-text underline interactive mt-1'
+    clearBtn.textContent = 'Clear stored PAT'
+    clearBtn.onclick = () => {
+      patInput.value = ''
+      patCleared = true
+      patHint.textContent = 'PAT will be removed on Save.'
+      patHint.className = 'text-[11px] text-amber-500'
+    }
+    body.appendChild(clearBtn)
+  }
+
+  // --- Footer (Save / Cancel) ---
+  const errLine = document.createElement('div')
+  errLine.className = 'text-xs text-red-500 mb-2'
+  errLine.style.display = 'none'
+  modal.footer.appendChild(errLine)
+
+  const buttons = createButtonRow(
+    () => modal.close(),
+    async () => {
+      const newName = nameInput.value.trim()
+      const newPat = patInput.value
+      const nameChanged = newName !== '' && newName !== w.displayName
+      const patChanged = newPat !== '' || patCleared
+      if (!nameChanged && !patChanged) {
+        showToast(document.body, 'No changes', { position: 'fixed' })
+        modal.close()
+        return
+      }
+      const saveBtn = buttons.querySelector<HTMLButtonElement>('button:last-child')!
+      setButtonPending(saveBtn, true)
+      errLine.style.display = 'none'
+
+      // discovered → POST creates the stored override (full body required).
+      // stored    → PUT updates only the changed fields.
+      const isDiscovered = w.source === 'discovered'
+      const url = isDiscovered ? '/api/wikis' : `/api/wikis/${encodeURIComponent(w.id)}`
+      const method = isDiscovered ? 'POST' : 'PUT'
+      const reqBody: Record<string, unknown> = isDiscovered
+        ? { id: w.id, owner: w.owner, repo: w.repo, ref: w.ref }
+        : {}
+      if (nameChanged) reqBody.displayName = newName
+      if (patChanged) reqBody.apiKey = patCleared ? '' : newPat
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqBody),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string }
+          errLine.textContent = `Save failed: ${data.error ?? `HTTP ${res.status}`}`
+          errLine.style.display = 'block'
+          setButtonPending(saveBtn, false)
+          return
+        }
+        showToast(document.body, `Saved ${w.id}`, { type: 'success', position: 'fixed' })
+        modal.close()
+        await onSaved()
+      } catch (err) {
+        errLine.textContent = `Save failed: ${err instanceof Error ? err.message : String(err)}`
+        errLine.style.display = 'block'
+        setButtonPending(saveBtn, false)
+      }
+    },
+  )
+  modal.footer.appendChild(buttons)
+  // Mark the Save button so setButtonPending finds the right class.
+  const saveBtn = buttons.querySelector<HTMLButtonElement>('button:last-child')!
+  saveBtn.className = 'btn btn-primary'
+
+  setTimeout(() => nameInput.focus(), 0)
+}
+
+// === Manual-add modal (replaces the 5-prompt chain) ===
+const openManualAddWiki = async (onSaved: () => void | Promise<void>): Promise<void> => {
+  const modal = createModal({ title: 'Add wiki by GitHub owner/repo', width: 'max-w-md' })
+  document.body.appendChild(modal.overlay)
+
+  const body = modal.scrollBody
+  body.className = 'px-6 py-4 overflow-y-auto min-h-0 flex-1 space-y-3'
+
+  const mkField = (label: string, opts: { type?: 'text' | 'password'; placeholder?: string; hint?: string } = {}): HTMLInputElement => {
+    const lab = document.createElement('label')
+    lab.className = 'block text-xs text-text-muted'
+    lab.textContent = label
+    const input = createInput({ type: opts.type ?? 'text', placeholder: opts.placeholder })
+    body.appendChild(lab)
+    body.appendChild(input)
+    if (opts.hint) {
+      const h = document.createElement('div')
+      h.className = 'text-[11px] text-text-muted'
+      h.textContent = opts.hint
+      body.appendChild(h)
+    }
+    return input
+  }
+
+  const idInput = mkField('Wiki id', { placeholder: 'my-wiki', hint: 'Lowercase letters/digits/dashes. Starts with a letter or digit. Max 63 chars.' })
+  const ownerInput = mkField('GitHub owner', { placeholder: 'michaelhil' })
+  const repoInput = mkField('GitHub repo', { placeholder: 'my-wiki-repo' })
+  const refInput = mkField('Branch or commit', { placeholder: 'main (default)' })
+  const apiInput = mkField('GitHub PAT', { type: 'password', hint: 'Optional. Leave blank for anonymous (60 req/hr GitHub limit).' })
+
+  const idErr = document.createElement('div')
+  idErr.className = 'text-[11px] text-red-500'
+  idErr.style.display = 'none'
+  // Insert under the id input's hint line.
+  body.insertBefore(idErr, idInput.nextSibling?.nextSibling ?? null)
+
+  const errLine = document.createElement('div')
+  errLine.className = 'text-xs text-red-500 mb-2'
+  errLine.style.display = 'none'
+  modal.footer.appendChild(errLine)
+
+  const buttons = createButtonRow(
+    () => modal.close(),
+    async () => {
+      const id = idInput.value.trim()
+      const owner = ownerInput.value.trim()
+      const repo = repoInput.value.trim()
+      const ref = refInput.value.trim()
+      const apiKey = apiInput.value
+      if (!id || !owner || !repo) {
+        errLine.textContent = 'id, owner, repo are required.'
+        errLine.style.display = 'block'
+        return
+      }
+      const idMsg = validateWikiId(id)
+      if (idMsg) {
+        idErr.textContent = idMsg
+        idErr.style.display = 'block'
+        return
+      }
+      idErr.style.display = 'none'
+      errLine.style.display = 'none'
+
+      const saveBtn = buttons.querySelector<HTMLButtonElement>('button:last-child')!
+      setButtonPending(saveBtn, true)
+
+      const reqBody: Record<string, unknown> = { id, owner, repo }
+      if (ref) reqBody.ref = ref
+      if (apiKey) reqBody.apiKey = apiKey
+
+      try {
+        const res = await fetch('/api/wikis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqBody),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string }
+          errLine.textContent = `Add failed: ${data.error ?? `HTTP ${res.status}`}`
+          errLine.style.display = 'block'
+          setButtonPending(saveBtn, false)
+          return
+        }
+        showToast(document.body, `Added ${id} — warming in background`, { type: 'success', position: 'fixed' })
+        modal.close()
+        await onSaved()
+      } catch (err) {
+        errLine.textContent = `Add failed: ${err instanceof Error ? err.message : String(err)}`
+        errLine.style.display = 'block'
+        setButtonPending(saveBtn, false)
+      }
+    },
+    'Add',
+  )
+  modal.footer.appendChild(buttons)
+  const saveBtn = buttons.querySelector<HTMLButtonElement>('button:last-child')!
+  saveBtn.className = 'btn btn-primary'
+
+  // Live id-validation on blur.
+  idInput.onblur = () => {
+    const id = idInput.value.trim()
+    if (!id) { idErr.style.display = 'none'; return }
+    const msg = validateWikiId(id)
+    if (msg) { idErr.textContent = msg; idErr.style.display = 'block' }
+    else idErr.style.display = 'none'
+  }
+
+  setTimeout(() => idInput.focus(), 0)
+}
+
 export const renderWikisInto = async (container: HTMLElement): Promise<void> => {
   container.innerHTML = '<div class="text-xs text-text-muted px-3 py-2 italic">Loading…</div>'
   const [wikis, rooms] = await Promise.all([fetchWikis(), fetchRooms()])
@@ -104,27 +340,34 @@ export const renderWikisInto = async (container: HTMLElement): Promise<void> => 
       ? `<span class="ml-2 text-[10px] uppercase tracking-wide text-text-subtle" title="Auto-discovered via SAMSINN_WIKI_SOURCES">discovered</span>`
       : ''
     const isDiscovered = w.source === 'discovered'
-    const deleteBtn = isDiscovered
-      ? '' // discovered wikis aren't in wikis.json — nothing to delete
-      : `<button data-act="delete" class="px-2 py-1 text-red-500 hover:bg-surface-muted rounded interactive" title="Remove">✕</button>`
-    const customizeBtn = isDiscovered
-      ? `<button data-act="customize" class="px-2 py-1 text-text hover:bg-surface-muted rounded interactive" title="Add PAT or override displayName">⚙</button>`
-      : ''
+    // Build the row body via innerHTML for the descriptive text (uses
+    // escapeHtml for safety) but keep the action buttons as DOM nodes with
+    // SVG icons inside — see the icon-density rationale in the wikis-panel
+    // comment block. createButton/btn-ghost would inflate the row height.
     row.innerHTML = `
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2" data-rowmain>
         <div class="flex-1 min-w-0">
           <div class="font-medium truncate">${escapeHtml(w.displayName)} <span class="text-text-muted">(${escapeHtml(w.id)})</span>${sourceBadge}</div>
           <div class="text-text-muted truncate">${escapeHtml(w.owner)}/${escapeHtml(w.repo)}@${escapeHtml(w.ref)} ${keyBadge}</div>
           <div>${status}</div>
         </div>
-        <button data-act="refresh" class="px-2 py-1 text-text hover:bg-surface-muted rounded interactive" title="Refresh now">↻</button>
-        ${customizeBtn}
-        ${deleteBtn}
       </div>
       <div data-bindings class="mt-2 pl-2 text-text-muted">Loading bindings…</div>
     `
 
-    row.querySelector<HTMLButtonElement>('[data-act="refresh"]')!.onclick = async () => {
+    const rowMain = row.querySelector<HTMLElement>('[data-rowmain]')!
+    const mkIconBtn = (iconName: 'refresh-cw' | 'settings' | 'x', title: string, danger = false): HTMLButtonElement => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = `px-2 py-1 ${danger ? 'text-red-500' : 'text-text'} hover:bg-surface-muted rounded interactive`
+      btn.title = title
+      btn.setAttribute('aria-label', title)
+      btn.appendChild(icon(iconName, { size: 14 }))
+      return btn
+    }
+
+    const refreshBtn = mkIconBtn('refresh-cw', 'Re-fetch this wiki’s pages from GitHub')
+    refreshBtn.onclick = async () => {
       showToast(document.body, `Refreshing ${w.id}…`, { position: 'fixed' })
       const res = await fetch(`/api/wikis/${encodeURIComponent(w.id)}/refresh`, { method: 'POST' })
       if (res.ok) {
@@ -134,35 +377,25 @@ export const renderWikisInto = async (container: HTMLElement): Promise<void> => 
         showToast(document.body, `Refresh failed: ${(await res.json().catch(() => ({ error: '?' })) as { error?: string }).error}`, { type: 'error', position: 'fixed' })
       }
     }
-    const customizeEl = row.querySelector<HTMLButtonElement>('[data-act="customize"]')
-    if (customizeEl) {
-      customizeEl.onclick = async () => {
-        const apiKey = prompt(`Add a GitHub PAT for "${w.id}" (leave blank to skip):`)?.trim() || undefined
-        const displayName = prompt(`Override displayName for "${w.id}" (leave blank to keep current):`)?.trim() || undefined
-        const body: Record<string, unknown> = { id: w.id, owner: w.owner, repo: w.repo, ref: w.ref }
-        if (apiKey) body.apiKey = apiKey
-        if (displayName) body.displayName = displayName
-        const res = await fetch('/api/wikis', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        if (res.ok) showToast(document.body, `Customized ${w.id}`, { type: 'success', position: 'fixed' })
-        else {
-          const data = await res.json().catch(() => ({ error: '?' })) as { error?: string }
-          showToast(document.body, `Customize failed: ${data.error}`, { type: 'error', position: 'fixed' })
+    rowMain.appendChild(refreshBtn)
+
+    const editBtn = mkIconBtn('settings', 'Edit (display name, PAT)')
+    editBtn.onclick = () => openEditWikiModal(w, () => renderWikisInto(container))
+    rowMain.appendChild(editBtn)
+
+    if (!isDiscovered) {
+      const deleteBtn = mkIconBtn('x', 'Remove this wiki', true)
+      deleteBtn.onclick = async () => {
+        if (!confirm(`Delete wiki "${w.id}"? This also removes all room bindings.`)) return
+        const res = await fetch(`/api/wikis/${encodeURIComponent(w.id)}`, { method: 'DELETE' })
+        if (res.ok) {
+          showToast(document.body, `Deleted ${w.id}`, { type: 'success', position: 'fixed' })
+          await renderWikisInto(container)
+        } else {
+          showToast(document.body, `Delete failed`, { type: 'error', position: 'fixed' })
         }
       }
-    }
-    const deleteEl = row.querySelector<HTMLButtonElement>('[data-act="delete"]')
-    if (deleteEl) deleteEl.onclick = async () => {
-      if (!confirm(`Delete wiki "${w.id}"? This also removes all room bindings.`)) return
-      const res = await fetch(`/api/wikis/${encodeURIComponent(w.id)}`, { method: 'DELETE' })
-      if (res.ok) {
-        showToast(document.body, `Deleted ${w.id}`, { type: 'success', position: 'fixed' })
-      } else {
-        showToast(document.body, `Delete failed`, { type: 'error', position: 'fixed' })
-      }
+      rowMain.appendChild(deleteBtn)
     }
 
     container.appendChild(row)
@@ -214,47 +447,22 @@ const fetchAvailable = async (): Promise<{ wikis: AvailableWiki[]; sources: stri
   } catch { return { wikis: [], sources: [] } }
 }
 
-const submitAdd = async (body: Record<string, unknown>): Promise<boolean> => {
-  showToast(document.body, `Adding ${body.id}…`, { position: 'fixed' })
-  const res = await fetch('/api/wikis', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({ error: 'add failed' })) as { error?: string }
-    showToast(document.body, `Add failed: ${data.error ?? 'unknown'}`, { type: 'error', position: 'fixed' })
-    return false
+// Synthesize a WikiEntry-shaped object for openEditWikiModal from a row in
+// the discovered "Add wiki" picker. Discovered-not-yet-installed wikis use
+// the merged entry from /api/wikis if present, otherwise minimal defaults.
+const editFromAvailable = async (w: AvailableWiki, onSaved: () => Promise<void>): Promise<void> => {
+  const wikis = await fetchWikis()
+  const merged = wikis.find(x => x.id === w.id)
+  const entry: WikiEntry = merged ?? {
+    id: w.id, owner: w.owner, repo: w.repo, ref: 'main',
+    displayName: w.displayName, keyMask: '', hasKey: false,
+    enabled: true, source: 'discovered', pageCount: 0,
+    lastWarmAt: null, lastError: null,
   }
-  showToast(document.body, `Added ${body.id} — warming in background`, { type: 'success', position: 'fixed' })
-  return true
+  await openEditWikiModal(entry, onSaved)
 }
 
-const manualAddFlow = async (): Promise<void> => {
-  const id = prompt('Wiki id (lowercase, kebab-case):')?.trim()
-  if (!id) return
-  const owner = prompt('GitHub owner (e.g. michaelhil):')?.trim()
-  if (!owner) return
-  const repo = prompt('GitHub repo (e.g. nuclear-wiki):')?.trim()
-  if (!repo) return
-  const ref = prompt('Branch or commit (default: main):')?.trim() || undefined
-  const apiKey = prompt('Optional GitHub PAT (leave blank for anonymous):')?.trim() || undefined
-  const body: Record<string, unknown> = { id, owner, repo }
-  if (ref) body.ref = ref
-  if (apiKey) body.apiKey = apiKey
-  await submitAdd(body)
-}
-
-const customizeFlow = async (w: AvailableWiki): Promise<void> => {
-  const apiKey = prompt(`Optional GitHub PAT for "${w.id}" (leave blank for anonymous):`)?.trim() || undefined
-  const displayName = prompt(`Optional displayName override (current: "${w.displayName}"):`)?.trim() || undefined
-  const body: Record<string, unknown> = { id: w.id, owner: w.owner, repo: w.repo }
-  if (apiKey) body.apiKey = apiKey
-  if (displayName) body.displayName = displayName
-  await submitAdd(body)
-}
-
-export const promptAddWiki = async (): Promise<void> => {
+export const promptAddWiki = async (onAdded: () => Promise<void> = async () => {}): Promise<void> => {
   const modal = createModal({ title: 'Add wiki', width: 'max-w-xl' })
   document.body.appendChild(modal.overlay)
 
@@ -295,7 +503,7 @@ export const promptAddWiki = async (): Promise<void> => {
     `
     row.querySelector<HTMLButtonElement>('[data-act="pick"]')!.onclick = async () => {
       modal.close()
-      await customizeFlow(w)
+      await editFromAvailable(w, async () => { await onAdded() })
     }
     body.appendChild(row)
   }
@@ -311,7 +519,7 @@ export const promptAddWiki = async (): Promise<void> => {
   manualBtn.innerHTML = `<span class="font-medium">Add by GitHub owner/repo</span><div class="text-text-muted text-[11px]">For wikis not in the configured discovery sources.</div>`
   manualBtn.onclick = async () => {
     modal.close()
-    await manualAddFlow()
+    await openManualAddWiki(async () => { await onAdded() })
   }
   body.appendChild(manualBtn)
 }
