@@ -5,7 +5,7 @@ import type { Tool, ToolContext } from '../../core/types/tool.ts'
 
 export const createPassTool = (): Tool => ({
   name: 'pass',
-  description: 'Decline to respond when the conversation does not need your input. Use when the question was already answered, is not directed at you, or you have nothing to add.',
+  description: 'Decline to respond. Use when the message is not directed at you or has been answered.',
   parameters: {
     type: 'object',
     properties: { reason: { type: 'string', description: 'Brief reason for passing' } },
@@ -17,7 +17,7 @@ export const createPassTool = (): Tool => ({
 export const createListAgentsTool = (team: Team): Tool => ({
   name: 'list_agents',
   description: 'Lists all agents in the system with their name, kind (ai/human), and model.',
-  usage: 'Use to discover who is available before assigning todos or adding to rooms. Check here before using add_to_room or addressing agents with [[AgentName]].',
+  usage: 'Discover available agents before add_to_room or [[AgentName]] addressing.',
   returns: 'Array of agent profiles: { name, kind, model? }.',
   parameters: {},
   execute: async () => ({
@@ -33,7 +33,7 @@ export const createListAgentsTool = (team: Team): Tool => ({
 export const createMuteAgentTool = (team: Team, house: House): Tool => ({
   name: 'mute_agent',
   description: 'Mutes or unmutes an agent in a room, preventing their responses from being delivered.',
-  usage: 'Use to silence an agent that is responding inappropriately or too verbosely in a specific room, without removing them. Use sparingly.',
+  usage: 'Silence a misbehaving agent in one room without removing them. Use sparingly.',
   returns: '{ roomName, agentName, muted }.',
   parameters: {
     type: 'object',

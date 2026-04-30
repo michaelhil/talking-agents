@@ -474,8 +474,8 @@ describe('Integration — Full message lifecycle', () => {
     expect(evalCount).toBeGreaterThanOrEqual(2)
 
     // Find contexts by the "You are in room" line (not "Your rooms" which lists all)
-    const room1Contexts = capturedContexts.filter(c => c.systemContent.includes('You are in room "Room-1"'))
-    const room2Contexts = capturedContexts.filter(c => c.systemContent.includes('You are in room "Room-2"'))
+    const room1Contexts = capturedContexts.filter(c => c.systemContent.includes('You are in room Room-1'))
+    const room2Contexts = capturedContexts.filter(c => c.systemContent.includes('You are in room Room-2'))
     expect(room1Contexts.length).toBeGreaterThanOrEqual(1)
     expect(room2Contexts.length).toBeGreaterThanOrEqual(1)
 

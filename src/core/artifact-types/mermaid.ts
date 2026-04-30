@@ -31,7 +31,7 @@ export const mermaidArtifactType: ArtifactTypeDefinition = {
 
   formatForContext: (artifact: Artifact): string => {
     const source = (artifact.body as { source: string }).source
-    return `Mermaid diagram: "${artifact.title}" [id: ${artifact.id}]\n\`\`\`mermaid\n${source}\n\`\`\``
+    return `Mermaid diagram: ${artifact.title} [id: ${artifact.id}]\n\`\`\`mermaid\n${source}\n\`\`\``
   },
 
   postSystemMessageOn: ['added', 'removed'],

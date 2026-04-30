@@ -134,8 +134,8 @@ const resolveBareName = async (bareName: string): Promise<ResolvedUrl | { error:
 
 export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
   name: 'install_pack',
-  description: 'Installs a pack (bundle of tools + skills) from GitHub. The canonical install namespace comes from the pack\'s pack.json `name` field; if absent, the repo basename with any `samsinn-pack-` prefix stripped is used. Pass a bare name (resolved via the registry — call list_available_packs to see what\'s publishable), a "user/repo" shorthand, or a full git URL. Tools are namespaced as `<pack>_<tool>` and skills as `<pack>/<skill>`.',
-  usage: 'Use to bring domain-specific tooling (e.g. air-traffic-control, driving) into the current session. Effect is immediate — no restart needed. If unsure what is available, call list_available_packs first.',
+  description: 'Installs a pack (tools + skills) from GitHub. Source: bare name (registry), user/repo, or git URL. Tools become `<pack>_<tool>`; skills become `<pack>/<skill>`.',
+  usage: 'Bring domain-specific tooling into the session. Effect is immediate. Call list_available_packs first if unsure of names.',
   returns: 'Object with namespace, registered tool names, registered skill names, and the manifest if present.',
   parameters: {
     type: 'object',
@@ -246,7 +246,7 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
 
 export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
   name: 'update_pack',
-  description: 'Pulls the latest commits for an installed pack, then re-registers its tools and skills. Equivalent to uninstall + install but preserves local changes that git can fast-forward over.',
+  description: 'Pulls the latest commits for an installed pack and re-registers its tools/skills. Preserves changes git can fast-forward over.',
   returns: 'Object with namespace and refreshed tool/skill counts.',
   parameters: {
     type: 'object',
@@ -390,7 +390,7 @@ export const createListPacksTool = (deps: PackToolsDeps): Tool => ({
 
 export const createListAvailablePacksTool = (deps: PackToolsDeps): Tool => ({
   name: 'list_available_packs',
-  description: 'Lists packs that can be installed via `install_pack`, sourced from the configured registry (SAMSINN_PACK_SOURCES). Each entry includes the canonical name to pass to install_pack and whether it is already installed. Call this BEFORE install_pack when the user asks for an unknown domain — do not guess repo names.',
+  description: 'Lists installable packs from the configured registry. Each entry has the canonical name for install_pack and an `installed` flag. Call this BEFORE install_pack — do not guess repo names.',
   returns: 'Array of registry entries with name (canonical), repoName, source (owner/repo), repoUrl, description, and installed flag.',
   parameters: { type: 'object', properties: {} },
   execute: async () => {

@@ -181,7 +181,7 @@ const formatArtifact = (artifact: Artifact, getTypeDef?: (type: string) => Artif
   const typeDef = getTypeDef?.(artifact.type)
   if (typeDef?.formatForContext) return typeDef.formatForContext(artifact)
   // Generic fallback
-  return `${artifact.type}: "${artifact.title}" [id: ${artifact.id}]`
+  return `- ${artifact.type}: ${artifact.title} [id: ${artifact.id}]`
 }
 
 const buildArtifactsSection = (
@@ -205,7 +205,7 @@ const buildActivitySection = (
   const activityLines: string[] = []
   for (const [roomId, ctx] of deps.history.rooms) {
     if (roomId === triggerRoomId) continue
-    activityLines.push(`- "${ctx.profile.name}" [id: ${roomId}]`)
+    activityLines.push(`- ${ctx.profile.name} [id: ${roomId}]`)
   }
   if (activityLines.length === 0) return ''
   return `Your other rooms:\n${activityLines.join('\n')}`
@@ -232,17 +232,15 @@ export type SystemSectionKey =
   | 'ctx_artifacts'
   | 'ctx_activity'
   | 'ctx_knownAgents'
-  | 'ctx_newHint'         // "[NEW] hint" — always emitted
-  | 'ctx_renderingHints'  // "diagrams render inline" etc. — always emitted
 
 // Convention: each SystemSection is single-purpose. When adding a new
 // always-on "how to use the system" hint (rendering, tool reminders,
 // prompt-writing tips, etc.), add a new `ctx_*` key to the
 // SystemSectionKey union and emit a new out.push(...) here — do NOT
 // append text to an existing section. Existing sections drift into
-// junk drawers when we keep extending them. See the pre-751f73e
-// ctx_newHint (which mixed [NEW] semantics with mermaid guidance)
-// for the regression that motivated this rule.
+// junk drawers when we keep extending them. (A prior `ctx_newHint`
+// that mixed [NEW] semantics with rendering guidance was the
+// regression that motivated this rule.)
 export const buildSystemSections = (
   deps: BuildContextDeps,
   triggerRoomId: string,
@@ -303,12 +301,12 @@ export const buildSystemSections = (
   // (Dialogue for cast members in an active script run is handled by
   // ScriptStrategy in buildContext, NOT as a SystemSection here.)
 
-  // CONTEXT sub-sections. `ctx_intro` and `ctx_newHint` are always-on
-  // scaffolding. The other four are toggleable.
+  // CONTEXT sub-sections. `ctx_intro` is always-on scaffolding; the
+  // others are toggleable.
   out.push({
     key: 'ctx_intro',
     label: 'CONTEXT_INTRO',
-    text: roomCtx ? `You are in room "${roomCtx.profile.name}" [id: ${triggerRoomId}].` : '',
+    text: roomCtx ? `You are in room ${roomCtx.profile.name} [id: ${triggerRoomId}].` : '',
     enabled: !!roomCtx,
     optional: false,
   })
@@ -343,7 +341,7 @@ export const buildSystemSections = (
 
   const knownAgents = [...deps.history.agentProfiles.values()].filter(a => a.id !== deps.agentId)
   const knownText = knownAgents.length > 0
-    ? `Known agents: ${knownAgents.map(a => `"${a.name}" (${a.kind})`).join(', ')}`
+    ? `Known agents: ${knownAgents.map(a => `${a.name} (${a.kind})`).join(', ')}`
     : ''
   out.push({
     key: 'ctx_knownAgents',
@@ -351,26 +349,6 @@ export const buildSystemSections = (
     text: knownText,
     enabled: ctxIncludes.knownAgents && !!knownText,
     optional: true,
-  })
-
-  out.push({
-    key: 'ctx_newHint',
-    label: 'NEW_HINT',
-    text: 'Messages marked [NEW] have arrived since you last responded.',
-    enabled: true,
-    optional: false,
-  })
-
-  out.push({
-    key: 'ctx_renderingHints',
-    label: 'RENDERING HINTS',
-    text: [
-      'Wrap Mermaid diagrams in ```mermaid fences — they render inline as SVG in chat.',
-      'Use diagrams for processes, state machines, or systems with ≥3 interacting parts.',
-      'For diagrams that evolve across many turns, use `add_artifact type="mermaid"` instead of an inline fence.',
-    ].join('\n'),
-    enabled: true,
-    optional: false,
   })
 
   out.push({
@@ -385,24 +363,45 @@ export const buildSystemSections = (
 }
 
 // Assemble the final system-message string from enabled sections.
-// Prompt-level sections get `=== LABEL ===\n` headers; CONTEXT sub-sections
-// are collected under a single `=== CONTEXT ===` block matching the original
-// wire format (so no downstream model sees a behavior change).
-// Context sub-sections ordered stable-first (for cache-prefix stability).
-// Anything that can change mid-conversation goes last so the stable prefix
-// up to the first variable block caches cleanly on Gemini (implicit) and
-// Anthropic (explicit cache_control).
+// Prompt-level sections are wrapped in `<samsinn:tag>…</samsinn:tag>` fences;
+// CONTEXT sub-sections share a single `<samsinn:context>` wrapper with stable
+// children first (preserves the cache-prefix shape on Gemini implicit and
+// Anthropic explicit caching). The `samsinn:` namespace prefix prevents the
+// model from echoing fences back into output and removes ambiguity with any
+// generic `<context>` or `<rules>` text in user-supplied persona / room
+// prompts.
 const CTX_STABLE_KEYS: ReadonlyArray<SystemSectionKey> = [
-  'ctx_intro', 'ctx_activity', 'ctx_newHint', 'ctx_renderingHints',
+  'ctx_intro', 'ctx_activity',
 ]
 const CTX_VARIABLE_KEYS: ReadonlyArray<SystemSectionKey> = [
   'ctx_knownAgents', 'ctx_participants', 'ctx_artifacts', 'ctx_flow',
 ]
 
+// Map a SystemSection to the XML tag used to fence it. Tag names are
+// canonical (lower_snake_case), namespaced under `samsinn:`. Adding a new
+// prompt-level section means adding it here.
+const TAG_FOR_PROMPT_KEY: Record<'house' | 'room' | 'persona' | 'skills' | 'wikis' | 'responseFormat', string> = {
+  house: 'samsinn:house_rules',
+  room: 'samsinn:room',
+  persona: 'samsinn:identity',
+  skills: 'samsinn:skills',
+  wikis: 'samsinn:wikis',
+  responseFormat: 'samsinn:response_format',
+}
+const CTX_TAG = 'samsinn:context'
+
+// Minimal XML attribute-value escape for room name. We only need to make
+// the value safe inside double quotes — control chars don't appear in room
+// names (validated upstream), so & " < > are sufficient.
+const escapeAttr = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
 // Produce the system prompt as an ordered list of blocks with a `cacheable`
-// flag. Stable blocks (HOUSE/ROOM/AGENT/SKILLS/RESPONSE_FORMAT + stable CONTEXT
-// subsections) are cacheable; the variable CONTEXT subsections are not.
-// Consumers that can't use cache markers simply join block texts.
+// flag. Stable blocks (HOUSE/ROOM/IDENTITY/SKILLS/RESPONSE_FORMAT + stable
+// CONTEXT subsections) are cacheable; the variable CONTEXT subsections are
+// not. The `<samsinn:context>` fence opens in the stable block (when stable
+// children exist) and closes in the variable block — the final concatenation
+// is balanced in every combination.
 const buildSystemBlocks = (
   deps: BuildContextDeps,
   triggerRoomId: string,
@@ -412,15 +411,19 @@ const buildSystemBlocks = (
   for (const s of sections) byKey.set(s.key, s.text)
 
   // Stable top-level prompt sections, in order.
-  const promptOrder: ReadonlyArray<SystemSectionKey> = [
+  const promptOrder: ReadonlyArray<keyof typeof TAG_FOR_PROMPT_KEY> = [
     'house', 'room', 'persona', 'skills', 'wikis', 'responseFormat',
   ]
   const stableLines: string[] = []
+  const roomCtx = deps.history.rooms.get(triggerRoomId)
   for (const key of promptOrder) {
     const text = byKey.get(key)
     if (text === undefined) continue
-    const s = sections.find(x => x.key === key)!
-    stableLines.push(`=== ${s.label} ===\n${text}`)
+    const tag = TAG_FOR_PROMPT_KEY[key]
+    const open = key === 'room' && roomCtx
+      ? `<${tag} name="${escapeAttr(roomCtx.profile.name)}">`
+      : `<${tag}>`
+    stableLines.push(`${open}\n${text}\n</${tag}>`)
   }
   // Stable CONTEXT subsections.
   const stableCtx: string[] = []
@@ -436,19 +439,28 @@ const buildSystemBlocks = (
   }
 
   const blocks: Array<{ text: string; cacheable: boolean }> = []
-  const stablePart = [...stableLines, stableCtx.length > 0 ? `=== CONTEXT ===\n${stableCtx.join('\n\n')}` : '']
-    .filter(Boolean).join('\n\n')
+  const haveCtx = stableCtx.length > 0 || variableCtx.length > 0
+  const stableCtxBlock = stableCtx.length > 0
+    ? `<${CTX_TAG}>\n${stableCtx.join('\n\n')}`  // open here; close in variable block (or below)
+    : ''
+  const stablePart = [...stableLines, stableCtxBlock].filter(Boolean).join('\n\n')
+
+  if (variableCtx.length === 0 && stableCtx.length > 0) {
+    // No variable subsections — close CONTEXT in the stable block.
+    blocks.push({ text: `${stablePart}\n</${CTX_TAG}>`, cacheable: true })
+    return blocks
+  }
   if (stablePart) blocks.push({ text: stablePart, cacheable: true })
 
   if (variableCtx.length > 0) {
-    // If there was no stable CONTEXT, open a CONTEXT header here; otherwise
-    // the variable subsections extend the existing CONTEXT block visually
-    // (the stable part already has the header).
-    const needsHeader = stableCtx.length === 0
-    const text = needsHeader
-      ? `=== CONTEXT ===\n${variableCtx.join('\n\n')}`
-      : variableCtx.join('\n\n')
+    // If stable opened CONTEXT, just append + close. Otherwise open + close here.
+    const opened = stableCtx.length > 0
+    const text = opened
+      ? `${variableCtx.join('\n\n')}\n</${CTX_TAG}>`
+      : `<${CTX_TAG}>\n${variableCtx.join('\n\n')}\n</${CTX_TAG}>`
     blocks.push({ text, cacheable: false })
+  } else if (!haveCtx && stablePart === '') {
+    // no-op: nothing to emit
   }
 
   return blocks

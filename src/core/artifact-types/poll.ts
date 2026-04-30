@@ -105,7 +105,7 @@ export const pollArtifactType: ArtifactTypeDefinition = {
   formatForContext: (artifact: Artifact): string => {
     const body = artifact.body as unknown as PollBody
     const votes = body.votes ?? {}
-    const lines: string[] = [`Poll: "${body.question}" [id: ${artifact.id}]`]
+    const lines: string[] = [`Poll: ${body.question} [id: ${artifact.id}]`]
     for (const opt of body.options) {
       const voters = votes[opt.id] ?? []
       const voteStr = voters.length === 0 ? 'no votes' : `${voters.length} vote${voters.length > 1 ? 's' : ''}`

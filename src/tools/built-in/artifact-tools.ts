@@ -35,8 +35,8 @@ export const createListArtifactTypesTool = (house: House): Tool => ({
 
 export const createListArtifactsTool = (house: House): Tool => ({
   name: 'list_artifacts',
-  description: 'Lists artifacts visible to the current room (scoped to it and system-wide artifacts). Filter by type or include resolved.',
-  usage: 'Use to check active task lists, open polls, or documents scoped to this room and system-wide. Omit roomName to use the current room.',
+  description: 'Lists artifacts visible to the current room (room-scoped + system-wide). Optional filters: type, includeResolved.',
+  usage: 'Check active task lists, polls, or documents. Omit roomName for current room.',
   returns: 'Array of artifact objects with id, type, title, body, scope, resolution.',
   parameters: {
     type: 'object',
@@ -61,8 +61,8 @@ export const createListArtifactsTool = (house: House): Tool => ({
 
 export const createAddArtifactTool = (house: House): Tool => ({
   name: 'add_artifact',
-  description: 'Creates a new artifact (task list, poll, document, etc.).',
-  usage: 'Use to create a shared task list, start a poll, or write a document. Use list_artifact_types to see available types and required body fields.',
+  description: 'Creates a new artifact (task list, poll, document, mermaid). Use type="mermaid" for diagrams that evolve across turns; one-shot diagrams can be inline ```mermaid fences.',
+  usage: 'Create a task list, poll, document, or mermaid diagram. See list_artifact_types for body schemas.',
   returns: 'The created artifact object.',
   parameters: {
     type: 'object',
@@ -109,7 +109,7 @@ export const createAddArtifactTool = (house: House): Tool => ({
 export const createUpdateArtifactTool = (house: House): Tool => ({
   name: 'update_artifact',
   description: 'Updates an artifact\'s title, body, or explicitly resolves/closes it.',
-  usage: 'Use to update task list tasks (op: "add_task", "complete_task", "update_task", "remove_task"), change a title, or close a poll with a resolution. Always include a result when completing tasks.',
+  usage: 'Update task-list tasks (op: add_task | complete_task | update_task | remove_task), change a title, or close a poll. Include a result when completing tasks.',
   returns: 'The updated artifact.',
   parameters: {
     type: 'object',
@@ -140,7 +140,7 @@ export const createUpdateArtifactTool = (house: House): Tool => ({
 export const createRemoveArtifactTool = (house: House): Tool => ({
   name: 'remove_artifact',
   description: 'Permanently removes an artifact.',
-  usage: 'Use to delete an artifact that is no longer needed. Prefer resolving (update_artifact with resolution) over removing for audit purposes.',
+  usage: 'Delete an unused artifact. Prefer update_artifact with a resolution over removing for audit history.',
   returns: '{ removed: true } on success.',
   parameters: {
     type: 'object',

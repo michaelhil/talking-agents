@@ -31,41 +31,41 @@ describe('context-builder includePrompts', () => {
   test('all sections included by default (undefined includePrompts)', () => {
     const result = buildContext(mkDeps(), 'room-1')
     const sys = result.messages[0]!.content
-    expect(sys).toContain('=== HOUSE RULES ===')
-    expect(sys).toContain('=== ROOM: General ===')
-    expect(sys).toContain('=== YOUR IDENTITY ===')
-    expect(sys).toContain('=== RESPONSE FORMAT ===')
+    expect(sys).toContain('<samsinn:house_rules>')
+    expect(sys).toContain('<samsinn:room name="General">')
+    expect(sys).toContain('<samsinn:identity>')
+    expect(sys).toContain('<samsinn:response_format>')
   })
 
   test('house: false suppresses HOUSE RULES only', () => {
     const result = buildContext(mkDeps({ includePrompts: { house: false } }), 'room-1')
     const sys = result.messages[0]!.content
-    expect(sys).not.toContain('=== HOUSE RULES ===')
-    expect(sys).toContain('=== ROOM: General ===')
-    expect(sys).toContain('=== YOUR IDENTITY ===')
-    expect(sys).toContain('=== RESPONSE FORMAT ===')
+    expect(sys).not.toContain('<samsinn:house_rules>')
+    expect(sys).toContain('<samsinn:room name="General">')
+    expect(sys).toContain('<samsinn:identity>')
+    expect(sys).toContain('<samsinn:response_format>')
   })
 
   test('room: false suppresses ROOM only', () => {
     const result = buildContext(mkDeps({ includePrompts: { room: false } }), 'room-1')
     const sys = result.messages[0]!.content
-    expect(sys).not.toContain('=== ROOM: General ===')
-    expect(sys).toContain('=== HOUSE RULES ===')
-    expect(sys).toContain('=== YOUR IDENTITY ===')
+    expect(sys).not.toContain('<samsinn:room name="General">')
+    expect(sys).toContain('<samsinn:house_rules>')
+    expect(sys).toContain('<samsinn:identity>')
   })
 
   test('persona: false suppresses YOUR IDENTITY only', () => {
     const result = buildContext(mkDeps({ includePrompts: { persona: false } }), 'room-1')
     const sys = result.messages[0]!.content
-    expect(sys).not.toContain('=== YOUR IDENTITY ===')
-    expect(sys).toContain('=== HOUSE RULES ===')
+    expect(sys).not.toContain('<samsinn:identity>')
+    expect(sys).toContain('<samsinn:house_rules>')
   })
 
   test('responseFormat: false suppresses RESPONSE FORMAT only', () => {
     const result = buildContext(mkDeps({ includePrompts: { responseFormat: false } }), 'room-1')
     const sys = result.messages[0]!.content
-    expect(sys).not.toContain('=== RESPONSE FORMAT ===')
-    expect(sys).toContain('=== YOUR IDENTITY ===')
+    expect(sys).not.toContain('<samsinn:response_format>')
+    expect(sys).toContain('<samsinn:identity>')
   })
 
   test('all four off: none of the four sections present; CONTEXT still emitted', () => {
@@ -73,19 +73,19 @@ describe('context-builder includePrompts', () => {
       includePrompts: { persona: false, room: false, house: false, responseFormat: false },
     }), 'room-1')
     const sys = result.messages[0]!.content
-    expect(sys).not.toContain('=== HOUSE RULES ===')
-    expect(sys).not.toContain('=== ROOM: General ===')
-    expect(sys).not.toContain('=== YOUR IDENTITY ===')
-    expect(sys).not.toContain('=== RESPONSE FORMAT ===')
-    expect(sys).toContain('=== CONTEXT ===')
+    expect(sys).not.toContain('<samsinn:house_rules>')
+    expect(sys).not.toContain('<samsinn:room name="General">')
+    expect(sys).not.toContain('<samsinn:identity>')
+    expect(sys).not.toContain('<samsinn:response_format>')
+    expect(sys).toContain('<samsinn:context>')
   })
 
   test('partial includePrompts defaults missing keys to true', () => {
     const result = buildContext(mkDeps({ includePrompts: { house: false } }), 'room-1')
     const sys = result.messages[0]!.content
-    expect(sys).toContain('=== YOUR IDENTITY ===')
-    expect(sys).toContain('=== ROOM: General ===')
-    expect(sys).toContain('=== RESPONSE FORMAT ===')
+    expect(sys).toContain('<samsinn:identity>')
+    expect(sys).toContain('<samsinn:room name="General">')
+    expect(sys).toContain('<samsinn:response_format>')
   })
 
   test('promptsEnabled: false excludes every prompt regardless of per-key flags', () => {
@@ -94,10 +94,10 @@ describe('context-builder includePrompts', () => {
       includePrompts: { persona: true, room: true, house: true, responseFormat: true, skills: true },
     }), 'room-1')
     const sys = result.messages[0]!.content
-    expect(sys).not.toContain('=== HOUSE RULES ===')
-    expect(sys).not.toContain('=== ROOM: General ===')
-    expect(sys).not.toContain('=== YOUR IDENTITY ===')
-    expect(sys).not.toContain('=== RESPONSE FORMAT ===')
+    expect(sys).not.toContain('<samsinn:house_rules>')
+    expect(sys).not.toContain('<samsinn:room name="General">')
+    expect(sys).not.toContain('<samsinn:identity>')
+    expect(sys).not.toContain('<samsinn:response_format>')
   })
 
   test('contextEnabled: false suppresses participants/artifacts/activity/knownAgents', () => {
@@ -119,7 +119,6 @@ describe('buildSystemSections', () => {
     expect(byKey.persona?.enabled).toBe(true)
     expect(byKey.responseFormat?.enabled).toBe(true)
     expect(byKey.skills?.enabled).toBe(false) // getSkills not provided
-    expect(byKey.ctx_newHint?.optional).toBe(false)
     expect(byKey.ctx_intro?.optional).toBe(false)
   })
 
@@ -143,7 +142,7 @@ describe('context-builder skills + context-data toggles', () => {
     const result = buildContext(mkDeps({
       getSkills: () => 'skill-text',
     }), 'room-1')
-    expect(result.messages[0]!.content).toContain('=== SKILLS ===')
+    expect(result.messages[0]!.content).toContain('<samsinn:skills>')
     expect(result.messages[0]!.content).toContain('skill-text')
   })
 
@@ -152,7 +151,7 @@ describe('context-builder skills + context-data toggles', () => {
       getSkills: () => 'skill-text',
       includePrompts: { skills: false },
     }), 'room-1')
-    expect(result.messages[0]!.content).not.toContain('=== SKILLS ===')
+    expect(result.messages[0]!.content).not.toContain('<samsinn:skills>')
   })
 
   test('includeContext.participants false suppresses Other participants', () => {

@@ -145,7 +145,7 @@ export const createTaskListArtifactType = (store: ArtifactStore): ArtifactTypeDe
     const body = artifact.body as unknown as TaskListBody
     const tasks = body.tasks ?? []
     const desc = artifact.description ?? body.description
-    const lines: string[] = [`Task list: "${artifact.title}" [id: ${artifact.id}]`]
+    const lines: string[] = [`Task list: ${artifact.title} [id: ${artifact.id}]`]
     if (desc) lines.push(`  ${desc}`)
     if (tasks.length === 0) {
       lines.push('  (no tasks)')

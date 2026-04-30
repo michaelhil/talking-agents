@@ -173,7 +173,7 @@ export const documentArtifactType: ArtifactTypeDefinition = {
   formatForContext: (artifact: Artifact): string => {
     const body = artifact.body as unknown as DocumentBody
     const blocks = body.blocks ?? []
-    const header = `Document: "${artifact.title}" [id: ${artifact.id}] (${blocks.length} block${blocks.length === 1 ? '' : 's'})`
+    const header = `Document: ${artifact.title} [id: ${artifact.id}] (${blocks.length} block${blocks.length === 1 ? '' : 's'})`
     if (blocks.length === 0) return `${header}\n  (empty document)`
 
     const lines: string[] = [header]

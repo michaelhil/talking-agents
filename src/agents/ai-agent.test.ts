@@ -432,7 +432,7 @@ describe('[NEW] message tagging', () => {
     expect(newMsgs.every(m => m.content.includes('[NEW]'))).toBe(true)
   })
 
-  test('system prompt mentions [NEW] message handling', async () => {
+  test('system prompt is fenced with XML sections (house, response_format)', async () => {
     let capturedMessages: ReadonlyArray<{ role: string; content: string }> = []
     const provider: LLMProvider = {
       chat: async (req) => {
@@ -454,10 +454,11 @@ describe('[NEW] message tagging', () => {
     await agent.whenIdle()
 
     const systemMsg = capturedMessages.find(m => m.role === 'system')
-    expect(systemMsg?.content).toContain('[NEW]')
     expect(systemMsg?.content).toContain('Prioritise')
-    expect(systemMsg?.content).toContain('=== HOUSE RULES ===')
-    expect(systemMsg?.content).toContain('=== RESPONSE FORMAT ===')
+    expect(systemMsg?.content).toContain('<samsinn:house_rules>')
+    expect(systemMsg?.content).toContain('</samsinn:house_rules>')
+    expect(systemMsg?.content).toContain('<samsinn:response_format>')
+    expect(systemMsg?.content).toContain('</samsinn:response_format>')
   })
 
   test('buffered messages during generation are all tagged [NEW]', async () => {

@@ -5,7 +5,7 @@ import { resolveRoom } from './resolve.ts'
 export const createGetTimeTool = (): Tool => ({
   name: 'get_time',
   description: 'Returns the current date and time in ISO 8601 format.',
-  usage: 'Use whenever you need the current date or time. Never guess or estimate the time — always call this tool. Required any time temporal accuracy matters.',
+  usage: 'Call when temporal accuracy matters. Do not guess.',
   returns: 'Object with a "time" field containing the ISO 8601 timestamp, e.g. { "time": "2024-01-15T12:30:00.000Z" }.',
   parameters: {},
   execute: async () => ({
@@ -17,7 +17,7 @@ export const createGetTimeTool = (): Tool => ({
 export const createPostToRoomTool = (house: House): Tool => ({
   name: 'post_to_room',
   description: 'Posts a message to a specific room on behalf of the calling agent.',
-  usage: 'Use to send a message to a room you are not currently responding from, such as reporting results back to a coordinator room. Do not use to replace normal response — just write your response instead.',
+  usage: 'Send to a room other than the current one (e.g. reporting back to a coordinator). For normal replies, just write your response.',
   returns: '{ messageId, roomName }.',
   parameters: {
     type: 'object',
@@ -47,7 +47,7 @@ export const createPostToRoomTool = (house: House): Tool => ({
 export const createGetRoomHistoryTool = (house: House): Tool => ({
   name: 'get_room_history',
   description: 'Returns recent messages from a room.',
-  usage: 'Use to catch up on a room you just joined, review past decisions, or give another agent context about a conversation. Omit roomName to use the current room.',
+  usage: 'Catch up on a room or review past decisions. Omit roomName for current room.',
   returns: 'Array of { senderName, content, type, timestamp }.',
   parameters: {
     type: 'object',
