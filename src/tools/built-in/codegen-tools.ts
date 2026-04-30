@@ -25,7 +25,7 @@ export const createWriteSkillTool = (
 ): Tool => ({
   name: 'write_skill',
   description: 'Creates a new skill — a behavioral prompt template stored as a SKILL.md file. Skills are injected into agent context to shape how agents approach tasks.',
-  usage: 'Use to create reusable behavioral instructions. The body is markdown text describing how agents should approach a category of task. After creating a skill, you can add bundled tools to it with write_tool.',
+  usage: 'Create reusable behavioural instructions. Body is markdown. Add bundled tools later with write_tool.',
   returns: 'Object with the skill name and directory path.',
   parameters: {
     type: 'object',

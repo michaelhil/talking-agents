@@ -100,7 +100,7 @@ interface SearchResult {
 const buildTavilySearchTool = (apiKey: string): Tool => ({
   name: 'web_search',
   description: 'Searches the web (LLM-optimized via Tavily) and returns ranked results with cleaned content snippets and relevance scores.',
-  usage: 'Use to find current information, discover sources, or research a topic when you do not already have a specific URL. Tavily returns LLM-ready snippets — for many questions you may not need to follow up with web_fetch. Use web_fetch only when the snippet is insufficient.',
+  usage: 'Find current info or sources when you do not have a specific URL. Tavily snippets are LLM-ready; only call web_fetch if a snippet is insufficient.',
   returns: '{ query, provider, results: Array<{ title, url, snippet, score?, publishedAt? }> }. results may be empty if nothing is found.',
   parameters: {
     type: 'object',
@@ -159,7 +159,7 @@ const buildTavilySearchTool = (apiKey: string): Tool => ({
 const buildBraveSearchTool = (apiKey: string): Tool => ({
   name: 'web_search',
   description: 'Searches the web and returns a ranked list of results (title, URL, snippet) for a query.',
-  usage: 'Use to find current information, discover sources, or research a topic when you do not already have a specific URL. Use before web_fetch when you need to find relevant pages. Returns snippets only — call web_fetch to read the full content of a result.',
+  usage: 'Find pages when you do not have a URL. Returns snippets only — follow up with web_fetch for full content.',
   returns: '{ query, provider, results: Array<{ title, url, snippet, publishedAt? }> }. results may be empty if nothing is found.',
   parameters: {
     type: 'object',
@@ -206,7 +206,7 @@ const buildBraveSearchTool = (apiKey: string): Tool => ({
 const buildGoogleSearchTool = (apiKey: string, cseId: string): Tool => ({
   name: 'web_search',
   description: 'Searches the web and returns a ranked list of results (title, URL, snippet) for a query.',
-  usage: 'Use to find current information, discover sources, or research a topic when you do not already have a specific URL. Use before web_fetch when you need to find relevant pages. Returns snippets only — call web_fetch to read the full content of a result.',
+  usage: 'Find pages when you do not have a URL. Returns snippets only — follow up with web_fetch for full content.',
   returns: '{ query, provider, results: Array<{ title, url, snippet }> }. results may be empty if nothing is found.',
   parameters: {
     type: 'object',
@@ -257,7 +257,7 @@ const tryCreateSearchTool = (config: WebToolsConfig): Tool | undefined => {
 export const webFetchTool: Tool = {
   name: 'web_fetch',
   description: 'Fetches a URL and returns its content as clean Markdown text. Handles HTML pages, plain text, and JSON responses.',
-  usage: 'Use to read the content of a specific web page, article, or document. Does not execute JavaScript — pages requiring JS rendering may return incomplete content. For JSON APIs where you need to extract a specific field, use web_extract_json instead.',
+  usage: 'Read a specific page. No JS execution — JS-rendered pages may be incomplete. For JSON APIs, use web_extract_json.',
   returns: '{ url, title, content, charCount, truncated }. content is cleaned Markdown text.',
   parameters: {
     type: 'object',
@@ -344,7 +344,7 @@ export const webFetchTool: Tool = {
 export const webExtractJsonTool: Tool = {
   name: 'web_extract_json',
   description: 'Fetches a URL that returns JSON and extracts the data. Optionally navigate to a nested field using dot notation.',
-  usage: 'Use for REST APIs, data feeds, weather services, or any URL that returns application/json. Prefer over web_fetch for JSON endpoints — cleaner output, no HTML processing, extracts exactly the data you need. Use dot notation for path: "results.0.title" or "data.items".',
+  usage: 'For JSON endpoints (REST APIs, feeds). Prefer over web_fetch for application/json. Path uses dot notation: "results.0.title".',
   returns: '{ url, data, truncated } where data is the parsed JSON or the value at the given path.',
   parameters: {
     type: 'object',

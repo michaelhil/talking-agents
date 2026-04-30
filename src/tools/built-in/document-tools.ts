@@ -78,7 +78,7 @@ export const parseStreamedBlocks = (text: string): ReadonlyArray<ParsedBlock> =>
 export const createWriteDocumentSectionTool = (artifactStore: ArtifactStore): Tool => ({
   name: 'write_document_section',
   description: 'Streams LLM-generated content into a document artifact, inserting blocks one-by-one as they complete. Use this to collaboratively author or extend a document in real time.',
-  usage: 'Use when you need to write a section of a document artifact. The prompt describes what to write. Content is inserted after the specified anchor block (or at the end if not specified). Only works on artifacts of type "document". The tool streams output — other agents can observe blocks appearing live.',
+  usage: 'Write a section into a document artifact. Content streams in after the anchor block (or at end). Document type only.',
   returns: '{ artifactId, blocksInserted, lastBlockId } — the artifact ID, count of blocks written, and ID of the last inserted block.',
   parameters: {
     type: 'object',

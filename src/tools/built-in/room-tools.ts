@@ -21,7 +21,7 @@ export const createListRoomsTool = (house: House): Tool => ({
 export const createCreateRoomTool = (house: House, addAgentToRoom: AddToRoomFn): Tool => ({
   name: 'create_room',
   description: 'Creates a new room and automatically adds the calling agent to it.',
-  usage: 'Use to set up a new workspace for a project, topic, or collaboration. The calling agent is added automatically. Choose a clear, unique name. Optionally provide a roomPrompt to give the room a purpose or constraints.',
+  usage: 'Set up a workspace. The calling agent is added automatically. Optional roomPrompt sets purpose/constraints.',
   returns: 'Object with "name" (assigned, may differ if conflict), "id", and "renamed" (true if the name was adjusted).',
   parameters: {
     type: 'object',

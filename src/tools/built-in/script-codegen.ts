@@ -19,8 +19,8 @@ export const createWriteScriptTool = (
   emitCatalogChanged: CatalogChangedEmitter,
 ): Tool => ({
   name: 'write_script',
-  description: 'Creates or overwrites a script as a markdown file. Scripts orchestrate a multi-agent collaborative conversation: spawn cast members as agents and walk them through ordered steps with per-step roles. See docs/scripts.md for the format.',
-  usage: 'Provide the script `name` (lowercase alphanumerics + dash/underscore) and the full markdown `source`. Scripts are pure data; no code is executed. Validation rejects malformed input with a line number.',
+  description: 'Creates or overwrites a script (markdown). Scripts orchestrate multi-agent conversations through ordered steps with per-step roles. See docs/scripts.md.',
+  usage: 'Provide `name` (lowercase + dash/underscore) and full markdown `source`. Pure data — no code execution. Malformed input is rejected with a line number.',
   returns: 'On success: { name, title }. On failure: { error }.',
   parameters: {
     type: 'object',
