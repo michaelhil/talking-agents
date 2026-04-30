@@ -28,9 +28,33 @@ import type { ProviderMonitor, MonitorState } from './provider-monitor.ts'
 
 // === Events ===
 
+// Stable codes for downstream UX. The reason string is human-readable and
+// may include numbers ("retry in 47s"); the code is the structural cause.
+//   no_key         | provider has no API key configured
+//   disabled       | user toggled the provider off
+//   not_listed     | model not in this provider's catalog
+//   backoff        | inside provider-declared cooldown (rate_limit/quota/down)
+//   unhealthy      | inferred unhealthy from streak; retried anyway
+//   rate_limit     | upstream returned 429 on this attempt
+//   quota          | upstream returned quota-exceeded on this attempt
+//   provider_down  | upstream returned 5xx
+//   queue_full     | local gateway shed
+//   queue_timeout  | local gateway timed out waiting for slot
+//   circuit_open   | local gateway's breaker tripped
+//   network        | network/transport failure
+//   forced_fail    | test hook
+//   unknown        | catch-all
+export type ProviderAttemptCode =
+  | 'no_key' | 'disabled' | 'not_listed'
+  | 'backoff' | 'unhealthy'
+  | 'rate_limit' | 'quota' | 'provider_down'
+  | 'queue_full' | 'queue_timeout' | 'circuit_open'
+  | 'network' | 'forced_fail' | 'unknown'
+
 export interface ProviderAttemptRecord {
   readonly provider: string
   readonly reason: string
+  readonly code: ProviderAttemptCode
 }
 
 export type ProviderBoundEvent = {
@@ -46,6 +70,12 @@ export type ProviderAllFailedEvent = {
   readonly agentId: string | null
   readonly model: string
   readonly attempts: ReadonlyArray<ProviderAttemptRecord>
+  // The most actionable cause across all attempts (picked by priority:
+  // permanent > transient). Drives the toast text.
+  readonly primaryCode: ProviderAttemptCode
+  readonly primaryReason: string
+  // One-line user-facing remediation hint matched to primaryCode.
+  readonly remediation: string
 }
 
 export type ProviderStreamFailedEvent = {
@@ -205,12 +235,28 @@ export const createProviderRouter = (
     return config.isProviderEnabled(name)
   }
 
-  // Resolve the provider list to try for a given model.
-  const resolveCandidates = (model: string): { candidates: string[]; modelId: string; pinned: boolean } => {
+  // Resolve the provider list to try for a given model. Also returns
+  // structural attempts for providers that were filtered out (so the user
+  // sees "anthropic: no key" / "groq: not_listed" instead of a silent skip).
+  const resolveCandidates = (model: string): {
+    candidates: string[]
+    modelId: string
+    pinned: boolean
+    structuralAttempts: ProviderAttemptRecord[]
+  } => {
     const { provider: pinned, modelId } = parseProviderPrefix(model)
     if (pinned) {
-      if (!providers[pinned] || !isEnabled(pinned)) return { candidates: [], modelId, pinned: true }
-      return { candidates: [pinned], modelId, pinned: true }
+      if (!providers[pinned] || !isEnabled(pinned)) {
+        return {
+          candidates: [], modelId, pinned: true,
+          structuralAttempts: [{
+            provider: pinned,
+            reason: providers[pinned] ? 'disabled or no key' : 'unknown provider',
+            code: providers[pinned] ? 'disabled' : 'unknown',
+          }],
+        }
+      }
+      return { candidates: [pinned], modelId, pinned: true, structuralAttempts: [] }
     }
 
     // Filter order by providers whose cached availableModels includes modelId
@@ -225,10 +271,28 @@ export const createProviderRouter = (
     // surfaced on samsinn.app. Empty catalog = not eligible. If a user
     // explicitly wants a provider that lacks a catalog, they prefix the
     // model (e.g. "groq:llama-3.3"); pinned routing skips this filter.
+    const structuralAttempts: ProviderAttemptRecord[] = []
     const eligible = order.filter(name => {
-      if (!isEnabled(name)) return false
+      if (!isEnabled(name)) {
+        const m = monitors[name]
+        const code: ProviderAttemptCode = m?.getState().sub === 'disabled' ? 'disabled' : 'no_key'
+        structuralAttempts.push({
+          provider: name,
+          reason: code === 'no_key' ? 'no API key configured' : 'disabled by user',
+          code,
+        })
+        return false
+      }
       const list = providers[name]?.getHealth().availableModels ?? []
-      return list.includes(modelId)
+      if (!list.includes(modelId)) {
+        structuralAttempts.push({
+          provider: name,
+          reason: `does not list ${modelId}`,
+          code: 'not_listed',
+        })
+        return false
+      }
+      return true
     })
 
     // Apply soft preference: if lastSuccessByModel[modelId] is in the eligible
@@ -237,10 +301,10 @@ export const createProviderRouter = (
     if (preferred && eligible.includes(preferred) && mayCall(preferred)) {
       return {
         candidates: [preferred, ...eligible.filter(n => n !== preferred)],
-        modelId, pinned: false,
+        modelId, pinned: false, structuralAttempts,
       }
     }
-    return { candidates: eligible, modelId, pinned: false }
+    return { candidates: eligible, modelId, pinned: false, structuralAttempts }
   }
 
   // Classify a provider error into a routing decision. Records the outcome
@@ -257,32 +321,128 @@ export const createProviderRouter = (
   ): 'fallthrough' | 'rethrow' => {
     if (isCloudProviderError(err)) {
       if (!isFallbackable(err)) return 'rethrow'
-      const reason = errorReason(err)
       monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
-      attempts.push({ provider: name, reason })
+      attempts.push({ provider: name, ...errorAttempt(err) })
       return 'fallthrough'
     }
     if (isGatewayError(err) && (err.code === 'queue_full' || err.code === 'circuit_open' || err.code === 'queue_timeout')) {
       // Local shed — does NOT count against monitor health.
-      attempts.push({ provider: name, reason: err.code })
+      attempts.push({ provider: name, reason: err.code, code: err.code })
       return 'fallthrough'
     }
     // Unknown / network error — let monitor count it toward unhealthy streak.
     monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
-    attempts.push({ provider: name, reason: err instanceof Error ? err.message : String(err) })
+    attempts.push({
+      provider: name,
+      reason: err instanceof Error ? err.message : String(err),
+      code: 'network',
+    })
     return 'fallthrough'
   }
 
-  const errorReason = (err: unknown): string => {
-    if (isCloudProviderError(err)) {
-      if (err.code === 'rate_limit') {
-        return `rate-limited${err.retryAfterMs ? ` (retry in ${Math.round(err.retryAfterMs / 1000)}s)` : ''}`
+  const errorAttempt = (err: import('./errors.ts').CloudProviderError): { reason: string; code: ProviderAttemptCode } => {
+    if (err.code === 'rate_limit') {
+      return {
+        reason: `rate-limited${err.retryAfterMs ? ` (retry in ${Math.round(err.retryAfterMs / 1000)}s)` : ''}`,
+        code: 'rate_limit',
       }
-      if (err.code === 'quota') return 'quota exceeded'
-      if (err.code === 'provider_down') return 'provider unavailable'
-      return err.message
     }
-    return err instanceof Error ? err.message : String(err)
+    if (err.code === 'quota') return { reason: 'quota exceeded', code: 'quota' }
+    if (err.code === 'provider_down') return { reason: 'provider unavailable', code: 'provider_down' }
+    return { reason: err.message, code: 'unknown' }
+  }
+
+  // Translate a monitor sub-state into a stable code for the attempts log.
+  const subToCode = (sub: import('./provider-monitor.ts').MonitorSubState): ProviderAttemptCode => {
+    if (sub === 'no_key') return 'no_key'
+    if (sub === 'disabled') return 'disabled'
+    if (sub === 'backoff') return 'backoff'
+    if (sub === 'unhealthy') return 'unhealthy'
+    if (sub === 'down') return 'provider_down'
+    return 'unknown'
+  }
+
+  // Priority order for picking the *primary* cause from a list of failed
+  // attempts. Items earlier in the list are more actionable / louder for
+  // the user — "no key" beats "rate-limited" beats "internal error".
+  const PRIMARY_CODE_PRIORITY: ReadonlyArray<ProviderAttemptCode> = [
+    'no_key', 'disabled', 'not_listed',
+    'quota', 'rate_limit', 'backoff',
+    'provider_down', 'unhealthy',
+    'circuit_open', 'queue_full', 'queue_timeout',
+    'forced_fail', 'network', 'unknown',
+  ]
+
+  // Build a one-line user-facing remediation hint for a given primary code.
+  // Kept here (not in the UI) so the same string flows to logs / MCP /
+  // future API consumers without each layer reinventing it.
+  const remediationFor = (code: ProviderAttemptCode, model: string): string => {
+    switch (code) {
+      case 'no_key': return `Add an API key in the Providers panel`
+      case 'disabled': return `Re-enable the provider in the Providers panel`
+      case 'not_listed': return `No configured provider lists ${model} — pick a different model or add the right provider`
+      case 'rate_limit':
+      case 'backoff':
+      case 'quota': return `Wait for the cooldown to expire, or pick a model on a different provider`
+      case 'provider_down':
+      case 'unhealthy': return `Provider is having trouble — try again, switch model, or check the provider's status page`
+      case 'circuit_open':
+      case 'queue_full':
+      case 'queue_timeout': return `Provider is temporarily overloaded — retry in a few seconds`
+      case 'network': return `Network/transport error — check connectivity`
+      case 'forced_fail': return `Test hook is forcing this provider to fail (FORCE_PROVIDER_FAIL)`
+      case 'unknown':
+      default: return `Open the Providers panel for details`
+    }
+  }
+
+  const emitAllFailed = (
+    agentId: string | null,
+    model: string,
+    attempts: ReadonlyArray<ProviderAttemptRecord>,
+  ): void => {
+    const summary = summarizeAttempts(attempts, model)
+    emit({
+      type: 'provider_all_failed',
+      agentId, model, attempts,
+      primaryCode: summary.code,
+      primaryReason: summary.reason,
+      remediation: summary.remediation,
+    })
+  }
+
+  const summarizeAttempts = (
+    attempts: ReadonlyArray<ProviderAttemptRecord>,
+    model: string,
+  ): { code: ProviderAttemptCode; reason: string; remediation: string } => {
+    if (attempts.length === 0) {
+      return {
+        code: 'not_listed',
+        reason: `no eligible provider for ${model}`,
+        remediation: remediationFor('not_listed', model),
+      }
+    }
+    let pick = attempts[0]!
+    let pickRank = PRIMARY_CODE_PRIORITY.indexOf(pick.code)
+    if (pickRank < 0) pickRank = PRIMARY_CODE_PRIORITY.length
+    for (const a of attempts) {
+      let rank = PRIMARY_CODE_PRIORITY.indexOf(a.code)
+      if (rank < 0) rank = PRIMARY_CODE_PRIORITY.length
+      if (rank < pickRank) { pick = a; pickRank = rank }
+    }
+    return {
+      code: pick.code,
+      reason: `${pick.provider}: ${pick.reason}`,
+      remediation: remediationFor(pick.code, model),
+    }
+  }
+
+  // The `mayCall=false` skip path needs to record the structural reason.
+  const skipAttempt = (name: string): { reason: string; code: ProviderAttemptCode } => {
+    const m = monitors[name]
+    if (!m) return { reason: 'cold', code: 'unknown' }
+    const s = m.getState()
+    return { reason: skipReason(name), code: subToCode(s.sub) }
   }
 
   const callOnProvider = async (
@@ -303,12 +463,12 @@ export const createProviderRouter = (
 
   const chat = async (request: ChatRequest, options?: RouterCallOptions): Promise<ChatResponse> => {
     const agentId = options?.agentId ?? null
-    const { candidates, modelId, pinned } = resolveCandidates(request.model)
-    const attempts: ProviderAttemptRecord[] = []
+    const { candidates, modelId, pinned, structuralAttempts } = resolveCandidates(request.model)
+    const attempts: ProviderAttemptRecord[] = [...structuralAttempts]
 
     for (const name of candidates) {
       if (!mayCall(name)) {
-        attempts.push({ provider: name, reason: skipReason(name) })
+        attempts.push({ provider: name, ...skipAttempt(name) })
         continue
       }
       try {
@@ -340,7 +500,7 @@ export const createProviderRouter = (
         const decision = classifyProviderError(err, name, attempts, request, agentId)
         if (decision === 'rethrow') throw err
         if (pinned) {
-          emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+          emitAllFailed(agentId, request.model, attempts)
           throw err
         }
         // 'fallthrough' — try next candidate.
@@ -348,7 +508,7 @@ export const createProviderRouter = (
     }
 
     // All candidates exhausted without success.
-    emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+    emitAllFailed(agentId, request.model, attempts)
     throw createCloudProviderError({
       code: 'provider_down',
       provider: 'router',
@@ -365,12 +525,12 @@ export const createProviderRouter = (
     options?: RouterCallOptions,
   ): AsyncIterable<StreamChunk> {
     const agentId = options?.agentId ?? null
-    const { candidates, modelId, pinned } = resolveCandidates(request.model)
-    const attempts: ProviderAttemptRecord[] = []
+    const { candidates, modelId, pinned, structuralAttempts } = resolveCandidates(request.model)
+    const attempts: ProviderAttemptRecord[] = [...structuralAttempts]
 
     for (const name of candidates) {
       if (!mayCall(name)) {
-        attempts.push({ provider: name, reason: skipReason(name) })
+        attempts.push({ provider: name, ...skipAttempt(name) })
         continue
       }
       if (config.forceFailProvider === name) {
@@ -379,9 +539,9 @@ export const createProviderRouter = (
           message: `FORCE_PROVIDER_FAIL=${name} (test hook)`,
         })
         monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
-        attempts.push({ provider: name, reason: 'forced fail' })
+        attempts.push({ provider: name, reason: 'forced fail (test hook)', code: 'forced_fail' })
         if (pinned) {
-          emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+          emitAllFailed(agentId, request.model, attempts)
           throw err
         }
         continue
@@ -401,7 +561,7 @@ export const createProviderRouter = (
         const decision = classifyProviderError(err, name, attempts, request, agentId)
         if (decision === 'rethrow') throw err
         if (pinned) {
-          emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+          emitAllFailed(agentId, request.model, attempts)
           throw err
         }
         continue
@@ -414,7 +574,7 @@ export const createProviderRouter = (
         const decision = classifyProviderError(err, name, attempts, request, agentId)
         if (decision === 'rethrow') throw err
         if (pinned) {
-          emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+          emitAllFailed(agentId, request.model, attempts)
           throw err
         }
         continue
@@ -475,7 +635,7 @@ export const createProviderRouter = (
     }
 
     // No candidate produced even a first chunk.
-    emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+    emitAllFailed(agentId, request.model, attempts)
     throw createCloudProviderError({
       code: 'provider_down',
       provider: 'router',

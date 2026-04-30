@@ -15,7 +15,7 @@
 import { showToast } from '../toast.ts'
 import { openModelsPopover } from '../models-popover.ts'
 import { save, saveOrder, testKey, formatTestToast } from './api.ts'
-import { renderRow, type ProviderStatusEntry } from './row.ts'
+import { renderRow, renderFailuresSection, type ProviderStatusEntry } from './row.ts'
 
 interface ProvidersResponse {
   providers: ProviderStatusEntry[]
@@ -98,6 +98,11 @@ export const renderProvidersPanel = (list: ProvidersResponse): void => {
       orderLocked: list.orderLockedByEnv,
     })
     container.appendChild(row)
+
+    // Persisted failures live inline under the row so the user doesn't
+    // have to remember which provider produced which transient toast.
+    const failuresEl = renderFailuresSection(entry)
+    if (failuresEl) container.appendChild(failuresEl)
 
     // For Ollama: a full-width sibling container below the row holds the
     // settings panel. The Settings button in the row toggles its visibility.

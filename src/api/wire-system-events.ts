@@ -152,12 +152,15 @@ export const wireSystemEvents = (
     })
   })
 
-  system.setOnProviderAllFailed((agentId, model, attempts) => {
+  system.setOnProviderAllFailed((agentId, model, attempts, summary) => {
     broadcast({
       type: 'provider_all_failed',
       agentId,
       agentName: agentNameFor(agentId) ?? null,
       model, attempts,
+      primaryCode: summary.primaryCode,
+      primaryReason: summary.primaryReason,
+      remediation: summary.remediation,
     })
   })
 

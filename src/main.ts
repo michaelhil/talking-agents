@@ -745,8 +745,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       evalEvent.add((agentName, event) => safe(() => mkEvalEvent(sid(), agentName, event))),
       providerBound.add((agentId, model, oldProvider, newProvider) =>
         safe(() => mkProviderBound(sid(), agentId, model, oldProvider, newProvider))),
-      providerAllFailed.add((agentId, model, attempts) =>
-        safe(() => mkProviderAllFailed(sid(), agentId, model, attempts))),
+      providerAllFailed.add((agentId, model, attempts, summary) =>
+        safe(() => mkProviderAllFailed(sid(), agentId, model, attempts, summary))),
       providerStreamFailed.add((agentId, model, provider, reason) =>
         safe(() => mkProviderStreamFailed(sid(), agentId, model, provider, reason))),
       summaryConfigChanged.add((roomId, config) => safe(() => mkSummaryConfigChanged(sid(), roomId, config))),
@@ -819,7 +819,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       if (event.type === 'provider_bound') {
         providerBound.proxy(event.agentId, event.model, event.oldProvider, event.newProvider)
       } else if (event.type === 'provider_all_failed') {
-        providerAllFailed.proxy(event.agentId, event.model, event.attempts)
+        providerAllFailed.proxy(event.agentId, event.model, event.attempts, { primaryCode: event.primaryCode, primaryReason: event.primaryReason, remediation: event.remediation })
       } else {
         providerStreamFailed.proxy(event.agentId, event.model, event.provider, event.reason)
       }
@@ -866,7 +866,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       if (event.type === 'provider_bound') {
         providerBound.proxy(event.agentId, event.model, event.oldProvider, event.newProvider)
       } else if (event.type === 'provider_all_failed') {
-        providerAllFailed.proxy(event.agentId, event.model, event.attempts)
+        providerAllFailed.proxy(event.agentId, event.model, event.attempts, { primaryCode: event.primaryCode, primaryReason: event.primaryReason, remediation: event.remediation })
       } else {
         providerStreamFailed.proxy(event.agentId, event.model, event.provider, event.reason)
       }

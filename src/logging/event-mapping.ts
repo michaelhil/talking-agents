@@ -23,7 +23,7 @@ import type { DeliveryMode, Message, RoomProfile } from '../core/types/messaging
 import type { EvalEvent } from '../core/types/agent-eval.ts'
 import type { SummaryTarget } from '../core/types/room.ts'
 import type { SummaryConfig } from '../core/types/summary.ts'
-import type { ProviderAttempt } from '../core/types/llm.ts'
+import type { ProviderAttempt, ProviderAllFailedSummary } from '../core/types/llm.ts'
 import type { LogActor, LogEvent } from './types.ts'
 
 // --- actor constructors ---
@@ -129,12 +129,13 @@ export const mkProviderBound = (
 export const mkProviderAllFailed = (
   sessionId: string,
   agentId: string | null, model: string, attempts: ReadonlyArray<ProviderAttempt>,
+  summary: ProviderAllFailedSummary,
 ): LogEvent => ({
   ts: Date.now(),
   kind: 'provider.all_failed',
   session: sessionId,
   ...(agentId ? { actor: { kind: 'ai' as const, id: agentId } } : {}),
-  payload: { model, attempts },
+  payload: { model, attempts, ...summary },
 })
 
 export const mkProviderStreamFailed = (

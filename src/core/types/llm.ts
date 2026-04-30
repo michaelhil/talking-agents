@@ -149,6 +149,17 @@ export interface LLMProvider {
 export interface ProviderAttempt {
   readonly provider: string
   readonly reason: string
+  // Stable structural code (router.ts ProviderAttemptCode). Strings here
+  // (not a union) so this type stays loose-coupled across the boundary.
+  readonly code: string
+}
+
+// Summary attached to provider_all_failed events. The router picks the
+// most actionable cause across all attempts and supplies a remediation hint.
+export interface ProviderAllFailedSummary {
+  readonly primaryCode: string
+  readonly primaryReason: string
+  readonly remediation: string
 }
 
 export type OnProviderBound = (
@@ -162,6 +173,7 @@ export type OnProviderAllFailed = (
   agentId: string | null,
   model: string,
   attempts: ReadonlyArray<ProviderAttempt>,
+  summary: ProviderAllFailedSummary,
 ) => void
 
 export type OnProviderStreamFailed = (

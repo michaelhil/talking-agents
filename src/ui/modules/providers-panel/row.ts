@@ -5,6 +5,25 @@
 
 export type Status = 'ok' | 'no_key' | 'cooldown' | 'down' | 'disabled'
 
+export interface MonitorPayload {
+  sub: 'ok' | 'backoff' | 'unhealthy' | 'no_key' | 'disabled' | 'down'
+  reason: string
+  retryAt: number | null
+  modelCount: number
+  consecutiveFailures: number
+  lastError: { code: string; message: string } | null
+  lastErrorAt: number | null
+}
+
+export interface FailureRecord {
+  when: number
+  provider: string
+  model: string | null
+  agentId: string | null
+  code: string
+  reason: string
+}
+
 export interface ProviderStatusEntry {
   name: string
   kind: 'cloud' | 'ollama'
@@ -16,6 +35,8 @@ export interface ProviderStatusEntry {
   maxConcurrent: number | null
   cooldown: { coldUntilMs: number; reason: string } | null
   status: Status
+  monitor: MonitorPayload | null
+  recentFailures: ReadonlyArray<FailureRecord>
 }
 
 // Where to send users to get an API key. Top-level consoles are more stable
@@ -47,7 +68,25 @@ const dotColourClass = (status: Status): string => {
   return 'bg-border-strong'
 }
 
-const statusTooltip = (status: Status): string => {
+const statusTooltip = (status: Status, monitor: MonitorPayload | null): string => {
+  // When the monitor reports rich state, prefer it — surface the actual
+  // reason and (for backoff) a live countdown to recovery. Falls back to
+  // the bare status word for older payloads or unknown providers.
+  if (monitor) {
+    if (monitor.sub === 'backoff' && monitor.retryAt !== null) {
+      const remainingS = Math.max(0, Math.round((monitor.retryAt - Date.now()) / 1000))
+      const reason = monitor.reason || 'cooldown'
+      return `${reason} — retries allowed in ${remainingS}s · click to disable`
+    }
+    if (monitor.sub === 'unhealthy') {
+      const last = monitor.lastError?.message ? ` (${monitor.lastError.message.slice(0, 80)})` : ''
+      return `unhealthy — ${monitor.consecutiveFailures} recent failures${last} · click to disable`
+    }
+    if (monitor.sub === 'down') return 'down — click to disable'
+    if (monitor.sub === 'disabled') return 'disabled — click to enable'
+    if (monitor.sub === 'no_key') return 'no key — paste one to enable'
+    if (monitor.sub === 'ok') return `ok — ${monitor.modelCount} models · click to disable`
+  }
   if (status === 'ok') return 'ok — click to disable'
   if (status === 'cooldown') return 'cooldown — click to disable'
   if (status === 'down') return 'down — click to disable'
@@ -57,7 +96,7 @@ const statusTooltip = (status: Status): string => {
 
 // Returns the `<button>` that holds the status dot + optional red slash.
 // The outer button is a larger click target (16×16) for comfort.
-const statusButton = (status: Status): string => {
+const statusButton = (status: Status, monitor: MonitorPayload | null): string => {
   const dot = `<span class="inline-block w-2.5 h-2.5 rounded-full ${dotColourClass(status)}"></span>`
   const slash = status === 'disabled'
     ? `<span class="absolute inset-0 flex items-center justify-center pointer-events-none"
@@ -66,7 +105,10 @@ const statusButton = (status: Status): string => {
          <span class="block h-[2px] w-3.5 bg-danger rounded"></span>
        </span>`
     : ''
-  return `<button class="prov-dot-btn relative w-4 h-4 flex items-center justify-center shrink-0 cursor-pointer" title="${statusTooltip(status)}">
+  // Tooltip is escaped against quote-injection via the attribute encoder.
+  const tip = statusTooltip(status, monitor)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<button class="prov-dot-btn relative w-4 h-4 flex items-center justify-center shrink-0 cursor-pointer" title="${tip}">
     ${dot}
     ${slash}
   </button>`
@@ -145,7 +187,7 @@ export const renderRow = (ctx: RowContext): HTMLElement => {
   `
 
   row.innerHTML = `
-    ${statusButton(entry.status)}
+    ${statusButton(entry.status, entry.monitor)}
     ${nameCol}
     ${keyField}
     ${maxField}
@@ -153,4 +195,38 @@ export const renderRow = (ctx: RowContext): HTMLElement => {
     ${arrows}
   `
   return row
+}
+
+// Renders a small failures section under a provider row when the provider
+// has any persisted failures. Collapsed by default; click the header to
+// toggle. Shown inline with the provider so the user doesn't need to
+// hunt for which provider caused which message.
+export const renderFailuresSection = (entry: ProviderStatusEntry): HTMLElement | null => {
+  const failures = entry.recentFailures
+  if (!failures || failures.length === 0) return null
+  const wrap = document.createElement('div')
+  wrap.className = 'pl-6 pr-2 pb-1 text-[11px]'
+  wrap.dataset.failuresFor = entry.name
+  const head = document.createElement('button')
+  head.className = 'text-text-muted hover:text-text underline-offset-2 hover:underline'
+  head.textContent = `▸ Recent failures (${failures.length})`
+  const body = document.createElement('div')
+  body.className = 'hidden mt-1 border-l-2 border-border pl-2 space-y-0.5 max-h-48 overflow-y-auto'
+  for (const f of failures) {
+    const row = document.createElement('div')
+    row.className = 'text-text-subtle'
+    const when = new Date(f.when).toLocaleTimeString()
+    const model = f.model ? ` · ${f.model}` : ''
+    const reason = (f.reason || f.code).replace(/</g, '&lt;')
+    row.innerHTML = `<span class="text-text-muted">${when}</span> <span class="text-warning">[${f.code}]</span>${model} — ${reason}`
+    body.appendChild(row)
+  }
+  head.addEventListener('click', () => {
+    const open = !body.classList.contains('hidden')
+    body.classList.toggle('hidden', open)
+    head.textContent = `${open ? '▸' : '▾'} Recent failures (${failures.length})`
+  })
+  wrap.appendChild(head)
+  wrap.appendChild(body)
+  return wrap
 }

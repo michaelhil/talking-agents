@@ -45,7 +45,7 @@ import {
   handleSummaryRunFailed,
 } from '../summary-panel.ts'
 import { toUIMessage, toUIRoomProfile, toAgentEntry, toUIArtifact } from './mappers.ts'
-import { shouldEmitBound } from './dedup.ts'
+import { shouldEmitBound, shouldEmitAllFailed } from './dedup.ts'
 
 // --- Pending create hooks ---
 // Callers register a hook keyed by requestId before sending add_artifact.
@@ -537,9 +537,29 @@ const handlers: Handlers = {
         $pendingModelChanges.set(rest)
       }
     }
+    // Dedup identical (agent, model, primaryCode) failures within 5s. Without
+    // this an agent that retries fast on a flaky upstream stacks the toast
+    // queue with the same message.
+    // Push the failure into the agent's warnings so the thinking indicator
+    // carries the reason inline rather than evaporating with the toast.
+    // This is the bridge between "send fired" and "result vanished" — the
+    // user can see what happened even after the toast fades.
+    if (msg.agentId) {
+      const existing = $agentWarnings.get()[msg.agentId] ?? []
+      const note = msg.remediation
+        ? `${msg.primaryReason || 'all providers failed'} — ${msg.remediation}`
+        : (msg.primaryReason || 'all providers failed')
+      $agentWarnings.setKey(msg.agentId, [...existing, note])
+    }
+    if (!shouldEmitAllFailed(msg.agentId, msg.model, msg.primaryCode, now)) return
     const who = msg.agentName ? `${msg.agentName}: ` : ''
-    const providers = msg.attempts.map(a => a.provider).join(', ') || 'no eligible providers'
-    showToast(document.body, `${who}all providers failed for ${msg.model} (${providers})`, { type: 'error', position: 'fixed' })
+    // Two-line toast: what (primary reason) + what to do (remediation).
+    // Falls back gracefully on older payloads without the new fields.
+    const reason = msg.primaryReason || msg.attempts.map(a => a.provider).join(', ') || 'no eligible providers'
+    const text = msg.remediation
+      ? `${who}${msg.model}: ${reason} — ${msg.remediation}`
+      : `${who}${msg.model}: ${reason}`
+    showToast(document.body, text, { type: 'error', position: 'fixed' })
   },
 
   provider_stream_failed(msg) {
