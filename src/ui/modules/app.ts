@@ -541,6 +541,27 @@ $ollamaHealth.listen((health) => {
 // DOM EVENT HANDLERS
 // ============================================================================
 
+// Reset textarea height after a send (auto-grow leaves it tall otherwise).
+const resetChatInputHeight = (): void => {
+  chatInput.style.height = 'auto'
+}
+
+// Auto-grow on input, capped via max-height in CSS. Cheap; runs on every keystroke.
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto'
+  chatInput.style.height = `${chatInput.scrollHeight}px`
+})
+
+// Enter submits, Shift+Enter inserts a newline. Pasting multi-line content
+// (e.g. a fenced ```map block) preserves its newlines because <textarea>
+// doesn't strip them the way <input type="text"> did.
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault()
+    chatForm.requestSubmit()
+  }
+})
+
 chatForm.onsubmit = (e) => {
   e.preventDefault()
   const content = chatInput.value.trim()
@@ -569,7 +590,8 @@ chatForm.onsubmit = (e) => {
   }
 
   send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId })
-  chatInput.value = ''
+  chatInput.value = ''; resetChatInputHeight()
+  resetChatInputHeight()
 }
 
 // Quick "create human" path used by the send-as picker when no humans exist.
@@ -594,7 +616,7 @@ const createHumanInline = async (roomId: string, content: string): Promise<void>
     $selectedHumanByRoom.setKey(roomId, id)
     if (content) {
       send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId: id })
-      chatInput.value = ''
+      chatInput.value = ''; resetChatInputHeight()
     }
   } catch {
     showToast(document.body, 'Create failed', { type: 'error', position: 'fixed' })
@@ -651,7 +673,7 @@ const openSendAsPicker = async (roomId: string, content: string): Promise<void> 
       }
       $selectedHumanByRoom.setKey(roomId, h.id)
       send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId: h.id })
-      chatInput.value = ''
+      chatInput.value = ''; resetChatInputHeight()
       close()
     }
     return row

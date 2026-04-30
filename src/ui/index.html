@@ -514,9 +514,12 @@
           <!-- Input wrapper holds the inline send icon, positioned absolutely
                on the right inside the input's padding. -->
           <div class="relative flex-1">
-            <input id="chat-input" type="text" placeholder="Type a message..."
+            <textarea id="chat-input" placeholder="Type a message... (Shift+Enter for newline)"
                    class="input chat-input w-full"
-                   autocomplete="off" disabled>
+                   rows="1"
+                   autocomplete="off"
+                   style="resize: none; overflow-y: auto; max-height: 8rem;"
+                   disabled></textarea>
             <button type="submit" id="btn-send" class="chat-send icon-btn" title="Send" aria-label="Send" disabled><span data-icon="corner-down-left"></span></button>
           </div>
         </form>

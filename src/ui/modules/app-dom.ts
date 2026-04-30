@@ -18,7 +18,7 @@ export const domRefs = {
   chatArea: $('#chat-area') as HTMLElement,
   messagesDiv: $('#messages') as HTMLElement,
   chatForm: $('#chat-form') as HTMLFormElement,
-  chatInput: $('#chat-input') as HTMLInputElement,
+  chatInput: $('#chat-input') as HTMLTextAreaElement,
   // Pause status dot (header)
   roomStatusDot: $('#room-status-dot') as HTMLButtonElement,
   // Mode toggle (single button — swaps icon between broadcast and manual)
