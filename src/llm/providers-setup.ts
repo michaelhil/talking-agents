@@ -19,12 +19,15 @@ import { PROVIDER_PROFILES, type ProviderConfig, type CloudProviderName } from '
 import { getContextWindow } from './models/context-window.ts'
 import type { ProviderKeys } from './provider-keys.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
+import type { ProviderMonitor } from './provider-monitor.ts'
+import { createProviderMonitor } from './provider-monitor.ts'
 
 export interface ProviderSetupResult {
   readonly router: ProviderRouter
   readonly ollama?: OllamaGateway                      // present iff 'ollama' is in order
   readonly ollamaRaw?: OllamaProviderExtended          // raw provider for URL edit UX
   readonly gateways: Record<string, ProviderGateway>   // all gateways in the router
+  readonly monitors: Record<string, ProviderMonitor>   // one per gateway
   readonly dispose: () => void
 }
 
@@ -41,6 +44,10 @@ export interface BuildProvidersOptions {
   // fixture so the boot-shape wiring (real adapter → real gateway → real
   // router) can be exercised end-to-end against a controlled endpoint.
   readonly baseUrlOverrides?: Partial<Record<string, string>>
+  // Returns true when the system has at least one connected client. Heartbeats
+  // pause when this returns false, so an idle Samsinn (no open tab) consumes
+  // zero requests. Defaults to "always active" for tests and headless mode.
+  readonly isActive?: () => boolean
 }
 
 export const buildProvidersFromConfig = (
@@ -94,12 +101,39 @@ export const buildProvidersFromConfig = (
     )
   }
 
+  // One monitor per gateway. The monitor is the single source of truth for
+  // routing eligibility ("may we send to provider X right now?") and drives
+  // the background heartbeat. Built BEFORE the router so the router can
+  // consult it on every call.
+  const monitors: Record<string, ProviderMonitor> = {}
+  for (const [name, _gw] of Object.entries(gateways)) {
+    const kind = name === 'ollama' ? 'ollama' : 'cloud'
+    const hasKey = name === 'ollama'
+      ? () => true
+      : providerKeys
+        ? () => providerKeys.get(name).length > 0
+        : () => (config.cloud[name as CloudProviderName]?.apiKey ?? '').length > 0
+    const isUserEnabled = name === 'ollama'
+      ? () => true
+      : providerKeys
+        ? () => providerKeys.isUserEnabled(name)
+        : () => true
+    monitors[name] = createProviderMonitor({
+      name,
+      kind,
+      hasKey,
+      isUserEnabled,
+      ...(options.isActive ? { isActive: options.isActive } : {}),
+    })
+  }
+
   const router = createProviderRouter(gateways, {
     order: config.order,
     forceFailProvider: config.forceFailProvider,
     isProviderEnabled: providerKeys
       ? (name) => name === 'ollama' || providerKeys.isEnabled(name)
       : undefined,
+    monitors,
     contextLookup: async (provider, model) => {
       const info = await getContextWindow(provider, model, {
         ollamaBaseUrl: config.ollamaUrl,
@@ -109,7 +143,16 @@ export const buildProvidersFromConfig = (
     },
   })
 
+  // Start heartbeats now that gateways exist. The monitor caches the
+  // gateway reference and schedules its own timer.
+  for (const [name, gw] of Object.entries(gateways)) {
+    monitors[name]?.start(gw)
+  }
+
   const dispose = (): void => {
+    for (const m of Object.values(monitors)) {
+      try { m.dispose() } catch { /* best-effort */ }
+    }
     router.dispose()
     for (const gw of Object.values(gateways)) {
       try { gw.dispose() } catch { /* best-effort */ }
@@ -121,6 +164,7 @@ export const buildProvidersFromConfig = (
     ...(ollama ? { ollama } : {}),
     ...(ollamaRaw ? { ollamaRaw } : {}),
     gateways,
+    monitors,
     dispose,
   }
 }

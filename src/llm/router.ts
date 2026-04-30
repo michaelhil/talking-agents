@@ -24,6 +24,7 @@
 import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk, GatewayMetrics } from '../core/types/llm.ts'
 import type { ProviderGateway, ChatCallOptions } from './provider-gateway.ts'
 import { createCloudProviderError, isCloudProviderError, isFallbackable, isGatewayError } from './errors.ts'
+import type { ProviderMonitor, MonitorState } from './provider-monitor.ts'
 
 // === Events ===
 
@@ -77,12 +78,6 @@ export interface ContextLookupFn {
 export interface ProviderRouterConfig {
   // Logical provider names (keys into providers map) in priority order.
   readonly order: ReadonlyArray<string>
-  // Default cooldown when a provider returns rate_limit without a Retry-After.
-  readonly defaultRateLimitCooldownMs?: number
-  // Cooldown applied on quota errors (usually resets daily).
-  readonly defaultQuotaCooldownMs?: number
-  // Cooldown applied on 5xx errors.
-  readonly defaultProviderDownCooldownMs?: number
   // Test hook: provider name to force-fail (simulates errors for E2E).
   readonly forceFailProvider?: string | null
   // Resolve the model's max context window. Results are consumed per call and
@@ -90,12 +85,16 @@ export interface ProviderRouterConfig {
   readonly contextLookup?: ContextLookupFn
   // Runtime gate — return false to skip a provider entirely (e.g. no API key
   // supplied yet). Called on every request; safe to change over time.
+  // Kept as a fast structural gate even when monitors are wired (monitors
+  // can also report no_key/disabled, but this is cheaper for the hot path).
   readonly isProviderEnabled?: (name: string) => boolean
+  // Per-provider monitors. When supplied, the router consults monitor.mayCall()
+  // instead of its own cooldown bookkeeping, and reports chat outcomes back
+  // via monitor.recordChatOutcome() so failures shape future routing decisions.
+  // Optional for the test paths that construct routers without the full
+  // setup pipeline.
+  readonly monitors?: Record<string, ProviderMonitor>
 }
-
-const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 60_000          // 1 min
-const DEFAULT_QUOTA_COOLDOWN_MS = 60 * 60_000          // 1 hour (quotas often hourly/daily)
-const DEFAULT_PROVIDER_DOWN_COOLDOWN_MS = 30_000       // 30 sec
 
 // === Deps (testable clock) ===
 
@@ -111,7 +110,10 @@ export interface ProviderRouter extends LLMProvider {
   readonly onRoutingEvent: (listener: ProviderRoutingListener) => void
   readonly getProviderNames: () => ReadonlyArray<string>
   readonly getAggregatedMetrics: () => RouterMetrics
-  readonly getCooldownState: () => Record<string, { coldUntilMs: number; reason: string } | null>
+  // Snapshot of monitor state per provider (or null for unknown). Replaces
+  // the previous getCooldownState() — exposes richer info: sub-state, retryAt,
+  // reason, modelCount.
+  readonly getMonitorSnapshot: () => Record<string, MonitorState | null>
   readonly getOrder: () => ReadonlyArray<string>
   readonly setOrder: (names: ReadonlyArray<string>) => void
   readonly dispose: () => void
@@ -148,28 +150,28 @@ export const createProviderRouter = (
     throw new Error('ProviderRouter: no configured providers are available')
   }
 
-  const rateLimitCooldownMs = config.defaultRateLimitCooldownMs ?? DEFAULT_RATE_LIMIT_COOLDOWN_MS
-  const quotaCooldownMs = config.defaultQuotaCooldownMs ?? DEFAULT_QUOTA_COOLDOWN_MS
-  const providerDownCooldownMs = config.defaultProviderDownCooldownMs ?? DEFAULT_PROVIDER_DOWN_COOLDOWN_MS
+  const monitors = config.monitors ?? {}
 
-  // Per-provider cooldown state. null = healthy. Cooldown is soft — we still
-  // let the individual gateway's circuit breaker act as a second line.
-  const cooldowns: Map<string, { coldUntilMs: number; reason: string }> = new Map()
-
-  const isCold = (name: string): boolean => {
-    const state = cooldowns.get(name)
-    if (!state) return false
-    if (now() >= state.coldUntilMs) {
-      cooldowns.delete(name)
-      return false
-    }
-    return true
+  // Routing eligibility — single source of truth. When a monitor is wired,
+  // it owns the decision (backoff window, unhealthy streak, no_key, disabled).
+  // When it isn't (test paths), the router falls through to "always allow"
+  // and behavior reduces to first-provider-wins, which is what those tests
+  // already assume.
+  const mayCall = (name: string): boolean => {
+    const m = monitors[name]
+    return m ? m.mayCall() : true
   }
 
-  const markCold = (name: string, cooldownMs: number, reason: string): void => {
-    cooldowns.set(name, { coldUntilMs: now() + cooldownMs, reason })
-    // Also tell the gateway to treat this as an external failure (informs metrics).
-    providers[name]?.recordExternalFailure()
+  // Reason string for skip-attempt records when a monitor blocks a call.
+  const skipReason = (name: string): string => {
+    const m = monitors[name]
+    if (!m) return 'cold'
+    const s = m.getState()
+    if (s.sub === 'backoff' && s.retryAt !== null) {
+      const remaining = Math.max(0, Math.round((s.retryAt - now()) / 1000))
+      return `${s.reason} (retry in ${remaining}s)`
+    }
+    return s.reason || s.sub
   }
 
   // Soft-preference: once a model has succeeded on provider X, prefer X on the
@@ -230,9 +232,9 @@ export const createProviderRouter = (
     })
 
     // Apply soft preference: if lastSuccessByModel[modelId] is in the eligible
-    // list and not cold, promote it to front.
+    // list and the monitor allows it, promote it to front.
     const preferred = lastSuccessByModel.get(modelId)
-    if (preferred && eligible.includes(preferred) && !isCold(preferred)) {
+    if (preferred && eligible.includes(preferred) && mayCall(preferred)) {
       return {
         candidates: [preferred, ...eligible.filter(n => n !== preferred)],
         modelId, pinned: false,
@@ -241,57 +243,46 @@ export const createProviderRouter = (
     return { candidates: eligible, modelId, pinned: false }
   }
 
-  // Classify an error → cooldown (ms) + reason (or null if non-fallbackable).
-  // Classify a provider error into a routing decision. Mutates `attempts`
-  // and (via markCold) cooldowns. Returns:
-  //   'fallthrough' — error is fallbackable; caller should try next candidate.
+  // Classify a provider error into a routing decision. Records the outcome
+  // with the monitor (which owns cooldown/streak state) and pushes an attempt
+  // record. Returns:
+  //   'fallthrough' — error is fallbackable or local shed; try next candidate.
   //   'rethrow'     — permanent error (auth, bad_request, etc); propagate.
-  //
-  // This used to be inlined twice in chat() with two parallel branches —
-  // one for cooldown errors, one for shed (queue_full / circuit_open).
-  // Collapsed so the chat path has a single uniform shape; stream() will
-  // start using this once its iterator-deferred semantics are factored.
   const classifyProviderError = (
     err: unknown,
     name: string,
     attempts: ProviderAttemptRecord[],
-    markColdFn: typeof markCold,
+    request: ChatRequest,
+    agentId: string | null,
   ): 'fallthrough' | 'rethrow' => {
-    const cooldown = cooldownFor(err)
-    if (cooldown) {
-      markColdFn(name, cooldown.cooldownMs, cooldown.reason)
-      attempts.push({ provider: name, reason: cooldown.reason })
+    if (isCloudProviderError(err)) {
+      if (!isFallbackable(err)) return 'rethrow'
+      const reason = errorReason(err)
+      monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
+      attempts.push({ provider: name, reason })
       return 'fallthrough'
     }
-    if (isGatewayError(err) && (err.code === 'queue_full' || err.code === 'circuit_open')) {
+    if (isGatewayError(err) && (err.code === 'queue_full' || err.code === 'circuit_open' || err.code === 'queue_timeout')) {
+      // Local shed — does NOT count against monitor health.
       attempts.push({ provider: name, reason: err.code })
       return 'fallthrough'
     }
-    return 'rethrow'
+    // Unknown / network error — let monitor count it toward unhealthy streak.
+    monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
+    attempts.push({ provider: name, reason: err instanceof Error ? err.message : String(err) })
+    return 'fallthrough'
   }
 
-  const cooldownFor = (err: unknown): { cooldownMs: number; reason: string } | null => {
-    if (!isCloudProviderError(err)) return null
-    if (!isFallbackable(err)) return null
-    if (err.code === 'rate_limit') {
-      return {
-        cooldownMs: err.retryAfterMs ?? rateLimitCooldownMs,
-        reason: `rate-limited${err.retryAfterMs ? ` (retry in ${Math.round(err.retryAfterMs / 1000)}s)` : ''}`,
+  const errorReason = (err: unknown): string => {
+    if (isCloudProviderError(err)) {
+      if (err.code === 'rate_limit') {
+        return `rate-limited${err.retryAfterMs ? ` (retry in ${Math.round(err.retryAfterMs / 1000)}s)` : ''}`
       }
+      if (err.code === 'quota') return 'quota exceeded'
+      if (err.code === 'provider_down') return 'provider unavailable'
+      return err.message
     }
-    if (err.code === 'quota') {
-      return {
-        cooldownMs: err.retryAfterMs ?? quotaCooldownMs,
-        reason: 'quota exceeded',
-      }
-    }
-    if (err.code === 'provider_down') {
-      return {
-        cooldownMs: err.retryAfterMs ?? providerDownCooldownMs,
-        reason: 'provider unavailable',
-      }
-    }
-    return null
+    return err instanceof Error ? err.message : String(err)
   }
 
   const callOnProvider = async (
@@ -316,14 +307,14 @@ export const createProviderRouter = (
     const attempts: ProviderAttemptRecord[] = []
 
     for (const name of candidates) {
-      if (isCold(name)) {
-        const state = cooldowns.get(name)
-        attempts.push({ provider: name, reason: state?.reason ?? 'cold' })
+      if (!mayCall(name)) {
+        attempts.push({ provider: name, reason: skipReason(name) })
         continue
       }
       try {
         const rawResponse = await callOnProvider(name, request, options, modelId)
         // Success — update soft preference + emit bound event if transition.
+        monitors[name]?.recordChatOutcome({ ok: true })
         const ctx = config.contextLookup
           ? await config.contextLookup(name, modelId).catch(() => ({ contextMax: 0, source: 'unknown' }))
           : { contextMax: 0, source: 'unknown' }
@@ -346,7 +337,7 @@ export const createProviderRouter = (
         }
         return response
       } catch (err) {
-        const decision = classifyProviderError(err, name, attempts, markCold)
+        const decision = classifyProviderError(err, name, attempts, request, agentId)
         if (decision === 'rethrow') throw err
         if (pinned) {
           emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
@@ -378,9 +369,8 @@ export const createProviderRouter = (
     const attempts: ProviderAttemptRecord[] = []
 
     for (const name of candidates) {
-      if (isCold(name)) {
-        const state = cooldowns.get(name)
-        attempts.push({ provider: name, reason: state?.reason ?? 'cold' })
+      if (!mayCall(name)) {
+        attempts.push({ provider: name, reason: skipReason(name) })
         continue
       }
       if (config.forceFailProvider === name) {
@@ -388,7 +378,7 @@ export const createProviderRouter = (
           code: 'provider_down', provider: name,
           message: `FORCE_PROVIDER_FAIL=${name} (test hook)`,
         })
-        markCold(name, providerDownCooldownMs, 'forced fail')
+        monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
         attempts.push({ provider: name, reason: 'forced fail' })
         if (pinned) {
           emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
@@ -399,43 +389,39 @@ export const createProviderRouter = (
 
       const gateway = providers[name]!
       const adjusted: ChatRequest = { ...request, model: modelId }
+
+      // Handle initial-connect failures (constructor throw OR first-next throw)
+      // through the same classifier the chat path uses. Permanent errors
+      // rethrow; fallbackable errors fall through to next candidate (unless
+      // pinned, in which case we emit all_failed and rethrow).
       let iter: AsyncIterator<StreamChunk>
       try {
         iter = gateway.stream!(adjusted, signal)[Symbol.asyncIterator]()
       } catch (err) {
-        const cooldown = cooldownFor(err)
-        if (cooldown) {
-          markCold(name, cooldown.cooldownMs, cooldown.reason)
-          attempts.push({ provider: name, reason: cooldown.reason })
-          if (pinned) {
-            emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
-            throw err
-          }
-          continue
+        const decision = classifyProviderError(err, name, attempts, request, agentId)
+        if (decision === 'rethrow') throw err
+        if (pinned) {
+          emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+          throw err
         }
-        throw err
+        continue
       }
 
-      // We have an iterator. First chunk attempt: if it throws BEFORE yielding,
-      // still treat as initial-connect failure and fall through.
       let firstChunk: IteratorResult<StreamChunk> | undefined
       try {
         firstChunk = await iter.next()
       } catch (err) {
-        const cooldown = cooldownFor(err)
-        if (cooldown) {
-          markCold(name, cooldown.cooldownMs, cooldown.reason)
-          attempts.push({ provider: name, reason: cooldown.reason })
-          if (pinned) {
-            emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
-            throw err
-          }
-          continue
+        const decision = classifyProviderError(err, name, attempts, request, agentId)
+        if (decision === 'rethrow') throw err
+        if (pinned) {
+          emit({ type: 'provider_all_failed', agentId, model: request.model, attempts })
+          throw err
         }
-        throw err
+        continue
       }
 
       // At least one chunk (or done=true). Commit to this provider.
+      monitors[name]?.recordChatOutcome({ ok: true })
       lastSuccessByModel.set(modelId, name)
       const key = agentKey(agentId, request.model)
       const prev = lastByAgentModel.get(key) ?? null
@@ -473,14 +459,16 @@ export const createProviderRouter = (
           yield await augmentDone(r.value)
         }
       } catch (err) {
-        // Mid-stream failure — surface as event, no retry.
+        // Mid-stream failure — surface as event, no retry. Record with
+        // monitor so it counts toward health (could be a flaky upstream).
         const reason = err instanceof Error ? err.message : String(err)
         emit({
           type: 'provider_stream_failed',
           agentId, model: request.model, provider: name, reason,
         })
-        const cooldown = cooldownFor(err)
-        if (cooldown) markCold(name, cooldown.cooldownMs, cooldown.reason)
+        if (isCloudProviderError(err) && isFallbackable(err)) {
+          monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
+        }
         throw err
       }
       return
@@ -529,10 +517,11 @@ export const createProviderRouter = (
     }
   }
 
-  const getCooldownState = (): Record<string, { coldUntilMs: number; reason: string } | null> => {
-    const out: Record<string, { coldUntilMs: number; reason: string } | null> = {}
+  const getMonitorSnapshot = (): Record<string, MonitorState | null> => {
+    const out: Record<string, MonitorState | null> = {}
     for (const name of order) {
-      out[name] = cooldowns.get(name) ?? null
+      const m = monitors[name]
+      out[name] = m ? m.getState() : null
     }
     return out
   }
@@ -568,7 +557,7 @@ export const createProviderRouter = (
     getOrder: () => [...order],
     setOrder,
     getAggregatedMetrics,
-    getCooldownState,
+    getMonitorSnapshot,
     dispose: () => { listeners.length = 0 },
   }
 }

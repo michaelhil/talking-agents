@@ -22,9 +22,15 @@ import {
 import { createOpenAICompatibleProvider } from '../../llm/openai-compatible.ts'
 import { isCloudProviderError } from '../../llm/errors.ts'
 import {
-  TEST_TIMEOUT_MS, runProbe, pickTestModel, computeStatus, isCloud,
-  type ProbeResult, type ProviderStatus,
+  TEST_TIMEOUT_MS, runProbe, pickTestModel, isCloud,
+  type ProbeResult,
 } from '../../llm/provider-probe.ts'
+import type { MonitorState, MonitorSubState, FailureRecord } from '../../llm/provider-monitor.ts'
+
+// Legacy 4-value status surfaced to existing UI code that hasn't yet been
+// updated to consume the richer monitor sub-state. The monitor's sub-state
+// is also returned in `monitor` so new UI can use it directly.
+type ProviderStatus = 'ok' | 'no_key' | 'cooldown' | 'down' | 'disabled'
 
 interface ProviderStatusEntry {
   readonly name: string
@@ -37,6 +43,33 @@ interface ProviderStatusEntry {
   readonly maxConcurrent: number | null
   readonly cooldown: { readonly coldUntilMs: number; readonly reason: string } | null
   readonly status: ProviderStatus
+  // Full monitor state — Phase 2/3 UI will render directly from this.
+  readonly monitor: {
+    readonly sub: MonitorSubState
+    readonly reason: string
+    readonly retryAt: number | null
+    readonly modelCount: number
+    readonly consecutiveFailures: number
+    readonly lastError: { code: string; message: string } | null
+    readonly lastErrorAt: number | null
+  } | null
+  readonly recentFailures: ReadonlyArray<FailureRecord>
+}
+
+const subToLegacyStatus = (sub: MonitorSubState | null): ProviderStatus => {
+  if (sub === null) return 'ok'
+  if (sub === 'no_key') return 'no_key'
+  if (sub === 'disabled') return 'disabled'
+  if (sub === 'down' || sub === 'unhealthy') return 'down'
+  if (sub === 'backoff') return 'cooldown'
+  return 'ok'
+}
+
+const monitorToLegacyCooldown = (
+  m: MonitorState | null,
+): { coldUntilMs: number; reason: string } | null => {
+  if (!m || m.sub !== 'backoff' || m.retryAt === null) return null
+  return { coldUntilMs: m.retryAt, reason: m.reason }
 }
 
 export const providersRoutes: RouteEntry[] = [
@@ -47,20 +80,33 @@ export const providersRoutes: RouteEntry[] = [
     handler: async (_req, _match, { system }) => {
       const { data: store, warnings } = await loadProviderStore(system.providersStorePath)
       const merged = mergeWithEnv(store)
-      const cooldowns = system.llm.getCooldownState()
+      const monitorSnap = system.llm.getMonitorSnapshot()
+      const monitors = system.monitors ?? {}
       const activeOrder = system.llm.getOrder()
       const orderLockedByEnv = !!process.env.PROVIDER_ORDER
 
       const byName = new Map<string, ProviderStatusEntry>()
 
+      const monitorPayload = (mon: MonitorState | null): ProviderStatusEntry['monitor'] =>
+        mon
+          ? {
+              sub: mon.sub,
+              reason: mon.reason,
+              retryAt: mon.retryAt,
+              modelCount: mon.modelCount,
+              consecutiveFailures: mon.consecutiveFailures,
+              lastError: mon.lastError,
+              lastErrorAt: mon.lastErrorAt,
+            }
+          : null
+
       for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
         const m = merged.cloud[name]
         if (!m) continue
-        const gw = system.gateways[name]
-        const circuitOpen = !!(gw?.getHealth().status === 'down')
         const hasKey = m.apiKey.length > 0
-        // Runtime user-enabled flag (may diverge from stored while we refactor).
         const userEnabled = system.providerKeys.isUserEnabled(name)
+        const monState = monitorSnap[name] ?? null
+        const failures = monitors[name]?.getRecentFailures() ?? []
         byName.set(name, {
           name, kind: 'cloud',
           keyMask: m.maskedKey,
@@ -69,25 +115,33 @@ export const providersRoutes: RouteEntry[] = [
           userEnabled,
           enabled: hasKey && userEnabled,
           maxConcurrent: m.maxConcurrent ?? PROVIDER_PROFILES[name].defaultMaxConcurrent,
-          cooldown: cooldowns[name] ?? null,
-          status: computeStatus('cloud', hasKey, userEnabled, cooldowns[name] ?? null, circuitOpen),
+          cooldown: monitorToLegacyCooldown(monState),
+          status: !userEnabled
+            ? 'disabled'
+            : !hasKey
+              ? 'no_key'
+              : subToLegacyStatus(monState?.sub ?? null),
+          monitor: monitorPayload(monState),
+          recentFailures: failures,
         })
       }
 
       // Ollama — no key concept, but still has a user-enabled toggle.
-      const ollamaGw = system.gateways.ollama
-      const ollamaCircuitOpen = !!(ollamaGw?.getHealth().status === 'down')
       const ollamaUserEnabled = merged.ollama.enabled
+      const ollamaMon = monitorSnap.ollama ?? null
+      const ollamaFailures = monitors.ollama?.getRecentFailures() ?? []
       byName.set('ollama', {
         name: 'ollama', kind: 'ollama',
         keyMask: '',
         source: 'none',
-        hasKey: true, // N/A — treat as "always keyed" so status reduces to user/cooldown/down
+        hasKey: true,
         userEnabled: ollamaUserEnabled,
         enabled: ollamaUserEnabled,
         maxConcurrent: merged.ollama.maxConcurrent ?? 2,
-        cooldown: cooldowns.ollama ?? null,
-        status: computeStatus('ollama', true, ollamaUserEnabled, cooldowns.ollama ?? null, ollamaCircuitOpen),
+        cooldown: monitorToLegacyCooldown(ollamaMon),
+        status: !ollamaUserEnabled ? 'disabled' : subToLegacyStatus(ollamaMon?.sub ?? null),
+        monitor: monitorPayload(ollamaMon),
+        recentFailures: ollamaFailures,
       })
 
       // Emit in router order so the UI can just render top-to-bottom.

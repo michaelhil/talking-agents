@@ -109,7 +109,7 @@ export const houseRoutes: RouteEntry[] = [
         const { data: storeData } = await loadProviderStore(system.providersStorePath)
         const merged = mergeWithEnv(storeData)
 
-        const cooldowns = system.llm.getCooldownState()
+        const monitor = system.llm.getMonitorSnapshot()
         const providers: Array<{
           name: string
           status: 'ok' | 'no_key' | 'cooldown' | 'down'
@@ -121,10 +121,14 @@ export const houseRoutes: RouteEntry[] = [
           if (name === 'ollama') continue
           const gw = system.gateways[name]
           const enabled = system.providerKeys.isEnabled(name)
-          const cool = cooldowns[name]
+          const m = monitor[name]
+          // Map the monitor's richer sub-state down to this endpoint's
+          // legacy 4-value enum so existing UI consumers keep working.
           const status: 'ok' | 'no_key' | 'cooldown' | 'down' =
             !enabled ? 'no_key' :
-            cool ? 'cooldown' :
+            m && (m.sub === 'no_key' || m.sub === 'disabled') ? 'no_key' :
+            m && (m.sub === 'down' || m.sub === 'unhealthy') ? 'down' :
+            m && m.sub === 'backoff' ? 'cooldown' :
             'ok'
 
           const reported = gw?.getHealth().availableModels ?? []
@@ -180,7 +184,8 @@ export const houseRoutes: RouteEntry[] = [
             system.ollama.models().catch(() => [] as string[]),
           ])
           const runSet = new Set(running)
-          const cool = cooldowns.ollama
+          const ollamaMon = monitor.ollama ?? null
+          const cool = ollamaMon && ollamaMon.sub === 'backoff'
           // All Ollama models are "recommended" — they're local and free, so
           // there's no reason to hide them behind "show all". Running models
           // just get an extra star.

@@ -100,6 +100,9 @@ export interface System {
   // Per-provider gateways — exposed so admin endpoints can refresh model
   // caches when keys change.
   readonly gateways: Record<string, ProviderGateway>
+  // Per-provider monitors — single source of truth for routing eligibility
+  // and the recent-failures log surfaced in the providers admin UI.
+  readonly monitors: Record<string, import('./llm/provider-monitor.ts').ProviderMonitor>
   // Refresh the cached available-models snapshot used by per-call effective-
   // model resolution. Called at boot and after any provider config change so
   // agents picking up a fallback get the latest list. Mirrors the wiki
@@ -216,7 +219,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     ...(options.providerSetup ? { providerSetup: options.providerSetup } : {}),
   })
   const { providerConfig, providerKeys, providerSetup } = shared
-  const { router: llm, ollama, ollamaRaw, gateways } = providerSetup
+  const { router: llm, ollama, ollamaRaw, gateways, monitors } = providerSetup
   const team = createTeam()
 
   const deliver: DeliverFn = (agentId, message) => {
@@ -825,7 +828,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
 
   const system: System = {
     house, team, routeMessage,
-    llm, ollama, providerConfig, providerKeys, gateways,
+    llm, ollama, providerConfig, providerKeys, gateways, monitors,
     refreshAvailableModels,
     toolRegistry, refreshAllAgentTools, skillStore, skillsDir,
     scriptStore, scriptsDir,

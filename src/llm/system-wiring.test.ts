@@ -65,6 +65,7 @@ const makeSetup = (gateways: Record<string, ProviderGateway>, order: string[]): 
   return {
     router,
     gateways,
+    monitors: {},
     dispose: () => router.dispose(),
   }
 }

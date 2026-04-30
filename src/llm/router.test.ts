@@ -3,6 +3,24 @@ import type { ChatRequest, ChatResponse, StreamChunk, ProviderHealth, GatewayMet
 import type { ProviderGateway } from './provider-gateway.ts'
 import { createProviderRouter, parseProviderPrefix, type ProviderRoutingEvent } from './router.ts'
 import { createCloudProviderError } from './errors.ts'
+import { createProviderMonitor, type ProviderMonitor } from './provider-monitor.ts'
+
+// Helper: build a fake-monitor map for the given provider names so the
+// router enforces cooldown / unhealthy state. Tests that don't care about
+// monitor state can omit this and the router behaves as "always allow".
+const monitorsFor = (
+  names: ReadonlyArray<string>,
+  now: () => number = Date.now,
+): Record<string, ProviderMonitor> => {
+  const out: Record<string, ProviderMonitor> = {}
+  for (const n of names) {
+    out[n] = createProviderMonitor(
+      { name: n, kind: 'cloud', hasKey: () => true, isUserEnabled: () => true },
+      { now },
+    )
+  }
+  return out
+}
 
 // === Fake gateway — implements ProviderGateway with scriptable behaviour ===
 
@@ -125,14 +143,15 @@ describe('createProviderRouter — failover', () => {
       availableModels: ['m'],
     })
     const b = createFakeGateway({ availableModels: ['m'] })
-    const router = createProviderRouter({ a, b }, { order: ['a', 'b'] })
+    const monitors = monitorsFor(['a', 'b'])
+    const router = createProviderRouter({ a, b }, { order: ['a', 'b'], monitors })
     const r = await router.chat(chatReq('m'))
     expect(r.content).toBe('default')
     expect(a.callCount()).toBe(1)
     expect(b.callCount()).toBe(1)
-    expect(a.externalFailCount()).toBe(1)
-    const cooldown = router.getCooldownState()
-    expect(cooldown.a).not.toBeNull()
+    const snap = router.getMonitorSnapshot()
+    expect(snap.a?.sub).toBe('backoff')
+    expect(snap.a?.retryAt).not.toBeNull()
   })
 
   test('auth error propagates without fallback', async () => {
@@ -159,8 +178,9 @@ describe('createProviderRouter — failover', () => {
       availableModels: ['m'],
     })
     const b = createFakeGateway({ availableModels: ['m'] })
+    const monitors = monitorsFor(['a', 'b'], () => fakeTime)
     const router = createProviderRouter(
-      { a, b }, { order: ['a', 'b'] },
+      { a, b }, { order: ['a', 'b'], monitors },
       { now: () => fakeTime },
     )
     await router.chat(chatReq('m'))                  // 'a' fails → 'b' serves

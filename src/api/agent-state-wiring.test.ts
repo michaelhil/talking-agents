@@ -101,7 +101,7 @@ const makeStubGateway = (): ProviderGateway => {
 
 const makeSetup = (gateway: ProviderGateway): ProviderSetupResult => {
   const router = createProviderRouter({ stub: gateway }, { order: ['stub'] })
-  return { router, gateways: { stub: gateway }, dispose: () => router.dispose() }
+  return { router, gateways: { stub: gateway }, monitors: {}, dispose: () => router.dispose() }
 }
 
 describe('per-agent state subscription is wired for every spawn path', () => {
