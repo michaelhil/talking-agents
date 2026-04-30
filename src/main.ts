@@ -626,11 +626,40 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       availableModelsCache = [...fromRouter, ...fromOllama]
     } catch { /* keep prior cache on transient failure */ }
   }
+  // Match preferred against the cache and return the canonical form to send
+  // to the router. The router's resolveCandidates filters providers by
+  // exact-match against each gateway's `availableModels`, which for some
+  // providers (Anthropic) contains dated full IDs (`claude-haiku-4-5-20251001`)
+  // not friendly aliases (`claude-haiku-4-5`). A bare alias passed to the
+  // router would find zero eligible providers and fail with "All providers
+  // failed" even though the provider is healthy.
+  //
+  // Three resolutions in priority order:
+  //   1. Direct hit — preferred is verbatim in the cache; use as-is.
+  //   2. Suffix match — bare `claude-haiku-4-5` ↔ `anthropic:claude-haiku-4-5`
+  //      (provider reports the alias verbatim).
+  //   3. Versioned variant — bare `claude-haiku-4-5` ↔
+  //      `anthropic:claude-haiku-4-5-20251001` (provider reports dated ID).
+  //      Return the cached prefixed form; router pins to the provider and
+  //      sends the dated ID, which the gateway recognises in availableModels.
+  const findInCache = (preferred: string): string | undefined => {
+    if (availableModelsCache.includes(preferred)) return preferred
+    if (preferred.includes(':')) return undefined
+    const suffixHit = availableModelsCache.find(c => c.endsWith(`:${preferred}`))
+    if (suffixHit) return suffixHit
+    return availableModelsCache.find(c => c.includes(`:${preferred}-`))
+  }
   const resolveEffectiveModel: SpawnOptions['resolveEffectiveModel'] = (preferred) => {
-    const isAvailable = (m: string): boolean => availableModelsCache.includes(m)
-    // Fallback = first model in cache (router emits in priority order).
+    const match = findInCache(preferred)
+    if (match) {
+      return {
+        model: match,
+        fallback: match !== preferred,  // versioned-variant counts as fallback for telemetry
+        reason: 'preferred_available',
+      }
+    }
     const fallback = availableModelsCache[0] ?? ''
-    return resolveEffectiveModelFn(preferred, isAvailable, fallback)
+    return resolveEffectiveModelFn(preferred, () => false, fallback)
   }
 
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
@@ -822,10 +851,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     limitMetrics: shared.limitMetrics,
   }
   systemRef.current = system
-  // Populate the available-models cache before any agent eval runs. Fire and
-  // forget — first eval's resolver returns identity if the cache is still cold,
-  // which falls through cleanly to Phase 1's typed error if the model is
-  // genuinely unreachable.
+  // Kick off the cache refresh. Race with the very first eval is benign —
+  // an empty cache returns `{ model: preferred, ... }` and the router can
+  // route bare cloud names by trying each provider in order. The cache
+  // accelerates subsequent calls and enables proper fallback when a
+  // provider goes down mid-session.
   void refreshAvailableModels()
   return system
 }

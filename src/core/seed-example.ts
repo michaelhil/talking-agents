@@ -18,9 +18,33 @@
 // ============================================================================
 
 import type { System } from '../main.ts'
+import { CURATED_MODELS } from '../llm/models/catalog.ts'
+import { resolveDefaultModel, type ProviderSnapshot } from '../llm/models/default-resolver.ts'
 
-// Default model for the seeded AI agent. Override via SAMSINN_SEED_MODEL.
-const SEED_MODEL = process.env.SAMSINN_SEED_MODEL || 'claude-haiku-4-5'
+// Pick the seed model from live provider state so a fresh instance lands on
+// a provider the user actually has a key for. Walks the same preference
+// order /api/models uses, but treats only enabled providers as candidates —
+// avoids the historical bug where the seed hardcoded `claude-haiku-4-5` and
+// fresh instances on Gemini-only setups failed every first eval.
+//
+// Override with SAMSINN_SEED_MODEL when you want a specific model regardless
+// of provider state.
+const pickSeedModel = (system: System): string => {
+  const override = process.env.SAMSINN_SEED_MODEL
+  if (override && override.trim()) return override.trim()
+  // Build snapshots: `ok` iff the provider has an effective key (cloud) or
+  // is configured (ollama). Cooldowns aren't meaningful at seed time.
+  const names = new Set<string>([...Object.keys(CURATED_MODELS), 'ollama'])
+  const providers: ProviderSnapshot[] = [...names].map(name => {
+    const enabled = name === 'ollama' ? !!system.ollama : system.providerKeys.isEnabled(name)
+    return {
+      name,
+      status: enabled ? 'ok' : 'no_key',
+      models: (CURATED_MODELS[name] ?? []).map(m => ({ id: m.id })),
+    }
+  })
+  return resolveDefaultModel(providers) || 'gemini-2.5-flash'
+}
 
 const AI_PERSONA = [
   'You are AI, a friendly companion in the Cafe.',
@@ -68,7 +92,7 @@ export const seedFreshInstance = async (system: System): Promise<void> => {
 
     const ai = await system.spawnAIAgent({
       name: SEED_AI_NAME,
-      model: SEED_MODEL,
+      model: pickSeedModel(system),
       persona: AI_PERSONA,
     })
 

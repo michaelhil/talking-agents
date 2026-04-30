@@ -56,9 +56,14 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
 }
 
 // Preferred default picks for a fresh system, in order. Used by /api/models
-// when no last-used model is available.
+// when no last-used model is available, and by the seed flow.
+//
+// Gemini first because its free tier is the most generous of the major
+// providers — a developer who only has a Gemini key gets a working default
+// instead of a broken Anthropic-flavoured one. Anthropic and the rest stay
+// as fallbacks if Gemini isn't keyed.
 export const DEFAULT_PREFERENCE_ORDER: ReadonlyArray<CloudProviderName | 'ollama'> = [
-  'anthropic', 'gemini', 'groq', 'cerebras',
+  'gemini', 'anthropic', 'groq', 'cerebras',
 ]
 
 export const isCuratedModel = (provider: string, modelId: string): boolean => {
