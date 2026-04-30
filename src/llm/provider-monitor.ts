@@ -95,6 +95,12 @@ export interface ProviderMonitor {
       | { ok: false; error: unknown; model?: string; agentId?: string | null },
   ) => void
   readonly recordHeartbeat: (ok: boolean, modelCount?: number, error?: unknown) => void
+  // Force the monitor into 'unhealthy' with a specific reason, bypassing the
+  // streak threshold. Used by explicit test calls (Providers panel "Test"
+  // button): when the user-initiated test fails with a permanent error like
+  // auth, that's authoritative — one failed test means the key is broken,
+  // there's no point waiting for 5 consecutive failures.
+  readonly markUnhealthy: (reason: string, code?: string) => void
   readonly setHasKey: (has: boolean) => void
   readonly setUserEnabled: (enabled: boolean) => void
   // Replace the isActive predicate after construction. Bootstrap uses this
@@ -345,6 +351,12 @@ export const createProviderMonitor = (
   const setUserEnabled = (_: boolean): void => { refreshStaticIfNeeded() }
   const setIsActive = (fn: () => boolean): void => { isActive = fn }
 
+  const markUnhealthy = (reason: string, code: string = 'test_failed'): void => {
+    state = { ...state, lastError: { code, message: reason }, lastErrorAt: now() }
+    transitionToUnhealthy(reason)
+    scheduleNextHeartbeat()
+  }
+
   const recordFailure = (entry: Omit<FailureRecord, 'when' | 'provider'>): void => {
     pushFailure(entry)
   }
@@ -461,6 +473,7 @@ export const createProviderMonitor = (
     getState: getStateLive,
     recordChatOutcome,
     recordHeartbeat,
+    markUnhealthy,
     setHasKey,
     setUserEnabled,
     setIsActive,

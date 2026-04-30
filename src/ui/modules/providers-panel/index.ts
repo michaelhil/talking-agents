@@ -231,6 +231,36 @@ const refresh = async (): Promise<void> => {
   } catch { /* ignore transient fetch errors */ }
 }
 
+// Run /api/providers/:name/test for every provider currently shown, in
+// sequence (avoid hammering all upstreams in parallel). Each result pushes
+// into the monitor (server-side) and triggers a providers_changed broadcast,
+// so the panel rerenders automatically — no manual refresh needed here.
+const testAll = async (): Promise<void> => {
+  const btn = document.getElementById('providers-test-all') as HTMLButtonElement | null
+  if (btn) { btn.disabled = true; btn.textContent = 'Testing…' }
+  try {
+    const res = await fetch('/api/providers')
+    if (!res.ok) return
+    const data = await res.json() as ProvidersResponse
+    let ok = 0, fail = 0
+    for (const p of data.providers) {
+      // Skip no_key cloud providers — there's nothing to test.
+      if (p.kind === 'cloud' && !p.hasKey) continue
+      try {
+        const r = await testKey(p.name)
+        if (r.ok) ok++
+        else fail++
+      } catch { fail++ }
+    }
+    showToast(document.body, `Tested ${ok + fail} providers — ${ok} ok, ${fail} failed`,
+      { type: fail === 0 ? 'success' : 'error', position: 'fixed' })
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Test all' }
+    // Force one final refresh in case the WS broadcast was missed.
+    await refresh()
+  }
+}
+
 export const startProvidersPanel = async (): Promise<void> => {
   await refresh()
   if (pollTimer !== undefined) window.clearInterval(pollTimer)
@@ -242,6 +272,15 @@ export const startProvidersPanel = async (): Promise<void> => {
   if (!changeListener) {
     changeListener = () => { void refresh() }
     window.addEventListener('providers-changed', changeListener)
+  }
+
+  // Wire the Test-all header button. Idempotent — replaceWith clears any
+  // listener attached on a previous open.
+  const oldBtn = document.getElementById('providers-test-all')
+  if (oldBtn) {
+    const fresh = oldBtn.cloneNode(true) as HTMLButtonElement
+    oldBtn.parentNode?.replaceChild(fresh, oldBtn)
+    fresh.addEventListener('click', () => { void testAll() })
   }
 }
 

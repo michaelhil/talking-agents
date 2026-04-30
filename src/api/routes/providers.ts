@@ -390,13 +390,16 @@ export const providersRoutes: RouteEntry[] = [
         const t0 = performance.now()
         try {
           const resp = await raw.chat({ model, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1, temperature: 0 })
+          system.monitors.ollama?.recordHeartbeat(true)
           return json({
             ok: true, elapsedMs: Math.round(performance.now() - t0),
             usage: resp.tokensUsed ?? null,
           })
         } catch (err) {
           const elapsedMs = Math.round(performance.now() - t0)
-          return json({ ok: false, error: err instanceof Error ? err.message : String(err), elapsedMs })
+          const reason = err instanceof Error ? err.message : String(err)
+          system.monitors.ollama?.markUnhealthy(reason.slice(0, 200), 'test_failed')
+          return json({ ok: false, error: reason, elapsedMs })
         }
       }
 
@@ -420,6 +423,7 @@ export const providersRoutes: RouteEntry[] = [
       const t0 = performance.now()
       try {
         const resp = await provider.chat({ model, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1, temperature: 0 })
+        system.monitors[name]?.recordHeartbeat(true)
         return json({
           ok: true, elapsedMs: Math.round(performance.now() - t0),
           usage: resp.tokensUsed ?? null,
@@ -432,6 +436,7 @@ export const providersRoutes: RouteEntry[] = [
         // upstream content) doesn't get echoed back to the client wholesale.
         if (reason.length > 500) reason = reason.slice(0, 500) + '… [truncated]'
         const code = isCloudProviderError(err) ? err.code : 'error'
+        system.monitors[name]?.markUnhealthy(reason.slice(0, 200), code)
         return json({ ok: false, error: reason, code, elapsedMs })
       }
     },
@@ -441,7 +446,7 @@ export const providersRoutes: RouteEntry[] = [
   {
     method: 'POST',
     pattern: /^\/api\/providers\/([^/]+)\/test$/,
-    handler: async (req, match, { system }) => {
+    handler: async (req, match, { system, broadcast }) => {
       const name = decodeURIComponent(match[1] ?? '')
 
       // Ollama: ping /models, then run a concurrency probe against the
@@ -457,6 +462,10 @@ export const providersRoutes: RouteEntry[] = [
         } catch (err) {
           const elapsedMs = Math.round(performance.now() - startedAt)
           const reason = err instanceof Error ? err.message : String(err)
+          // Same as the cloud branch: surface the test failure in monitor
+          // state so the panel dot turns red instead of staying green.
+          system.monitors.ollama?.markUnhealthy(reason.slice(0, 200), 'test_failed')
+          try { broadcast({ type: 'providers_changed', providers: ['ollama'] }) } catch { /* ignore */ }
           return json({ ok: false, error: reason, elapsedMs })
         }
         const elapsedMs = Math.round(performance.now() - startedAt)
@@ -476,6 +485,18 @@ export const providersRoutes: RouteEntry[] = [
           async (m) => { await raw.chat({ model: m, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1, temperature: 0 }) },
           model, target, TEST_TIMEOUT_MS,
         )
+
+        // Reflect probe result in monitor state.
+        const ollamaMon = system.monitors.ollama
+        if (ollamaMon) {
+          if (probe.succeeded > 0) {
+            ollamaMon.recordHeartbeat(true, models.length)
+          } else {
+            const top = Object.entries(probe.byFailure).sort(([, a], [, b]) => b - a)[0]
+            ollamaMon.markUnhealthy(top ? `test probe failed (${top[0]})` : 'test probe failed', top?.[0] ?? 'test_failed')
+          }
+          try { broadcast({ type: 'providers_changed', providers: ['ollama'] }) } catch { /* ignore */ }
+        }
 
         return json({
           ok: probe.succeeded > 0,
@@ -530,6 +551,14 @@ export const providersRoutes: RouteEntry[] = [
         if (apiKey) reason = reason.split(apiKey).join('•••REDACTED•••')
         let code: string = 'error'
         if (isCloudProviderError(err)) code = err.code
+        // Surface the test result in monitor state. A failed user-initiated
+        // test is authoritative — we don't need to wait for a streak. This
+        // is what fixes "anthropic shows green even though Test returns
+        // red": the monitor's rate-limit/streak logic doesn't apply to
+        // permanent errors like auth, so without this push the dot stays
+        // green forever despite a broken key.
+        system.monitors[name]?.markUnhealthy(reason.slice(0, 200), code)
+        try { broadcast({ type: 'providers_changed', providers: [name] }) } catch { /* ignore */ }
         return json({ ok: false, error: reason, code, elapsedMs })
       }
       const elapsedMs = Math.round(performance.now() - startedAt)
@@ -551,6 +580,23 @@ export const providersRoutes: RouteEntry[] = [
           async (m) => { await provider.chat({ model: m, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1, temperature: 0 }) },
           model, target, TEST_TIMEOUT_MS,
         )
+      }
+
+      // Push the test result into the monitor so the dot reflects what the
+      // user just saw. Success → record a healthy heartbeat (clears any
+      // prior backoff/unhealthy). Failure → mark unhealthy with the most
+      // common failure reason from the probe.
+      const monitor = system.monitors[name]
+      if (monitor) {
+        if (!concurrency || concurrency.succeeded > 0) {
+          monitor.recordHeartbeat(true, list.length)
+        } else {
+          const topFailure = Object.entries(concurrency.byFailure)
+            .sort(([, a], [, b]) => b - a)[0]
+          const reason = topFailure ? `test probe failed (${topFailure[0]})` : 'test probe failed'
+          monitor.markUnhealthy(reason, topFailure?.[0] ?? 'test_failed')
+        }
+        try { broadcast({ type: 'providers_changed', providers: [name] }) } catch { /* ignore */ }
       }
 
       return json({
