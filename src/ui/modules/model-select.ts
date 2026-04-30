@@ -14,6 +14,9 @@ interface ModelCatalogModel {
 interface ModelCatalogProvider {
   name: string
   status: 'ok' | 'no_key' | 'cooldown' | 'down'
+  // Optional richer fields from the monitor — present on newer servers.
+  reason?: string
+  retryAt?: number | null
   models: ModelCatalogModel[]
 }
 
@@ -41,11 +44,30 @@ const formatContext = (n: number): string => {
 const fullModelId = (providerName: string, modelId: string): string =>
   providerName === 'ollama' ? modelId : `${providerName}:${modelId}`
 
-const statusLabel = (status: ModelCatalogProvider['status']): string => {
-  if (status === 'ok') return ''
-  if (status === 'no_key') return ' (no key)'
-  if (status === 'cooldown') return ' (cooldown)'
+// Brief inline tag shown next to the optgroup label. Falls back to the
+// status word; uses the monitor's reason when available so a rate-limited
+// provider says e.g. "rate-limited (retry in 47s)" instead of "cooldown".
+const statusLabel = (provider: ModelCatalogProvider): string => {
+  if (provider.status === 'ok') return ''
+  if (provider.status === 'no_key') return ' (no API key)'
+  if (provider.status === 'cooldown') {
+    if (provider.retryAt !== null && provider.retryAt !== undefined) {
+      const remaining = Math.max(0, Math.round((provider.retryAt - Date.now()) / 1000))
+      return ` (cooldown — ${remaining}s)`
+    }
+    return ' (cooldown)'
+  }
   return ' (down)'
+}
+
+// User-facing remediation hint as a per-option tooltip. Same source of
+// truth as the toast remediation strings but UI-local because the dropdown
+// fetches from /api/models, not /api/providers.
+const remediationHint = (status: ModelCatalogProvider['status'], providerName: string): string => {
+  if (status === 'no_key') return `Add an API key for ${providerName} in the Providers panel`
+  if (status === 'cooldown') return `${providerName} is rate-limited — wait for the cooldown to expire or pick a model on a different provider`
+  if (status === 'down') return `${providerName} is unavailable — try again or switch providers`
+  return ''
 }
 
 const fetchModelCatalog = async (): Promise<ModelCatalogResponse> => {
@@ -78,19 +100,31 @@ export const populateModelSelect = async (
 
   select.innerHTML = ''
 
-  const visible = data.providers.filter(p => p.status !== 'no_key')
-
-  if (visible.length === 0) {
+  if (data.providers.length === 0) {
     select.innerHTML = '<option value="">No providers configured</option>'
     return ''
   }
 
-  const all: string[] = []
-  for (const prov of visible) {
+  // Two-bucket render: routable providers (ok/cooldown) first, structurally
+  // unavailable ones (no_key/down) at the bottom. Unavailable groups render
+  // with an actionable label so the user sees *why* they can't pick a
+  // particular model — and how to fix it — rather than the model just
+  // being missing from the list.
+  //
+  // Both buckets are populated; only ok/cooldown options are routable and
+  // get added to the eligible-for-selection set. no_key/down options are
+  // shown but disabled, with a tooltip explaining the remediation step.
+  const routable: string[] = []
+  const orderedProviders = [
+    ...data.providers.filter(p => p.status === 'ok' || p.status === 'cooldown'),
+    ...data.providers.filter(p => p.status === 'no_key' || p.status === 'down'),
+  ]
+  for (const prov of orderedProviders) {
     const models = showAll ? prov.models : prov.models.filter(m => m.recommended)
     if (models.length === 0) continue
     const group = document.createElement('optgroup')
-    group.label = `${prov.name}${statusLabel(prov.status)}`
+    group.label = `${prov.name}${statusLabel(prov)}`
+    const tooltip = remediationHint(prov.status, prov.name)
     for (const m of models) {
       const opt = document.createElement('option')
       const full = fullModelId(prov.name, m.id)
@@ -102,27 +136,42 @@ export const populateModelSelect = async (
       opt.textContent = ctx
         ? `${pinTag}${label} · ${ctx}${runTag}`
         : `${pinTag}${label}${runTag}`
+      if (tooltip) opt.title = tooltip
       if (prov.status === 'cooldown' || prov.status === 'down') opt.classList.add('text-text-muted')
+      if (prov.status === 'no_key' || prov.status === 'down') {
+        // Disable so the user can't pick a model that has no chance of
+        // routing right now. cooldown stays selectable — it'll recover.
+        opt.disabled = true
+        opt.classList.add('text-text-muted', 'opacity-60')
+      } else {
+        routable.push(full)
+      }
       group.appendChild(opt)
-      all.push(full)
     }
     select.appendChild(group)
   }
 
-  if (all.length === 0) {
-    select.innerHTML = '<option value="">No models available</option>'
+  if (routable.length === 0) {
+    // Everything was unavailable. Keep groups visible (so user sees why)
+    // but prepend a clear placeholder.
+    const placeholder = document.createElement('option')
+    placeholder.value = ''
+    placeholder.textContent = 'No routable models — add an API key in the Providers panel'
+    placeholder.disabled = true
+    placeholder.selected = true
+    select.insertBefore(placeholder, select.firstChild)
     return ''
   }
 
-  const chosen = (options.preferredModel && all.includes(options.preferredModel))
+  const chosen = (options.preferredModel && routable.includes(options.preferredModel))
     ? options.preferredModel
-    : (data.defaultModel && all.includes(data.defaultModel) ? data.defaultModel : all[0]!)
+    : (data.defaultModel && routable.includes(data.defaultModel) ? data.defaultModel : routable[0]!)
   select.value = chosen
 
   // If the preferred model wasn't in the list (e.g. a legacy Ollama model), add
   // it at the top as "(not available)" so the user can still see the current
   // value.
-  if (options.preferredModel && !all.includes(options.preferredModel)) {
+  if (options.preferredModel && !routable.includes(options.preferredModel)) {
     const opt = document.createElement('option')
     opt.value = options.preferredModel
     opt.textContent = `${options.preferredModel} (not available)`

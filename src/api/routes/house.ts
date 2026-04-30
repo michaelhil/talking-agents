@@ -113,6 +113,10 @@ export const houseRoutes: RouteEntry[] = [
         const providers: Array<{
           name: string
           status: 'ok' | 'no_key' | 'cooldown' | 'down'
+          // Optional richer fields surfaced for the model-select dropdown's
+          // tooltip + countdown — older clients ignore them.
+          reason?: string
+          retryAt?: number | null
           models: Array<{ id: string; contextMax: number; recommended: boolean; pinned?: boolean; running?: boolean; label?: string }>
         }> = []
 
@@ -173,7 +177,11 @@ export const houseRoutes: RouteEntry[] = [
             const ctx = getContextWindowSync(name, id)
             models.push({ id, contextMax: ctx.contextMax, recommended: false, pinned: pinnedSet.has(id) })
           }
-          providers.push({ name, status, models })
+          providers.push({
+            name, status, models,
+            ...(m && m.reason ? { reason: m.reason } : {}),
+            ...(m && m.retryAt !== null ? { retryAt: m.retryAt } : {}),
+          })
           void PROVIDER_PROFILES
         }
 
@@ -200,6 +208,8 @@ export const houseRoutes: RouteEntry[] = [
           providers.push({
             name: 'ollama',
             status: cool ? 'cooldown' : (all.length === 0 ? 'down' : 'ok'),
+            ...(ollamaMon && ollamaMon.reason ? { reason: ollamaMon.reason } : {}),
+            ...(ollamaMon && ollamaMon.retryAt !== null ? { retryAt: ollamaMon.retryAt } : {}),
             models,
           })
         }
