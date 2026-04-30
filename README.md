@@ -43,6 +43,7 @@ Open **http://localhost:3000** in your browser, enter your name, and you're in.
 |---|---|---|
 | [Bun](https://bun.sh) | ≥ 1.0 | Runtime and package manager |
 | [Ollama](https://ollama.ai) | optional | Runs AI models locally; remote via `OLLAMA_URL` |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | optional | OpenAI-compatible local server; URL via `LLAMACPP_BASE_URL` (default `http://localhost:8080`). Run with `llama-server -m model.gguf -ngl -1 -c 8192 -np 2 --port 8080`. No API key required by default; pass `--api-key <key>` to llama-server and set `LLAMACPP_API_KEY` to require auth. `cache_prompt: true` is llama.cpp's default — repeated room context reuses the KV cache automatically. Tool-using agents may fail depending on the model + llama-server build (the chat template must support tool calls); the failure surfaces as a meaningful error toast. |
 
 Cloud providers (Anthropic, Gemini, Groq, Cerebras, OpenRouter, Mistral, SambaNova) are also supported via API keys configurable in Settings → Providers and stored at `$SAMSINN_HOME/providers.json` (mode 0600). Ollama-only is fine — keys are optional and never required to start.
 
@@ -333,7 +334,9 @@ All supported cloud providers only require email (or SSO) signup — no credit c
 | `OPENROUTER_API_KEY` | — | Enables OpenRouter free tier (DeepSeek R1, Llama 3.3 70B, ...) |
 | `MISTRAL_API_KEY` | — | Enables Mistral La Plateforme (EU-based) |
 | `SAMBANOVA_API_KEY` | — | Enables SambaNova Cloud |
-| `<NAME>_MAX_CONCURRENT` | 2 (Cerebras), 3 (Groq), 1 (OpenRouter), 2 (Mistral/SambaNova) | Max concurrent requests per provider |
+| `LLAMACPP_BASE_URL` | `http://localhost:8080` | URL of a `llama-server` instance. No key required by default. |
+| `LLAMACPP_API_KEY` | — | Set if `llama-server` was launched with `--api-key`. |
+| `<NAME>_MAX_CONCURRENT` | 2 (Cerebras), 3 (Groq), 1 (OpenRouter), 2 (Mistral/SambaNova), 1 (llama.cpp) | Max concurrent requests per provider |
 | `FORCE_PROVIDER_FAIL` | — | Test hook — forces the named provider to fail (exercises failover) |
 
 **Model names** can be bare (`llama-3.3-70b`) — the router tries each provider in order, skipping ones that don't serve it — or provider-prefixed (`groq:llama-3.3-70b`) to pin to a specific provider with no failover. OpenRouter slugs with colons work because the prefix parser splits on the **first** colon only (`openrouter:meta-llama/llama-3.3-70b-instruct:free`).

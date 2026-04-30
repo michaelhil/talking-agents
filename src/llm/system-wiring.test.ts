@@ -74,6 +74,7 @@ const baseConfig = {
   order: ['a', 'b'] as ReadonlyArray<string>,
   ollamaUrl: '',
   ollamaMaxConcurrent: 2,
+  baseUrls: {},
   cloud: {},
   ollamaOnly: false,
   forceFailProvider: null,

@@ -65,6 +65,7 @@ const startProviderFixture = (
 const baseProviderConfig = (overrides: Partial<ProviderConfig>): ProviderConfig => ({
   ollamaUrl: '',
   ollamaMaxConcurrent: 2,
+  baseUrls: {},
   cloud: {},
   ollamaOnly: false,
   forceFailProvider: null,

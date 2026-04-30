@@ -47,7 +47,7 @@ describe('seed plumbing — OpenAI-compatible adapter', () => {
   test('seed omitted when unset — body is byte-identical to pre-seed baseline', async () => {
     const provider = createOpenAICompatibleProvider({
       name: 'test',
-      baseUrl: 'http://local.test/v1',
+      getBaseUrl: () => 'http://local.test/v1',
       getApiKey: () => 'k',
     })
     await provider.chat({
@@ -63,7 +63,7 @@ describe('seed plumbing — OpenAI-compatible adapter', () => {
   test('seed emitted when set', async () => {
     const provider = createOpenAICompatibleProvider({
       name: 'test',
-      baseUrl: 'http://local.test/v1',
+      getBaseUrl: () => 'http://local.test/v1',
       getApiKey: () => 'k',
     })
     await provider.chat({

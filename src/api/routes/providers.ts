@@ -17,7 +17,7 @@ import {
   type ProvidersFileShape, type StoredCloudEntry,
 } from '../../llm/providers-store.ts'
 import {
-  PROVIDER_PROFILES, type CloudProviderName,
+  PROVIDER_PROFILES, type CloudProviderName, isLocal,
 } from '../../llm/providers-config.ts'
 import { createOpenAICompatibleProvider } from '../../llm/openai-compatible.ts'
 import { isCloudProviderError } from '../../llm/errors.ts'
@@ -40,6 +40,10 @@ interface ProviderStatusEntry {
   readonly enabled: boolean            // effective (has key AND userEnabled)
   readonly userEnabled: boolean        // user intent, independent of key
   readonly hasKey: boolean
+  // Local providers (llamacpp): URL-configurable, no key required. UI uses
+  // this flag to render a URL field instead of a key field on the row.
+  readonly isLocal: boolean
+  readonly baseUrl?: string
   readonly maxConcurrent: number | null
   readonly cooldown: { readonly coldUntilMs: number; readonly reason: string } | null
   readonly status: ProviderStatus
@@ -107,18 +111,23 @@ export const providersRoutes: RouteEntry[] = [
         const userEnabled = system.providerKeys.isUserEnabled(name)
         const monState = monitorSnap[name] ?? null
         const failures = monitors[name]?.getRecentFailures() ?? []
+        const local = isLocal(name)
         byName.set(name, {
           name, kind: 'cloud',
           keyMask: m.maskedKey,
           source: m.source,
           hasKey,
+          isLocal: local,
+          ...(local ? { baseUrl: m.baseUrl ?? PROVIDER_PROFILES[name].baseUrl } : {}),
           userEnabled,
-          enabled: hasKey && userEnabled,
+          // Local providers are "enabled" once user-enabled — no key required.
+          enabled: local ? userEnabled : (hasKey && userEnabled),
           maxConcurrent: m.maxConcurrent ?? PROVIDER_PROFILES[name].defaultMaxConcurrent,
           cooldown: monitorToLegacyCooldown(monState),
+          // Status mapping: local providers can't be 'no_key' (don't need one).
           status: !userEnabled
             ? 'disabled'
-            : !hasKey
+            : (!hasKey && !local)
               ? 'no_key'
               : subToLegacyStatus(monState?.sub ?? null),
           monitor: monitorPayload(monState),
@@ -135,6 +144,7 @@ export const providersRoutes: RouteEntry[] = [
         keyMask: '',
         source: 'none',
         hasKey: true,
+        isLocal: true,
         userEnabled: ollamaUserEnabled,
         enabled: ollamaUserEnabled,
         maxConcurrent: merged.ollama.maxConcurrent ?? 2,
@@ -227,6 +237,21 @@ export const providersRoutes: RouteEntry[] = [
         if (body.maxConcurrent > 100) return errorResponse('maxConcurrent must be ≤ 100')
         ;(patch as { maxConcurrent?: number }).maxConcurrent = body.maxConcurrent
       }
+      if ('baseUrl' in body) {
+        // Only meaningful for local providers (llamacpp). Cloud providers
+        // ignore — their baseUrl is fixed in PROVIDER_PROFILES.
+        if (!isLocal(name)) return errorResponse('baseUrl is only configurable for local providers')
+        if (body.baseUrl === null || body.baseUrl === '') {
+          (patch as { baseUrl?: string }).baseUrl = ''
+        } else if (typeof body.baseUrl === 'string') {
+          const trimmed = body.baseUrl.trim()
+          // Sanity-check that it parses; reject early to avoid persisting garbage.
+          try { new URL(trimmed) } catch { return errorResponse('baseUrl must be a valid URL') }
+          ;(patch as { baseUrl?: string }).baseUrl = trimmed
+        } else {
+          return errorResponse('baseUrl must be a string or null')
+        }
+      }
       if ('pinnedModels' in body) {
         if (body.pinnedModels === null) {
           (patch as { pinnedModels?: ReadonlyArray<string> }).pinnedModels = []
@@ -256,6 +281,16 @@ export const providersRoutes: RouteEntry[] = [
       }
       await saveProviderStore(system.providersStorePath, next)
 
+      // Apply baseUrl change to the live providerConfig so the OAI adapter's
+      // getBaseUrl closure (created at boot) picks up the new URL on the next
+      // request. The closure re-reads `config.baseUrls[name]` each call.
+      if ('baseUrl' in body && isLocal(name)) {
+        const liveBaseUrls = system.providerConfig.baseUrls as Record<string, string | undefined>
+        const trimmed = (patch as { baseUrl?: string }).baseUrl ?? ''
+        if (trimmed) liveBaseUrls[name] = trimmed
+        else delete liveBaseUrls[name]
+      }
+
       // Apply immediately to the running system:
       //   - Cloud providers: mutate the in-memory keys registry; gateways pick
       //     up the new key on the next request.
@@ -275,8 +310,10 @@ export const providersRoutes: RouteEntry[] = [
           system.providerKeys.setEnabled(name, true)
         }
         // Fire-and-forget a model-list refresh so the dropdown populates.
+        // Local providers (llamacpp) refresh on key OR baseUrl change so the
+        // user sees the loaded model immediately after pointing at a new URL.
         const gw = system.gateways[name]
-        if (gw && nextKey) {
+        if (gw && (nextKey || (isLocal(name) && 'baseUrl' in body))) {
           void gw.refreshModels().catch(() => { /* swallow — UI will surface */ })
         }
       } else {
@@ -408,14 +445,17 @@ export const providersRoutes: RouteEntry[] = [
       const { data: storeLocal } = await loadProviderStore(system.providersStorePath)
       const mergedLocal = mergeWithEnv(storeLocal)
       const apiKey = mergedLocal.cloud[name]?.apiKey ?? ''
-      if (!apiKey) return json({ ok: false, error: 'No API key stored', elapsedMs: 0 })
+      if (!apiKey && !isLocal(name)) return json({ ok: false, error: 'No API key stored', elapsedMs: 0 })
 
       const authHeaders = name === 'anthropic'
         ? () => ({ 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' })
         : undefined
+      // Honour the stored baseUrl for local providers so the test hits the
+      // user's actual endpoint (e.g. a remote llama.cpp box).
+      const effectiveBaseUrl = mergedLocal.cloud[name]?.baseUrl ?? PROVIDER_PROFILES[name].baseUrl
       const provider = createOpenAICompatibleProvider({
         name,
-        baseUrl: PROVIDER_PROFILES[name].baseUrl,
+        getBaseUrl: () => effectiveBaseUrl,
         getApiKey: () => apiKey,
         ...(authHeaders ? { authHeaders } : {}),
       })
@@ -520,7 +560,7 @@ export const providersRoutes: RouteEntry[] = [
         const merged = mergeWithEnv(store)
         apiKey = merged.cloud[name]?.apiKey || ''
       }
-      if (!apiKey) {
+      if (!apiKey && !isLocal(name)) {
         return json({ ok: false, error: 'No API key provided or stored', elapsedMs: 0 }, 200)
       }
 
@@ -529,9 +569,14 @@ export const providersRoutes: RouteEntry[] = [
       const authHeaders = name === 'anthropic'
         ? () => ({ 'x-api-key': apiKey!, 'anthropic-version': '2023-06-01' })
         : undefined
+      // Use the stored baseUrl when present (local providers may have a
+      // user-configured URL); otherwise fall back to the profile default.
+      const { data: storeForBase } = await loadProviderStore(system.providersStorePath)
+      const mergedForBase = mergeWithEnv(storeForBase)
+      const effectiveBaseUrl = mergedForBase.cloud[name]?.baseUrl ?? PROVIDER_PROFILES[name].baseUrl
       const provider = createOpenAICompatibleProvider({
         name,
-        baseUrl: PROVIDER_PROFILES[name].baseUrl,
+        getBaseUrl: () => effectiveBaseUrl,
         getApiKey: () => apiKey!,
         ...(authHeaders ? { authHeaders } : {}),
         modelsTimeoutMs: TEST_TIMEOUT_MS,

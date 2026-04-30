@@ -19,20 +19,36 @@ import type { MergedProviders } from './providers-store.ts'
 // Cloud providers known to this build. Adding a new one needs:
 //   - entry in PROVIDER_PROFILES
 //   - entry in buildProvidersFromConfig in providers-setup.ts
+//
+// `kind` distinguishes "needs an API key" (cloud) from "self-hosted, no key
+// required by default" (local). Both ollama (handled separately, has its own
+// transport) and llamacpp (uses the OpenAI-compat transport) are local.
+// isLocal() below is the predicate to use at every site that asks
+// "does this provider need a key".
 export const PROVIDER_PROFILES = {
-  anthropic:  { baseUrl: 'https://api.anthropic.com/v1',                          defaultMaxConcurrent: 3 },
-  gemini:     { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultMaxConcurrent: 3 },
-  cerebras:   { baseUrl: 'https://api.cerebras.ai/v1',                            defaultMaxConcurrent: 2 },
-  groq:       { baseUrl: 'https://api.groq.com/openai/v1',                        defaultMaxConcurrent: 3 },
-  openrouter: { baseUrl: 'https://openrouter.ai/api/v1',                          defaultMaxConcurrent: 1 },
-  mistral:    { baseUrl: 'https://api.mistral.ai/v1',                             defaultMaxConcurrent: 2 },
-  sambanova:  { baseUrl: 'https://api.sambanova.ai/v1',                           defaultMaxConcurrent: 2 },
+  anthropic:  { baseUrl: 'https://api.anthropic.com/v1',                          defaultMaxConcurrent: 3, kind: 'cloud' },
+  gemini:     { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', defaultMaxConcurrent: 3, kind: 'cloud' },
+  cerebras:   { baseUrl: 'https://api.cerebras.ai/v1',                            defaultMaxConcurrent: 2, kind: 'cloud' },
+  groq:       { baseUrl: 'https://api.groq.com/openai/v1',                        defaultMaxConcurrent: 3, kind: 'cloud' },
+  openrouter: { baseUrl: 'https://openrouter.ai/api/v1',                          defaultMaxConcurrent: 1, kind: 'cloud' },
+  mistral:    { baseUrl: 'https://api.mistral.ai/v1',                             defaultMaxConcurrent: 2, kind: 'cloud' },
+  sambanova:  { baseUrl: 'https://api.sambanova.ai/v1',                           defaultMaxConcurrent: 2, kind: 'cloud' },
+  llamacpp:   { baseUrl: 'http://localhost:8080',                                  defaultMaxConcurrent: 1, kind: 'local' },
 } as const
 
 export type CloudProviderName = keyof typeof PROVIDER_PROFILES
 
+// True for any provider that doesn't require an API key. ollama is handled
+// outside PROVIDER_PROFILES (its own transport), so it's checked by name;
+// everything else falls back to the kind flag.
+export const isLocal = (name: string): boolean => {
+  if (name === 'ollama') return true
+  const profile = (PROVIDER_PROFILES as Record<string, { kind: string } | undefined>)[name]
+  return profile?.kind === 'local'
+}
+
 export const DEFAULT_PROVIDER_ORDER: ReadonlyArray<string> =
-  ['anthropic', 'gemini', 'cerebras', 'groq', 'openrouter', 'mistral', 'sambanova', 'ollama']
+  ['anthropic', 'gemini', 'cerebras', 'groq', 'openrouter', 'mistral', 'sambanova', 'llamacpp', 'ollama']
 
 export interface CloudProviderConfig {
   readonly apiKey: string
@@ -48,6 +64,10 @@ export interface ProviderConfig {
   readonly ollamaUrl: string
   readonly ollamaMaxConcurrent: number
   readonly cloud: Partial<Record<CloudProviderName, CloudProviderConfigWithSource>>
+  // Per-provider baseUrl override (env or store). For local providers the
+  // baseUrl is configurable; for cloud providers it stays at the profile
+  // default. Looked up at request time via the OAI-compat adapter's getter.
+  readonly baseUrls: Partial<Record<CloudProviderName, string>>
   readonly order: ReadonlyArray<string>
   readonly ollamaOnly: boolean
   readonly forceFailProvider: string | null
@@ -86,12 +106,20 @@ export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => 
       const merged = opts.fileStore?.cloud[name]
       const envKey = getEnv(`${name.toUpperCase()}_API_KEY`)?.trim()
       const apiKey = envKey && envKey.length > 0 ? envKey : (merged?.apiKey ?? '')
-      if (!apiKey) continue
-      const source: 'env' | 'stored' = envKey && envKey.length > 0 ? 'env' : 'stored'
+      // Cloud providers need a key to be eligible. Local providers (llamacpp)
+      // register without one — llama-server accepts requests without auth by
+      // default; the optional --api-key flag is supported via the same
+      // <NAME>_API_KEY env / store path.
+      if (!apiKey && !isLocal(name)) continue
+      const source: 'env' | 'stored' = envKey && envKey.length > 0
+        ? 'env'
+        : (apiKey ? 'stored' : 'stored')  // local-no-key is 'stored' by convention
 
       // Enabled: env-sourced keys default to enabled; stored keys honour the
-      // stored enabled flag (default true if missing).
-      const enabled = source === 'env' ? true : (merged?.enabled ?? true)
+      // stored enabled flag (default true if missing). Local providers are
+      // enabled by default — no key required to be useful.
+      const enabledDefault = isLocal(name) ? true : true
+      const enabled = source === 'env' ? true : (merged?.enabled ?? enabledDefault)
       if (!enabled) continue
 
       const maxConcurrent = merged?.maxConcurrent
@@ -134,10 +162,24 @@ export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => 
       order = ['ollama']
     }
   }
+  // Per-provider baseUrl overrides. Convention: <NAME>_BASE_URL env var,
+  // falling back to the stored value in MergedProviders if present, else
+  // the profile default (resolved by the consumer). Currently only local
+  // providers use this — cloud baseUrls are fixed in PROVIDER_PROFILES.
+  const baseUrls: Partial<Record<CloudProviderName, string>> = {}
+  for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
+    if (!isLocal(name)) continue
+    const envUrl = getEnv(`${name.toUpperCase()}_BASE_URL`)?.trim()
+    const storedUrl = (opts.fileStore?.cloud[name] as { baseUrl?: string } | undefined)?.baseUrl?.trim()
+    if (envUrl) baseUrls[name] = envUrl
+    else if (storedUrl) baseUrls[name] = storedUrl
+  }
+
   return {
     ollamaUrl,
     ollamaMaxConcurrent,
     cloud,
+    baseUrls,
     order,
     ollamaOnly,
     forceFailProvider,
@@ -159,10 +201,20 @@ export const summariseProviderConfig = (config: ProviderConfig): string => {
       lines.push(`  ollama:     ${config.ollamaUrl} (maxConcurrent=${config.ollamaMaxConcurrent})`)
     } else {
       const cc = config.cloud[name as CloudProviderName]
+      const url = config.baseUrls[name as CloudProviderName]
+        ?? PROVIDER_PROFILES[name as CloudProviderName]?.baseUrl
       if (cc) {
-        lines.push(`  ${name.padEnd(11)} source=${cc.source} maxConcurrent=${cc.maxConcurrent}`)
+        if (isLocal(name)) {
+          lines.push(`  ${name.padEnd(11)} ${url} (maxConcurrent=${cc.maxConcurrent})`)
+        } else {
+          lines.push(`  ${name.padEnd(11)} source=${cc.source} maxConcurrent=${cc.maxConcurrent}`)
+        }
       } else {
-        lines.push(`  ${name.padEnd(11)} (no key — add via UI to activate)`)
+        if (isLocal(name)) {
+          lines.push(`  ${name.padEnd(11)} ${url} (disabled)`)
+        } else {
+          lines.push(`  ${name.padEnd(11)} (no key — add via UI to activate)`)
+        }
       }
     }
   }

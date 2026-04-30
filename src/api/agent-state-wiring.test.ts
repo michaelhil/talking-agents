@@ -57,6 +57,7 @@ const baseConfig = {
   order: ['stub'] as ReadonlyArray<string>,
   ollamaUrl: '',
   ollamaMaxConcurrent: 2,
+  baseUrls: {},
   cloud: {},
   ollamaOnly: false,
   forceFailProvider: null,

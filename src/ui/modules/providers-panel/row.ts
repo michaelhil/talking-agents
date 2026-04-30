@@ -32,6 +32,10 @@ export interface ProviderStatusEntry {
   enabled: boolean
   userEnabled: boolean
   hasKey: boolean
+  // Local providers (kind=='cloud' but isLocal): hostname/URL configurable
+  // via the same row, no key required. Cloud providers ignore.
+  isLocal?: boolean
+  baseUrl?: string
   maxConcurrent: number | null
   cooldown: { coldUntilMs: number; reason: string } | null
   status: Status
@@ -57,6 +61,7 @@ const PROVIDER_URLS: Record<CloudProviderName | 'ollama', string> = {
   openrouter: 'https://openrouter.ai',
   mistral:    'https://console.mistral.ai',
   sambanova:  'https://cloud.sambanova.ai',
+  llamacpp:   'https://github.com/ggml-org/llama.cpp',
   ollama:     'https://ollama.com',
 }
 
@@ -128,9 +133,13 @@ export const renderRow = (ctx: RowContext): HTMLElement => {
 
   const locked = entry.source === 'env'
   const keyFieldId = `prov-key-${entry.name}`
+  const urlFieldId = `prov-url-${entry.name}`
   const mcFieldId = `prov-mc-${entry.name}`
 
   const isCloud = entry.kind === 'cloud'
+  // Local providers (llamacpp) are kind=='cloud' but get a URL field instead
+  // of a key field. The flag is set by the server and threaded through here.
+  const isLocalProvider = !!entry.isLocal
   const url = PROVIDER_URLS[entry.name] ?? '#'
 
   // Provider name: clickable link to its dashboard (no external-link glyph).
@@ -152,7 +161,14 @@ export const renderRow = (ctx: RowContext): HTMLElement => {
   // For Ollama: no key; the same slot is used for the Settings button that
   // toggles the expanded settings panel below the row. Width matches so
   // columns across rows stay aligned.
-  const keyField = isCloud ? `
+  const keyField = isLocalProvider ? `
+    <input id="${urlFieldId}" type="text"
+           value="${(entry.baseUrl ?? '').replace(/"/g, '&quot;')}"
+           data-original="${(entry.baseUrl ?? '').replace(/"/g, '&quot;')}"
+           placeholder="http://localhost:8080"
+           class="w-44 shrink-0 px-2 py-0.5 border rounded font-mono text-[11px]"
+           title="llama.cpp server URL — blank = profile default">
+  ` : isCloud ? `
     <input id="${keyFieldId}" type="text"
            value="${entry.keyMask ?? ''}"
            data-original="${entry.keyMask ?? ''}"

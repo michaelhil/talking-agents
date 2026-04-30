@@ -62,7 +62,7 @@ describe('createOpenAICompatibleProvider', () => {
     }))
     try {
       const provider = createOpenAICompatibleProvider({
-        name: 'test', baseUrl: fx.url, getApiKey: () => 'sk-test',
+        name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'sk-test',
       })
       const response = await provider.chat({
         model: 'm1',
@@ -85,7 +85,7 @@ describe('createOpenAICompatibleProvider', () => {
     }))
     try {
       const provider = createOpenAICompatibleProvider({
-        name: 'test', baseUrl: fx.url, getApiKey: () => 'k',
+        name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'k',
       })
       let caught: unknown
       try { await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }] }) }
@@ -105,7 +105,7 @@ describe('createOpenAICompatibleProvider', () => {
       headers: { 'Retry-After': future },
     }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'test', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       let caught: unknown
       try { await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }] }) }
       catch (err) { caught = err }
@@ -122,7 +122,7 @@ describe('createOpenAICompatibleProvider', () => {
   test('401 → auth error (no retryAfterMs)', async () => {
     const fx = startFixture(() => ({ status: 401, body: 'invalid key' }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'test', baseUrl: fx.url, getApiKey: () => 'bad' })
+      const provider = createOpenAICompatibleProvider({ name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'bad' })
       let caught: unknown
       try { await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }] }) }
       catch (err) { caught = err }
@@ -146,7 +146,7 @@ describe('createOpenAICompatibleProvider', () => {
       ],
     }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'test', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       const chunks: Array<{ delta: string; done: boolean; toolCalls?: ReadonlyArray<{ function: { name: string; arguments: Record<string, unknown> } }> }> = []
       for await (const chunk of provider.stream!({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
         chunks.push(chunk as { delta: string; done: boolean; toolCalls?: ReadonlyArray<{ function: { name: string; arguments: Record<string, unknown> } }> })
@@ -175,7 +175,7 @@ describe('createOpenAICompatibleProvider', () => {
       ],
     }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'gemini', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'gemini', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       const chunks: Array<{ delta: string; done: boolean; toolCalls?: ReadonlyArray<{ function: { name: string; arguments: Record<string, unknown> } }> }> = []
       for await (const chunk of provider.stream!({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
         chunks.push(chunk as never)
@@ -199,7 +199,7 @@ describe('createOpenAICompatibleProvider', () => {
       ],
     }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'test', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       const chunks: Array<{ delta: string; done: boolean; thinking?: string }> = []
       for await (const chunk of provider.stream!({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
         chunks.push(chunk as { delta: string; done: boolean; thinking?: string })
@@ -218,7 +218,7 @@ describe('createOpenAICompatibleProvider', () => {
       body: JSON.stringify({ data: [{ id: 'alpha' }, { id: 'beta' }] }),
     }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'test', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       const list = await provider.models()
       expect(list).toEqual(['alpha', 'beta'])
     } finally { fx.stop() }
@@ -244,7 +244,7 @@ describe('createOpenAICompatibleProvider', () => {
       }),
     }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'gemini', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'gemini', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       const list = await provider.models()
       expect(list).toEqual(['gemini-2.5-flash-lite', 'gemini-2.5-pro', 'plain-id-no-prefix'])
     } finally { fx.stop() }
@@ -263,7 +263,7 @@ describe('createOpenAICompatibleProvider', () => {
       }),
     }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'test', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       const response = await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }] })
       expect(response.toolCalls?.[0]?.function.arguments).toEqual({ x: 42 })
     } finally { fx.stop() }
@@ -285,7 +285,7 @@ describe('createOpenAICompatibleProvider', () => {
   test('Anthropic + tools: cache_control on last tool top-level (not inside .function); earlier tools clean', async () => {
     const fx = startFixture(() => ({ status: 200, body: okBody }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }], tools: sampleTools })
       const tools = (fx.last.body as { tools?: ReadonlyArray<Record<string, unknown>> }).tools!
       expect(tools).toHaveLength(3)
@@ -300,7 +300,7 @@ describe('createOpenAICompatibleProvider', () => {
   test('Anthropic + systemBlocks + tools: BOTH markers present (two breakpoints)', async () => {
     const fx = startFixture(() => ({ status: 200, body: okBody }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       await provider.chat({
         model: 'm',
         messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'x' }],
@@ -325,7 +325,7 @@ describe('createOpenAICompatibleProvider', () => {
   test('Anthropic + systemBlocks + no tools: system marker still present (regression guard)', async () => {
     const fx = startFixture(() => ({ status: 200, body: okBody }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       await provider.chat({
         model: 'm',
         messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'x' }],
@@ -340,7 +340,7 @@ describe('createOpenAICompatibleProvider', () => {
   test('Anthropic + empty tools array: no marker, no crash', async () => {
     const fx = startFixture(() => ({ status: 200, body: okBody }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }], tools: [] })
       const body = fx.last.body as { tools?: unknown }
       expect(body.tools).toBeUndefined()
@@ -352,7 +352,7 @@ describe('createOpenAICompatibleProvider', () => {
     for (const name of others) {
       const fx = startFixture(() => ({ status: 200, body: okBody }))
       try {
-        const provider = createOpenAICompatibleProvider({ name, baseUrl: fx.url, getApiKey: () => 'k' })
+        const provider = createOpenAICompatibleProvider({ name, getBaseUrl: () => fx.url, getApiKey: () => 'k' })
         await provider.chat({
           model: 'm',
           messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'x' }],
@@ -372,7 +372,7 @@ describe('createOpenAICompatibleProvider', () => {
   test('failover safety: input ChatRequest.tools reference is unchanged after Anthropic call', async () => {
     const fx = startFixture(() => ({ status: 200, body: okBody }))
     try {
-      const provider = createOpenAICompatibleProvider({ name: 'anthropic', baseUrl: fx.url, getApiKey: () => 'k' })
+      const provider = createOpenAICompatibleProvider({ name: 'anthropic', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
       const tools = sampleTools
       await provider.chat({ model: 'm', messages: [{ role: 'user', content: 'x' }], tools })
       // Caller's array and entries remain untouched — adapter must not

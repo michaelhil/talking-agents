@@ -161,6 +161,30 @@ export const renderProvidersPanel = (list: ProvidersResponse): void => {
       })
     }
 
+    // Local-provider URL-field blur + test button. Shares kind=='cloud' with
+    // real cloud providers but renders/saves a baseUrl instead of an apiKey.
+    if (entry.isLocal) {
+      const urlField = row.querySelector<HTMLInputElement>(`#prov-url-${entry.name}`)
+      urlField?.addEventListener('blur', async () => {
+        const original = urlField.dataset.original ?? ''
+        const current = urlField.value.trim()
+        if (current === original) return
+        // Empty value clears (server falls back to PROVIDER_PROFILES default).
+        const ok = await save(entry.name, { baseUrl: current === '' ? null : current })
+        showToast(document.body, ok
+          ? `${entry.name}: URL ${current === '' ? 'reset to default' : 'updated'}`
+          : `${entry.name}: URL save failed`,
+          { type: ok ? 'success' : 'error', position: 'fixed' })
+      })
+      // Test button — same probe path the cloud branch uses.
+      row.querySelector<HTMLButtonElement>('.prov-test')?.addEventListener('click', async () => {
+        showToast(document.body, `${entry.name}: testing…`, { position: 'fixed' })
+        const result = await testKey(entry.name)
+        showToast(document.body, formatTestToast(entry.name, result), { type: result.ok ? 'success' : 'error', position: 'fixed' })
+      })
+      return  // skip the cloud-key path below
+    }
+
     // Cloud-provider key-field blur + test button.
     if (entry.kind === 'cloud') {
       const keyField = row.querySelector<HTMLInputElement>(`#prov-key-${entry.name}`)

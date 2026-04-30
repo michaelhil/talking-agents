@@ -15,7 +15,7 @@ import { createOpenAICompatibleProvider } from './openai-compatible.ts'
 import type { ProviderRouter } from './router.ts'
 import { createProviderRouter } from './router.ts'
 import { isCloudProviderError } from './errors.ts'
-import { PROVIDER_PROFILES, type ProviderConfig, type CloudProviderName } from './providers-config.ts'
+import { PROVIDER_PROFILES, isLocal, type ProviderConfig, type CloudProviderName } from './providers-config.ts'
 import { getContextWindow } from './models/context-window.ts'
 import type { ProviderKeys } from './provider-keys.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
@@ -86,10 +86,21 @@ export const buildProvidersFromConfig = (
           'anthropic-version': '2023-06-01',
         })
       : undefined
-    const baseUrl = options.baseUrlOverrides?.[name] ?? PROVIDER_PROFILES[name].baseUrl
+    // baseUrl is resolved per-request via a getter so live URL edits via
+    // PUT /api/providers/:name take effect without recreating the provider
+    // or gateway. Test injection (baseUrlOverrides) wins over user config
+    // for fixture-driven tests.
+    const getBaseUrl = (): string => {
+      if (options.baseUrlOverrides?.[name]) return options.baseUrlOverrides[name]!
+      // Read from the live provider config so PUT updates are picked up.
+      // The config object is mutable through the providers-store reload
+      // path; we re-resolve on each call.
+      const liveOverride = config.baseUrls[name]
+      return liveOverride ?? PROVIDER_PROFILES[name].baseUrl
+    }
     const provider = createOpenAICompatibleProvider({
       name,
-      baseUrl,
+      getBaseUrl,
       getApiKey,
       ...(authHeaders ? { authHeaders } : {}),
       ...(options.limitMetrics ? { limitMetrics: options.limitMetrics } : {}),
@@ -107,13 +118,18 @@ export const buildProvidersFromConfig = (
   // consult it on every call.
   const monitors: Record<string, ProviderMonitor> = {}
   for (const [name, _gw] of Object.entries(gateways)) {
-    const kind = name === 'ollama' ? 'ollama' : 'cloud'
-    const hasKey = name === 'ollama'
+    // Local providers (ollama, llamacpp) don't need an API key — the monitor's
+    // 'no_key' static state shouldn't apply to them. We treat both as
+    // kind='ollama' to bypass the cloud key gate, even though llamacpp uses
+    // the OpenAI-compat transport. The kind is purely a state-machine hint.
+    const local = isLocal(name)
+    const kind = local ? 'ollama' : 'cloud'
+    const hasKey = local
       ? () => true
       : providerKeys
         ? () => providerKeys.get(name).length > 0
         : () => (config.cloud[name as CloudProviderName]?.apiKey ?? '').length > 0
-    const isUserEnabled = name === 'ollama'
+    const isUserEnabled = local
       ? () => true
       : providerKeys
         ? () => providerKeys.isUserEnabled(name)

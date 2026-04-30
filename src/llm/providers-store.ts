@@ -11,15 +11,16 @@
 import { readFile, writeFile, rename, chmod, mkdir, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { CloudProviderName } from './providers-config.ts'
-import { PROVIDER_PROFILES } from './providers-config.ts'
+import { PROVIDER_PROFILES, isLocal } from './providers-config.ts'
 
 export const STORE_VERSION = 1
 
 export interface StoredCloudEntry {
   readonly apiKey?: string          // stored key (may be empty string)
-  readonly enabled?: boolean        // default: true when apiKey present
+  readonly enabled?: boolean        // default: true when apiKey present (or always for local providers)
   readonly maxConcurrent?: number   // override default in PROVIDER_PROFILES
   readonly pinnedModels?: ReadonlyArray<string>  // user-pinned model IDs
+  readonly baseUrl?: string         // local providers (llamacpp): override the profile baseUrl
 }
 
 export interface StoredOllamaEntry {
@@ -108,6 +109,10 @@ const validateShape = (raw: unknown, warnings: string[]): ProvidersFileShape => 
       const pins = (entry.pinnedModels as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 0)
       if (pins.length > 0) (out as { pinnedModels?: ReadonlyArray<string> }).pinnedModels = pins
     }
+    // Local providers (llamacpp): persisted baseUrl override.
+    if (typeof entry.baseUrl === 'string' && entry.baseUrl.trim().length > 0) {
+      (out as { baseUrl?: string }).baseUrl = entry.baseUrl.trim()
+    }
     cleaned[name] = out
   }
 
@@ -144,6 +149,7 @@ export interface MergedProviderEntry {
   readonly maxConcurrent: number | undefined    // undefined → use default from PROVIDER_PROFILES
   readonly maskedKey: string                    // safe for UI / logs
   readonly pinnedModels: ReadonlyArray<string>  // [] when none
+  readonly baseUrl: string | undefined          // local providers: override of profile baseUrl
 }
 
 export interface MergedProviders {
@@ -180,8 +186,10 @@ export const mergeWithEnv = (
     if (envKey) { apiKey = envKey; source = 'env' }
     else if (storedKey) { apiKey = storedKey; source = 'stored' }
 
-    // Enabled defaults: true when a key is set (via any source).
-    const enabled = stored?.enabled ?? (apiKey !== '')
+    // Enabled defaults: true when a key is set (via any source). Local
+    // providers (llamacpp) default to enabled even without a key — they
+    // don't need one.
+    const enabled = stored?.enabled ?? (isLocal(name) || apiKey !== '')
 
     // maxConcurrent precedence: env > stored > undefined (fall through to default).
     const envMc = env[`${name.toUpperCase()}_MAX_CONCURRENT`]
@@ -190,10 +198,19 @@ export const mergeWithEnv = (
       ? envMcNum
       : stored?.maxConcurrent
 
+    // baseUrl: env var first, then stored, else undefined (consumer falls
+    // through to PROVIDER_PROFILES default). Only meaningful for local
+    // providers; cloud baseUrls are fixed.
+    const envBaseUrl = env[`${name.toUpperCase()}_BASE_URL`]?.trim()
+    const baseUrl = (envBaseUrl && envBaseUrl.length > 0)
+      ? envBaseUrl
+      : (stored?.baseUrl?.trim() || undefined)
+
     cloud[name] = {
       apiKey, source, enabled, maxConcurrent,
       maskedKey: maskKey(apiKey),
       pinnedModels: stored?.pinnedModels ?? [],
+      baseUrl,
     }
   }
 

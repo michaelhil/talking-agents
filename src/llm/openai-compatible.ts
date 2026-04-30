@@ -31,7 +31,10 @@ const MAX_SSE_BUFFER_BYTES = 10 * 1024 * 1024
 
 export interface OpenAICompatConfig {
   readonly name: string                  // logical provider name, e.g. "groq"
-  readonly baseUrl: string               // e.g. "https://api.groq.com/openai/v1"
+  // Resolved lazily so runtime URL changes (PUT /api/providers/:name with
+  // baseUrl) take effect on the next request without recreating the provider
+  // or its gateway. Mirrors `getApiKey`.
+  readonly getBaseUrl: () => string
   // Resolved lazily so runtime key changes take effect without restart.
   readonly getApiKey: () => string
   // Optional: replace the default `Authorization: Bearer <key>` auth with
@@ -338,7 +341,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
     const body = buildOAIBody(request, false, config.name)
 
     const response = await fetchWithTimeout(
-      `${config.baseUrl}/chat/completions`,
+      `${config.getBaseUrl()}/chat/completions`,
       { method: 'POST', headers: headers(), body: JSON.stringify(body) },
       chatTimeoutMs,
     )
@@ -403,7 +406,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       externalSignal.addEventListener('abort', () => controller.abort(), { once: true })
     }
 
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    const response = await fetch(`${config.getBaseUrl()}/chat/completions`, {
       method: 'POST',
       headers: headers(),
       body: JSON.stringify(body),
@@ -609,7 +612,7 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
 
   const models = async (): Promise<string[]> => {
     const response = await fetchWithTimeout(
-      `${config.baseUrl}/models`,
+      `${config.getBaseUrl()}/models`,
       { headers: headers() },
       modelsTimeoutMs,
     )
