@@ -64,13 +64,10 @@ export const openBugModal = async (): Promise<void> => {
       if (res.status === 201) {
         const body = await res.json().catch(() => ({})) as { htmlUrl?: string; number?: number }
         dlg.close()
-        const msg = body.htmlUrl
-          ? `Reported as #${body.number ?? '?'} — view on GitHub`
+        const msg = body.number
+          ? `Bug reported as #${body.number} — thanks!`
           : 'Bug reported, thanks!'
         showToast(document.body, msg, { type: 'success', position: 'fixed' })
-        // Open the issue link in a new tab if available — without
-        // requiring a click on the toast (which auto-fades).
-        if (body.htmlUrl) window.open(body.htmlUrl, '_blank', 'noopener')
         return
       }
 
