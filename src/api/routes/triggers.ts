@@ -53,6 +53,7 @@ export const triggerRoutes: RouteEntry[] = [
       }
       agent.addTrigger(trigger)
       system.triggerScheduler.invalidate()
+      system.notifyAgentSettingsChanged()
       try { broadcast({ type: 'triggers_changed', agentId: agent.id, action: 'created', triggerId: trigger.id }) } catch { /* ignore */ }
       return json({ ok: true, trigger }, 201)
     },
@@ -96,6 +97,7 @@ export const triggerRoutes: RouteEntry[] = [
         roomId: merged.roomId,
       })
       system.triggerScheduler.invalidate()
+      system.notifyAgentSettingsChanged()
       try { broadcast({ type: 'triggers_changed', agentId: agent.id, action: 'updated', triggerId: id }) } catch { /* ignore */ }
       return json({ ok: true })
     },
@@ -112,6 +114,7 @@ export const triggerRoutes: RouteEntry[] = [
       const removed = agent.deleteTrigger(id)
       if (!removed) return errorResponse('trigger not found', 404)
       system.triggerScheduler.invalidate()
+      system.notifyAgentSettingsChanged()
       try { broadcast({ type: 'triggers_changed', agentId: agent.id, action: 'deleted', triggerId: id }) } catch { /* ignore */ }
       return json({ ok: true })
     },

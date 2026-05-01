@@ -8,7 +8,7 @@
 import type { Agent, AIAgent, AIAgentConfig, RouteMessage, Team } from './core/types/agent.ts'
 import type { DeliverFn, ResolveAgentName, ResolveTagFn } from './core/types/messaging.ts'
 import type {
-  House, HouseCallbacks, OnBookmarksChanged, OnDeliveryModeChanged,
+  House, HouseCallbacks, OnAgentSettingsChanged, OnBookmarksChanged, OnDeliveryModeChanged,
   OnMembershipChanged, OnMessagePosted, OnModeAutoSwitched,
   OnRoomCreated, OnRoomDeleted, OnSummaryConfigChanged, OnSummaryUpdated,
   OnTurnChanged,
@@ -157,6 +157,12 @@ export interface System {
   readonly setOnRoomDeleted: (callback: OnRoomDeleted) => void
   readonly setOnMembershipChanged: (callback: OnMembershipChanged) => void
   readonly setOnBookmarksChanged: (callback: OnBookmarksChanged) => void
+  readonly setOnAgentSettingsChanged: (callback: OnAgentSettingsChanged) => void
+  // Notify subscribers that an agent's persisted settings (persona, model,
+  // tools, triggers, name, etc.) just changed. Called by the API/MCP layer
+  // after applying mutations; wire-system-events translates this into a
+  // scheduleSave so edits don't stay in memory until the next message-post.
+  readonly notifyAgentSettingsChanged: () => void
   readonly setOnEvalEvent: (callback: OnEvalEvent) => void
   readonly setOnProviderBound: (callback: OnProviderBound) => void
   readonly setOnProviderAllFailed: (callback: OnProviderAllFailed) => void
@@ -287,6 +293,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const roomDeleted = lateBinding<OnRoomDeleted>('roomDeleted')
   const membershipChanged = lateBinding<OnMembershipChanged>('membershipChanged')
   const bookmarksChanged = lateBinding<OnBookmarksChanged>('bookmarksChanged')
+  const agentSettingsChanged = lateBinding<OnAgentSettingsChanged>('agentSettingsChanged')
   const modeAutoSwitched = lateBinding<OnModeAutoSwitched>('modeAutoSwitched')
   const evalEvent = lateBinding<OnEvalEvent>('evalEvent')
   const providerBound = lateBinding<OnProviderBound>('providerBound')
@@ -809,6 +816,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     setOnRoomDeleted: roomDeleted.set,
     setOnMembershipChanged: membershipChanged.set,
     setOnBookmarksChanged: bookmarksChanged.set,
+    setOnAgentSettingsChanged: agentSettingsChanged.set,
+    notifyAgentSettingsChanged: () => agentSettingsChanged.proxy(),
     setOnEvalEvent: evalEvent.set,
     setOnProviderBound: providerBound.set,
     setOnProviderAllFailed: providerAllFailed.set,

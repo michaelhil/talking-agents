@@ -23,6 +23,11 @@ export type OnRoomCreated = (profile: RoomProfile) => void
 export type OnRoomDeleted = (roomId: string, roomName: string) => void
 export type OnMembershipChanged = (roomId: string, roomName: string, agentId: string, agentName: string, action: 'added' | 'removed') => void
 export type OnBookmarksChanged = () => void
+// Fired by the API/MCP layer after agent settings (persona, model, tools,
+// triggers, name, etc.) are mutated. Bookmarks-style: argless, "something
+// changed". Wire-system-events triggers a snapshot save so config edits
+// don't sit in memory until the next message-post.
+export type OnAgentSettingsChanged = () => void
 // Fired when a room auto-switches Broadcast → Manual on the second AI join.
 // UI toasts a one-off hint so the user can flip back to Broadcast if desired.
 export type OnModeAutoSwitched = (roomId: string, toMode: DeliveryMode, reason: 'second-ai-joined') => void

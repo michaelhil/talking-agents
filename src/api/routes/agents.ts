@@ -263,6 +263,9 @@ export const agentRoutes: RouteEntry[] = [
           .filter(t => t.length > 0)
         agent.updateTags(tags)
       }
+      // Persist edits — without this, persona/model/tools/etc. live in
+      // memory until the next message-post (or a SIGKILL loses them).
+      system.notifyAgentSettingsChanged()
       return json({ updated: true, name: agent.name, ...(modelStatus !== undefined ? { modelStatus } : {}) })
     },
   },

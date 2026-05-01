@@ -378,6 +378,18 @@ export interface AutoSaver {
   readonly dispose: () => void
 }
 
+// Hard cap on save deferral: when continuous mutations keep pushing the
+// debounce timer forward, force a save once the first deferred mutation has
+// waited this long. Without this, a steady trickle of edits at <debounceMs
+// intervals would never trigger a save until traffic stops.
+const MAX_DEFER_MS = 30_000
+
+// Backoff schedule for transient save failures. Mirrors the eviction-flush
+// retry policy in system-registry.ts so the same disk-full / perm-flip
+// scenario is handled identically by the background path. Total wait if all
+// three retries are needed: ~80s before the next mutation re-arms the timer.
+const SAVE_RETRY_BACKOFF_MS: ReadonlyArray<number> = [5_000, 15_000, 60_000]
+
 export const createAutoSaver = (
   system: SerializableSystem,
   path: string,
@@ -386,10 +398,15 @@ export const createAutoSaver = (
   let timer: Timer | undefined
   let saving = false
   let pendingSave = false
+  // Timestamp of the first scheduleSave() call in the current debounce
+  // window. Cleared on save start; used by scheduleSave to enforce
+  // MAX_DEFER_MS so a continuous trickle can't starve the saver.
+  let firstDeferredAt: number | null = null
 
   const doSave = async (): Promise<void> => {
     saving = true
     pendingSave = false
+    firstDeferredAt = null
     try {
       const snapshot = serializeSystem(system)
       // Skip persistence for instances with no real user activity. Prevents
@@ -397,7 +414,24 @@ export const createAutoSaver = (
       // empty dir on disk. First user/AI message flips this and the dir is
       // created via saveSnapshot's mkdir(recursive).
       if (isEmptySnapshot(snapshot)) return
-      await saveSnapshot(snapshot, path)
+      // Bounded retry on transient errors (disk full, perm flip, etc.).
+      // Same policy as eviction flush — see system-registry.ts:329.
+      let lastErr: unknown = null
+      for (let attempt = 0; attempt <= SAVE_RETRY_BACKOFF_MS.length; attempt++) {
+        try {
+          await saveSnapshot(snapshot, path)
+          return
+        } catch (err) {
+          lastErr = err
+          if (attempt < SAVE_RETRY_BACKOFF_MS.length) {
+            const reason = err instanceof Error ? err.message : String(err)
+            console.warn(`[snapshot] auto-save attempt ${attempt + 1} failed: ${reason} — retrying`)
+            await new Promise(resolve => setTimeout(resolve, SAVE_RETRY_BACKOFF_MS[attempt]))
+          }
+        }
+      }
+      const reason = lastErr instanceof Error ? lastErr.message : String(lastErr)
+      console.error(`[snapshot] auto-save exhausted retries; recent state will retry on next mutation: ${reason}`)
     } catch (err) {
       console.error('Auto-save failed:', err)
     } finally {
@@ -413,14 +447,21 @@ export const createAutoSaver = (
       pendingSave = true
       return
     }
+    const now = Date.now()
+    if (firstDeferredAt === null) firstDeferredAt = now
+    // If we've been deferring beyond MAX_DEFER_MS, fire on the next tick
+    // regardless of debounce — break the starvation loop.
+    const deferredFor = now - firstDeferredAt
+    const delay = deferredFor >= MAX_DEFER_MS ? 0 : debounceMs
     if (timer) clearTimeout(timer)
-    timer = setTimeout(doSave, debounceMs)
+    timer = setTimeout(doSave, delay)
   }
 
   const flush = async (): Promise<void> => {
     if (timer) clearTimeout(timer)
     timer = undefined
     pendingSave = false
+    firstDeferredAt = null
     await doSave()
   }
 
@@ -428,6 +469,7 @@ export const createAutoSaver = (
     if (timer) clearTimeout(timer)
     timer = undefined
     pendingSave = false
+    firstDeferredAt = null
   }
 
   return { scheduleSave, flush, dispose }
