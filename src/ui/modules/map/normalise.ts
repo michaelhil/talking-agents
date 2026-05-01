@@ -7,13 +7,19 @@
 //     {
 //       "view"?: { "center": [lat, lng], "zoom": number },
 //       "features": [
-//         { "type": "marker",  "lat": number, "lng": number, "label"?: string, "color"?: string },
+//         { "type": "marker",  "lat": number, "lng": number, "label"?: string, "color"?: string, "icon"?: MarkerIcon },
 //         { "type": "line",    "coords": [[lat,lng],...], "color"?: string, "weight"?: number },
 //         { "type": "track",   "coords": [[lat,lng],...], "color"?: string, "weight"?: number },  // alias for line
 //         { "type": "polygon", "coords": [[lat,lng],...], "color"?: string, "fillColor"?: string },
 //         { "type": "circle",  "lat": number, "lng": number, "radius": number, "color"?: string }
 //       ]
 //     }
+//
+//   Marker icon set: 'pin' (default teardrop) | 'plane' | 'airport' | 'platform'
+//                  | 'ship' | 'city' | 'dot'.
+//   When `icon` or `color` is set, the renderer draws a coloured SVG via
+//   Leaflet divIcon — this is the only code path where `color` actually
+//   takes effect on a marker (the default bitmap pin ignores it).
 //
 //   GEOJSON — standard FeatureCollection. Every model knows it.
 //     { "type": "FeatureCollection", "features": [...] }
@@ -27,8 +33,14 @@
 
 export type MapView = { center: [number, number]; zoom: number }
 
+export type MarkerIcon = 'pin' | 'plane' | 'airport' | 'platform' | 'ship' | 'city' | 'dot'
+
+export const MARKER_ICONS: ReadonlySet<MarkerIcon> = new Set([
+  'pin', 'plane', 'airport', 'platform', 'ship', 'city', 'dot',
+])
+
 export type EnvelopeFeature =
-  | { type: 'marker'; lat: number; lng: number; label?: string; color?: string }
+  | { type: 'marker'; lat: number; lng: number; label?: string; color?: string; icon?: MarkerIcon }
   | { type: 'line' | 'track'; coords: ReadonlyArray<[number, number]>; color?: string; weight?: number }
   | { type: 'polygon'; coords: ReadonlyArray<[number, number]>; color?: string; fillColor?: string }
   | { type: 'circle'; lat: number; lng: number; radius: number; color?: string }
@@ -76,6 +88,13 @@ const validateEnvelopeFeature = (raw: unknown): EnvelopeFeature | null => {
       const out: EnvelopeFeature = { type: 'marker', lat: f.lat, lng: f.lng }
       if (typeof f.label === 'string') (out as { label?: string }).label = f.label
       if (typeof f.color === 'string') (out as { color?: string }).color = f.color
+      // Unknown icon names are silently dropped rather than failing validation —
+      // the marker still renders (default bitmap pin), the agent just doesn't
+      // get the colour treatment. Strict failure here would break maps over a
+      // typo in a single feature.
+      if (typeof f.icon === 'string' && MARKER_ICONS.has(f.icon as MarkerIcon)) {
+        (out as { icon?: MarkerIcon }).icon = f.icon as MarkerIcon
+      }
       return out
     }
     case 'line':

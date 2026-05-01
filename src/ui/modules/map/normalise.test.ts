@@ -100,6 +100,42 @@ describe('parseMapSource — feature variants', () => {
   })
 })
 
+describe('parseMapSource — marker icon', () => {
+  test('known icon name preserved', () => {
+    const r = parseMapSource(JSON.stringify({
+      features: [{ type: 'marker', lat: 60, lng: 10, icon: 'plane', color: '#ff0000' }],
+    }))
+    if (r.kind !== 'envelope') throw new Error('expected envelope')
+    const f = r.data.features[0]
+    if (f?.type !== 'marker') throw new Error('expected marker')
+    expect(f.icon).toBe('plane')
+    expect(f.color).toBe('#ff0000')
+  })
+
+  test('unknown icon name silently dropped, marker still valid', () => {
+    const r = parseMapSource(JSON.stringify({
+      features: [{ type: 'marker', lat: 60, lng: 10, icon: 'starship' }],
+    }))
+    if (r.kind !== 'envelope') throw new Error('expected envelope')
+    const f = r.data.features[0]
+    if (f?.type !== 'marker') throw new Error('expected marker')
+    expect(f.icon).toBeUndefined()
+  })
+
+  test('all icon enum values accepted', () => {
+    const icons = ['pin', 'plane', 'airport', 'platform', 'ship', 'city', 'dot']
+    for (const icon of icons) {
+      const r = parseMapSource(JSON.stringify({
+        features: [{ type: 'marker', lat: 60, lng: 10, icon }],
+      }))
+      if (r.kind !== 'envelope') throw new Error(`expected envelope for icon ${icon}`)
+      const f = r.data.features[0]
+      if (f?.type !== 'marker') throw new Error('expected marker')
+      expect(f.icon).toBe(icon as never)
+    }
+  })
+})
+
 describe('collectLatLngs — envelope', () => {
   test('walks markers, lines, polygons, circles', () => {
     const r = parseMapSource(JSON.stringify({

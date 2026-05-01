@@ -28,6 +28,7 @@ export interface LeafletApi {
   circle: (latlng: [number, number], options?: Record<string, unknown>) => LeafletLayer
   geoJSON: (data: unknown, options?: Record<string, unknown>) => LeafletLayer
   latLngBounds: (latlngs: ReadonlyArray<[number, number]>) => LeafletBounds
+  divIcon: (options: Record<string, unknown>) => unknown
 }
 
 export interface LeafletMap {

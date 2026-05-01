@@ -12,6 +12,7 @@
 import { ensureLeaflet, type LeafletApi, type LeafletMap } from './api.ts'
 import { parseMapSource, collectLatLngs, type ParsedMap, type EnvelopeFeature } from './normalise.ts'
 import { showMapFallback } from './fallback.ts'
+import { buildIconSpec } from './icons.ts'
 
 const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -28,7 +29,21 @@ const buildMapContainer = (height = DEFAULT_HEIGHT_PX): HTMLElement => {
 
 const addEnvelopeFeature = (L: LeafletApi, map: LeafletMap, f: EnvelopeFeature): void => {
   if (f.type === 'marker') {
-    const m = L.marker([f.lat, f.lng], f.color ? { color: f.color } : {})
+    // Use a divIcon path when the marker carries an explicit `icon` or
+    // `color` — Leaflet's default bitmap pin ignores `color` silently, so
+    // honoring those fields means swapping the icon entirely. Markers with
+    // neither stay on the bitmap path (matches existing visual).
+    const opts: Record<string, unknown> = {}
+    if (f.icon || f.color) {
+      const spec = buildIconSpec(f.icon, f.color)
+      opts.icon = L.divIcon({
+        html: spec.html,
+        className: 'samsinn-marker',
+        iconSize: spec.size,
+        iconAnchor: spec.anchor,
+      })
+    }
+    const m = L.marker([f.lat, f.lng], opts)
     if (f.label) m.bindTooltip(f.label, { permanent: false })
     m.addTo(map)
   } else if (f.type === 'line' || f.type === 'track') {
