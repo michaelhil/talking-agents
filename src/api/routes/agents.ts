@@ -6,7 +6,24 @@ import { modelSupportsTools } from '../../llm/models/catalog.ts'
 import { estimateTokens } from '../../agents/context-builder.ts'
 import type { ContextSection, IncludeContext, IncludePrompts, PromptSection } from '../../core/types/agent.ts'
 import type { ToolRegistry } from '../../core/types/tool.ts'
+import type { System } from '../../main.ts'
 import type { RouteEntry } from './types.ts'
+
+// Soft model-availability check used by both POST and PATCH agent handlers.
+// 'unverified' means we have no provider info yet (key not configured /
+// router empty); 'ok' means the model is in the union of currently-loaded
+// Ollama models and router-resolvable cloud models; 'unavailable' means
+// neither knows about it. Result is informational — callers do NOT block
+// on it. Effective-model resolution at call time picks a working fallback.
+type ModelStatus = 'ok' | 'unavailable' | 'unverified'
+
+const resolveModelStatus = async (system: System, requestedModel: string): Promise<ModelStatus> => {
+  const ollamaAvailable = system.ollama?.getHealth().availableModels ?? []
+  const routerAvailable = await system.llm.models().catch(() => [] as string[])
+  const allAvailable = [...ollamaAvailable, ...routerAvailable]
+  if (allAvailable.length === 0) return 'unverified'
+  return allAvailable.includes(requestedModel) ? 'ok' : 'unavailable'
+}
 
 const PROMPT_SECTIONS: ReadonlyArray<PromptSection> = ['persona', 'room', 'house', 'responseFormat', 'skills']
 const CONTEXT_SECTIONS: ReadonlyArray<ContextSection> = ['participants', 'artifacts', 'activity', 'knownAgents']
@@ -113,19 +130,10 @@ export const agentRoutes: RouteEntry[] = [
       // Soft validation — let the user set a preferred model even if the
       // provider is currently unconfigured (e.g. setting up agents before
       // adding the API key). Surface a `modelStatus` so the UI can show a
-      // yellow warning chip; do NOT block creation.
-      // Why soft: Phase 4 resolves an effective model per call from the
-      // preferred string + currently-available providers. A hard 400 here
-      // would reject perfectly valid intent ("I want this agent on Haiku
-      // once Anthropic is configured").
-      const ollamaAvailable = system.ollama?.getHealth().availableModels ?? []
-      const routerAvailable = await system.llm.models().catch(() => [] as string[])
-      const allAvailable = [...ollamaAvailable, ...routerAvailable]
+      // yellow warning chip; do NOT block creation. Effective-model
+      // resolution at call time picks a working fallback.
       const requestedModel = body.model as string
-      const modelStatus: 'ok' | 'unavailable' | 'unverified' =
-        allAvailable.length === 0 ? 'unverified'
-        : allAvailable.includes(requestedModel) ? 'ok'
-        : 'unavailable'
+      const modelStatus = await resolveModelStatus(system, requestedModel)
       if (modelStatus === 'unavailable') {
         console.warn(`[agents] Model "${requestedModel}" not currently available — agent will use fallback when invoked.`)
       }
@@ -204,21 +212,14 @@ export const agentRoutes: RouteEntry[] = [
         else broadcast(evt)
       }
       const aiAgent = asAIAgent(agent)
-      let modelStatus: 'ok' | 'unavailable' | 'unverified' | undefined
+      let modelStatus: ModelStatus | undefined
       if (aiAgent) {
         if (body.persona) aiAgent.updatePersona(body.persona as string)
         if (body.model) {
-          // Same soft-validation behaviour as POST — accept the update, surface
-          // status so the UI can warn if currently unavailable. Effective-model
-          // resolution at call time picks a working fallback when needed.
-          const ollamaAvailable = system.ollama?.getHealth().availableModels ?? []
-          const routerAvailable = await system.llm.models().catch(() => [] as string[])
-          const allAvailable = [...ollamaAvailable, ...routerAvailable]
+          // Same soft-validation as POST — accept the update, surface status
+          // so the UI can warn if currently unavailable.
           const requestedModel = body.model as string
-          modelStatus =
-            allAvailable.length === 0 ? 'unverified'
-            : allAvailable.includes(requestedModel) ? 'ok'
-            : 'unavailable'
+          modelStatus = await resolveModelStatus(system, requestedModel)
           if (modelStatus === 'unavailable') {
             console.warn(`[agents] Model "${requestedModel}" not currently available — agent will use fallback when invoked.`)
           }
@@ -321,73 +322,7 @@ export const agentRoutes: RouteEntry[] = [
       return json({ removed: true })
     },
   },
-  // --- Memory introspection ---
-  {
-    method: 'GET',
-    pattern: /^\/api\/agents\/([^/]+)\/memory$/,
-    handler: (_req, match, { system }) => {
-      const name = decodeURIComponent(match[1]!)
-      const agent = system.team.getAgent(name)
-      if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
-      const ai = asAIAgent(agent)
-      if (!ai?.getMemoryStats) return errorResponse('Only AI agents have memory stats')
-      return json(ai.getMemoryStats())
-    },
-  },
-  {
-    method: 'GET',
-    pattern: /^\/api\/agents\/([^/]+)\/memory\/([^/]+)$/,
-    handler: (_req, match, { system }) => {
-      const name = decodeURIComponent(match[1]!)
-      const roomId = decodeURIComponent(match[2]!)
-      const agent = system.team.getAgent(name)
-      if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
-      const ai = asAIAgent(agent)
-      if (!ai?.getHistory) return errorResponse('Only AI agents have memory')
-      return json(ai.getHistory(roomId))
-    },
-  },
-  {
-    method: 'DELETE',
-    pattern: /^\/api\/agents\/([^/]+)\/memory\/([^/]+)\/([^/]+)$/,
-    handler: (_req, match, { system }) => {
-      const name = decodeURIComponent(match[1]!)
-      const roomId = decodeURIComponent(match[2]!)
-      const messageId = decodeURIComponent(match[3]!)
-      const agent = system.team.getAgent(name)
-      if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
-      const ai = asAIAgent(agent)
-      if (!ai?.deleteHistoryMessage) return errorResponse('Only AI agents have memory')
-      const deleted = ai.deleteHistoryMessage(roomId, messageId)
-      if (!deleted) return errorResponse('Message not found in agent history', 404)
-      return json({ deleted: true, messageId })
-    },
-  },
-  {
-    method: 'DELETE',
-    pattern: /^\/api\/agents\/([^/]+)\/memory\/([^/]+)$/,
-    handler: (_req, match, { system }) => {
-      const name = decodeURIComponent(match[1]!)
-      const roomId = decodeURIComponent(match[2]!)
-      const agent = system.team.getAgent(name)
-      if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
-      const ai = asAIAgent(agent)
-      if (!ai?.clearHistory) return errorResponse('Only AI agents have memory')
-      ai.clearHistory(roomId)
-      return json({ cleared: true, roomId })
-    },
-  },
-  {
-    method: 'DELETE',
-    pattern: /^\/api\/agents\/([^/]+)\/memory$/,
-    handler: (_req, match, { system }) => {
-      const name = decodeURIComponent(match[1]!)
-      const agent = system.team.getAgent(name)
-      if (!agent) return errorResponse(`Agent "${name}" not found`, 404)
-      const ai = asAIAgent(agent)
-      if (!ai?.clearHistory) return errorResponse('Only AI agents have memory')
-      ai.clearHistory()
-      return json({ cleared: true })
-    },
-  },
+  // Memory introspection routes live in routes/agents-memory.ts (registered
+  // separately in http-routes.ts). Kept out of this file to keep agent CRUD
+  // and per-agent config focused.
 ]

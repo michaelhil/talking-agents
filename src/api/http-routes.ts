@@ -15,6 +15,7 @@ import { houseRoutes } from './routes/house.ts'
 import { roomRoutes } from './routes/rooms.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
 import { agentRoutes } from './routes/agents.ts'
+import { agentMemoryRoutes } from './routes/agents-memory.ts'
 import { messageRoutes } from './routes/messages.ts'
 import { ollamaRoutes } from './routes/ollama.ts'
 import { providersListRoutes } from './routes/providers-list.ts'
@@ -64,6 +65,9 @@ const allRoutes = [
   // Artifacts before rooms (avoids /rooms/:name/artifacts being shadowed)
   ...artifactRoutes,
   ...roomRoutes,
+  // Agent-memory routes BEFORE agentRoutes so /api/agents/:name/memory
+  // matches before /api/agents/:name (which would shadow it).
+  ...agentMemoryRoutes,
   ...agentRoutes,
   ...messageRoutes,
 ]
