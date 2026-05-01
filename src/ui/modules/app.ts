@@ -443,6 +443,19 @@ $selectedAgentId.listen(async (agentId) => {
   }
 })
 
+// "Change model" links inside error message bubbles dispatch
+// open-agent-inspector with { agentId, focus }. Without a listener the
+// click was a no-op (bug introduced when the inspector moved to a modal).
+// Route to the same selection store the sidebar uses so the modal opens
+// via the existing $selectedAgentId path — single open-modal channel,
+// no duplicate code.
+window.addEventListener('open-agent-inspector', (e) => {
+  const detail = (e as CustomEvent<{ agentId?: string; focus?: string }>).detail
+  if (detail?.agentId && $agents.get()[detail.agentId]) {
+    $selectedAgentId.set(detail.agentId)
+  }
+})
+
 // --- New messages in current room: append to DOM ---
 $roomMessages.listen((allMessages, _old, changedRoomId) => {
   // Double-check: both the store and the DOM container must agree on which room is displayed

@@ -19,6 +19,7 @@
 // ============================================================================
 
 import type { AIAgent, AIAgentConfig, IncludeContext, IncludePrompts, PromptSection, ContextSection } from '../core/types/agent.ts'
+import { resolveModelFallback, FALLBACKABLE_CODES } from './model-fallback.ts'
 import type { AgentHistory, Message } from '../core/types/messaging.ts'
 import type { Artifact, ArtifactTypeDefinition } from '../core/types/artifact.ts'
 import type { EvalEvent } from '../core/types/agent-eval.ts'
@@ -177,6 +178,11 @@ export const createAIAgent = (
   // its preferred model again, so a subsequent outage re-emits the notice.
   let lastFallbackTarget: string | null = null
 
+  // Per-agent model-fallback resolution + fallbackable error codes live in
+  // model-fallback.ts so they can be unit-tested without spinning up the
+  // full agent factory.
+  // (resolveModelFallback / FALLBACKABLE_CODES imported at top of file)
+
   // Active abort controller for stream cancellation
   let activeAbortController: AbortController | null = null
 
@@ -292,7 +298,12 @@ export const createAIAgent = (
     const run = async (): Promise<void> => {
       let wasRespond = false
       try {
-        const { decision, flushInfo } = await evaluate(
+        // First-attempt eval. If it returns action='error' with a fallbackable
+        // code AND a fallback model is configured (explicit or implicit
+        // Pro→Flash), retry ONCE with the fallback. evaluate() catches LLM
+        // errors and converts them to action='error', so we don't need a
+        // try/catch around it — the error is a return value.
+        let { decision, flushInfo } = await evaluate(
           contextResult, evalConfig, llmProvider, includeTools ? toolExecutor : undefined, maxToolIterationsCfg,
           triggerRoomId, {
             toolDefinitions: effectiveToolDefs,
@@ -302,6 +313,36 @@ export const createAIAgent = (
           },
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
+
+        if (decision.response.action === 'error' && FALLBACKABLE_CODES.has(decision.response.code)) {
+          const fallback = resolveModelFallback(effectiveModel, config.modelFallback)
+          if (fallback) {
+            // Notice the fallback in the eval-event stream so it shows in the
+            // thinking indicator and inspector. Same kind as the per-call
+            // resolver's notice — UI distinguishes by `reason`.
+            if (onEvalEvent) {
+              onEvalEvent(config.name, {
+                kind: 'model_fallback',
+                preferred: effectiveModel,
+                effective: fallback,
+                reason: 'preferred_unavailable',
+              })
+            }
+            const retryConfig = { ...evalConfig, model: fallback }
+            const retry = await evaluate(
+              contextResult, retryConfig, llmProvider, includeTools ? toolExecutor : undefined, maxToolIterationsCfg,
+              triggerRoomId, {
+                toolDefinitions: effectiveToolDefs,
+                inReplyTo,
+                onEvent: evalEventCb,
+                signal: abortController.signal,
+              },
+            )
+            if (!cm.isEpochCurrent(epoch)) return
+            decision = retry.decision
+            flushInfo = retry.flushInfo
+          }
+        }
 
         wasRespond = decision.response.action === 'respond'
 
@@ -672,7 +713,7 @@ export const createAIAgent = (
           maxToolIterations: maxToolIterationsCfg,
         }
 
-        const { decision } = await evaluate(
+        let { decision } = await evaluate(
           contextResult, evalConfig, llmProvider,
           includeTools ? toolExecutor : undefined,
           maxToolIterationsCfg, roomId,
@@ -682,6 +723,32 @@ export const createAIAgent = (
           },
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled
+        // Mirror tryEvaluate's fallback retry — trigger-driven evals hit
+        // the same Pro-503 capacity issues as user-message evals.
+        if (decision.response.action === 'error' && FALLBACKABLE_CODES.has(decision.response.code)) {
+          const fallback = resolveModelFallback(effectiveModel, config.modelFallback)
+          if (fallback) {
+            if (onEvalEvent) {
+              onEvalEvent(config.name, {
+                kind: 'model_fallback',
+                preferred: effectiveModel,
+                effective: fallback,
+                reason: 'preferred_unavailable',
+              })
+            }
+            const retry = await evaluate(
+              contextResult, { ...evalConfig, model: fallback }, llmProvider,
+              includeTools ? toolExecutor : undefined,
+              maxToolIterationsCfg, roomId,
+              {
+                toolDefinitions: includeTools ? toolDefinitions : undefined,
+                signal: abortController.signal,
+              },
+            )
+            if (!cm.isEpochCurrent(epoch)) return
+            decision = retry.decision
+          }
+        }
         onDecision(decision)
       } catch (err) {
         if (cm.isEpochCurrent(epoch)) {

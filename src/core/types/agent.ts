@@ -227,6 +227,15 @@ export interface AIAgentConfig {
   readonly contextEnabled?: boolean             // master for all context sub-section toggles (default: true)
   readonly wikiBindings?: ReadonlyArray<string> // optional per-agent wiki override (effective set = room ∪ agent override)
   readonly triggers?: ReadonlyArray<Trigger>    // scheduled prompts; see src/core/triggers/types.ts
+  // Optional second-choice model. When the primary call fails with a
+  // fallbackable upstream error (rate_limit / quota / provider_down — i.e.
+  // the upstream is having transient trouble, not a config issue), the eval
+  // loop retries ONCE with this model before propagating the error. Provider-
+  // prefixed strings work the same as `model`. Implicit default for the common
+  // case: when `model` is `gemini:gemini-2.5-pro` and `modelFallback` is
+  // unset, we fall through to `gemini:gemini-2.5-flash` — Pro 503s under
+  // capacity load are common enough to warrant a default.
+  readonly modelFallback?: string
 }
 
 // === Agent Response (parsed from LLM plain text output) ===
