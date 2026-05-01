@@ -2,7 +2,7 @@
 // Artifact) → UI types. Kept pure so ws-dispatch stays focused on routing,
 // and so these can be unit-tested in isolation.
 
-import type { UIMessage, RoomProfile, ArtifactInfo } from '../render-types.ts'
+import type { UIMessage, RoomProfile, ArtifactInfo } from '../render/render-types.ts'
 import type { Message, AgentProfile, RoomProfile as ServerRoomProfile } from '../../../core/types/messaging.ts'
 import type { Artifact } from '../../../core/types/artifact.ts'
 import type { AgentEntry } from '../stores.ts'

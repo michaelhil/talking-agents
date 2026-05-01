@@ -8,7 +8,7 @@
 
 import { atom, map, computed, batched } from '../lib/nanostores.ts'
 import type { ReadableAtom, MapStore } from '../lib/nanostores.ts'
-import type { UIMessage, AgentInfo, RoomProfile, ArtifactInfo } from './render-types.ts'
+import type { UIMessage, AgentInfo, RoomProfile, ArtifactInfo } from './render/render-types.ts'
 
 // === Types ===
 

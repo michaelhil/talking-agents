@@ -2,7 +2,7 @@
 // Each row has a magnifier that opens the preview modal (or scrolls the
 // persona textarea into view for the persona row).
 
-import { openPreviewModal as openModal } from '../detail-modal.ts'
+import { openPreviewModal as openModal } from '../modals/detail-modal.ts'
 import {
   mkToggleRow, mkGroup, sectionByKey, PROMPT_KEYS,
   type GroupDeps, type PreviewSection,

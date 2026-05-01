@@ -32,7 +32,7 @@ import {
   updateThinkingPreviewStyle,
   showContextIcon,
   addThinkingWarning,
-} from './render-thinking.ts'
+} from './render/render-thinking.ts'
 
 export interface ThinkingDisplayDeps {
   readonly messagesDiv: HTMLElement

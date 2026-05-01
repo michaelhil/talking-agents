@@ -2,7 +2,7 @@
 // Persona & Model Editor Modals — Edit agent persona and model.
 // ============================================================================
 
-import { createModal, createButtonRow, createTextarea } from './detail-modal.ts'
+import { createModal, createButtonRow, createTextarea } from './modals/detail-modal.ts'
 import { populateModelSelect } from './model-select.ts'
 
 export const openPromptEditor = (

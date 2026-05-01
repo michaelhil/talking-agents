@@ -24,7 +24,7 @@ import {
   updateThinkingPreview,
   updateThinkingPreviewStyle,
   showContextIcon,
-} from './render-thinking.ts'
+} from './render/render-thinking.ts'
 import { derivePhase, phaseLabel, THINKING_MARKER } from './thinking-phase.ts'
 import type { MapStore, ReadableAtom } from '../lib/nanostores.ts'
 import type { AgentContext, AgentEntry, IndicatorState } from './stores.ts'

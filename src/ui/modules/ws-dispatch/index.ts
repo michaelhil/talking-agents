@@ -43,7 +43,7 @@ import {
   handleSummaryRunDelta,
   handleSummaryRunCompleted,
   handleSummaryRunFailed,
-} from '../summary-panel.ts'
+} from '../panels/summary-panel.ts'
 import { toUIMessage, toUIRoomProfile, toAgentEntry, toUIArtifact } from './mappers.ts'
 import { shouldEmitBound, shouldEmitAllFailed } from './dedup.ts'
 

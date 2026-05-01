@@ -1,6 +1,6 @@
 // Context group — participants, artifacts, activity, known-agents.
 
-import { openPreviewModal as openModal } from '../detail-modal.ts'
+import { openPreviewModal as openModal } from '../modals/detail-modal.ts'
 import {
   mkToggleRow, mkGroup, sectionByKey, CONTEXT_KEYS,
   type GroupDeps, type PreviewSection,

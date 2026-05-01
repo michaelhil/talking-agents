@@ -9,7 +9,7 @@
 
 import { safeFetchJson } from './fetch-helpers.ts'
 import { $roomMessages, $roomMembers, $artifacts } from './stores.ts'
-import type { RoomProfile, UIMessage, ArtifactInfo } from './render-types.ts'
+import type { RoomProfile, UIMessage, ArtifactInfo } from './render/render-types.ts'
 
 export const fetchRoomMessages = async (_roomId: string, roomName: string): Promise<void> => {
   const data = await safeFetchJson<{ profile: RoomProfile; messages: UIMessage[] }>(

@@ -2,7 +2,7 @@
 // Document Editor Modal — Create and edit document artifact blocks.
 // ============================================================================
 
-import { createModal } from './detail-modal.ts'
+import { createModal } from './modals/detail-modal.ts'
 
 interface Block {
   id: string

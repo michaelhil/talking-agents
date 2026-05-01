@@ -9,22 +9,22 @@ import { createWSClient, type WSClient } from './ws-client.ts'
 import { send, setWSClient } from './ws-send.ts'
 import { initThinkingDisplay } from './thinking-display.ts'
 import { fetchRoomMessages, fetchRoomMembers, fetchRoomArtifacts } from './room-fetchers.ts'
-import { renderRooms, renderArtifacts } from './render-rooms.ts'
-import { renderAgents } from './render-agents.ts'
-import { mountRoomMembers, consumeAutoAddRoom, registerPendingCreateAdd, clearAutoAddRoom } from './render-room-members.ts'
-import { mountRoomSwitcher } from './render-room-switcher.ts'
+import { renderRooms, renderArtifacts } from './render/render-rooms.ts'
+import { renderAgents } from './render/render-agents.ts'
+import { mountRoomMembers, consumeAutoAddRoom, registerPendingCreateAdd, clearAutoAddRoom } from './render/render-room-members.ts'
+import { mountRoomSwitcher } from './render/render-room-switcher.ts'
 import { mountVisibilityPopover } from './visibility-popover.ts'
 import { initMessageHeaderPrefs } from './message-header-prefs.ts'
-import { renderMessage } from './render-message.ts'
+import { renderMessage } from './render/render-message.ts'
 import type {
   UIMessage,
   RoomProfile,
   AgentInfo,
   ArtifactInfo,
   ArtifactAction,
-} from './render-types.ts'
+} from './render/render-types.ts'
 import { derivePhase, phaseLabel, THINKING_MARKER } from './thinking-phase.ts'
-import { openTextEditorModal } from './detail-modal.ts'
+import { openTextEditorModal } from './modals/detail-modal.ts'
 import { createWorkspace } from './workspace.ts'
 import { wsDispatch, pendingCreateHooks } from './ws-dispatch/index.ts'
 import { batched } from '../lib/nanostores.ts'
@@ -37,16 +37,16 @@ import {
   wireOllamaDashboard,
   type OllamaDashboardElements,
 } from './ollama-dashboard.ts'
-import { stopProvidersPanel } from './providers-panel.ts'
-import { startLoggingStateDot } from './logging-panel.ts'
+import { stopProvidersPanel } from './panels/providers/index.ts'
+import { startLoggingStateDot } from './panels/logging-panel.ts'
 import { initSettingsNav } from './settings-nav.ts'
 import { hydrateIconPlaceholders, icon } from './icon.ts'
 import {
   isSummaryGroupExpanded,
   initSummaryPanel,
-} from './summary-panel.ts'
-import { initScriptPanel } from './script-panel.ts'
-import { initScriptDocPanel } from './script-doc-panel.ts'
+} from './panels/summary-panel.ts'
+import { initScriptPanel } from './panels/script-panel.ts'
+import { initScriptDocPanel } from './panels/script-doc-panel.ts'
 import {
   $myAgentId,
   $sessionToken,
@@ -169,7 +169,7 @@ const handleArtifactAction = (action: ArtifactAction): void => {
 }
 
 // Prompt-context modal + per-message view-context handler live in context-modal.ts.
-import { showContextModal, handleViewContext } from './context-modal.ts'
+import { showContextModal, handleViewContext } from './modals/context-modal.ts'
 
 // Workspace wired here, after handleArtifactAction is in scope. Subscribers
 // to $selectedRoomArtifacts and the btn-workspace click handler use this.
@@ -361,7 +361,7 @@ mountVisibilityPopover({
 
 // Bug-report icon in the room header — same modal as Settings → Report bug.
 document.getElementById('btn-report-bug')!.onclick = () => {
-  void import('./bug-modal.ts').then(m => m.openBugModal())
+  void import('./modals/bug-modal.ts').then(m => m.openBugModal())
 }
 
 // --- Room selection: visibility, fetch data, render messages ---
@@ -435,10 +435,10 @@ $selectedAgentId.listen(async (agentId) => {
   if (agentId) {
     const agent = $agents.get()[agentId]
     if (!agent) return
-    const { openAgentDetailModal } = await import('./agent-detail-modal.ts')
+    const { openAgentDetailModal } = await import('./modals/agent-detail-modal.ts')
     openAgentDetailModal(agent.name)
   } else {
-    const { closeAgentDetailModal } = await import('./agent-detail-modal.ts')
+    const { closeAgentDetailModal } = await import('./modals/agent-detail-modal.ts')
     closeAgentDetailModal()
   }
 })
@@ -934,7 +934,7 @@ btnClearMessages.onclick = () => {
 
 const btnBookmarks = $('#btn-bookmarks') as HTMLButtonElement
 btnBookmarks.onclick = async () => {
-  const { openBookmarksPanel } = await import('./bookmarks-panel.ts')
+  const { openBookmarksPanel } = await import('./panels/bookmarks-panel.ts')
   await openBookmarksPanel({
     setComposerText: (text: string) => {
       chatInput.value = text
@@ -949,7 +949,7 @@ btnTriggers.onclick = async () => {
   if (!roomId) return
   const room = $rooms.get()[roomId]
   if (!room) return
-  const { openTriggersModal } = await import('./triggers-panel.ts')
+  const { openTriggersModal } = await import('./panels/triggers-panel.ts')
   await openTriggersModal({ id: roomId, name: room.name })
 }
 

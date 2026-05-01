@@ -8,47 +8,47 @@ type SettingsRow = 'prompt' | 'providers' | 'tools' | 'skills' | 'scripts' | 'pa
 
 const openers: Record<SettingsRow, () => Promise<void> | void> = {
   prompt: async () => {
-    const m = await import('./system-prompt-modal.ts')
+    const m = await import('./modals/system-prompt-modal.ts')
     await m.openSystemPromptModal()
   },
   providers: async () => {
-    const { openProvidersModal } = await import('./providers-modal.ts')
+    const { openProvidersModal } = await import('./modals/providers-modal.ts')
     await openProvidersModal()
   },
   tools: async () => {
-    const m = await import('./tools-list-modal.ts')
+    const m = await import('./modals/tools-list-modal.ts')
     await m.openToolsListModal()
   },
   skills: async () => {
-    const m = await import('./skills-list-modal.ts')
+    const m = await import('./modals/skills-list-modal.ts')
     await m.openSkillsListModal()
   },
   scripts: async () => {
-    const m = await import('./scripts-list-modal.ts')
+    const m = await import('./modals/scripts-list-modal.ts')
     await m.openScriptsListModal()
   },
   packs: async () => {
-    const m = await import('./packs-modal.ts')
+    const m = await import('./modals/packs-modal.ts')
     await m.openPacksModal()
   },
   wikis: async () => {
-    const m = await import('./wikis-modal.ts')
+    const m = await import('./modals/wikis-modal.ts')
     await m.openWikisModal()
   },
   geodata: async () => {
-    const m = await import('./geodata-modal.ts')
+    const m = await import('./modals/geodata-modal.ts')
     await m.openGeodataModal()
   },
   logging: async () => {
-    const m = await import('./logging-modal.ts')
+    const m = await import('./modals/logging-modal.ts')
     m.openLoggingModal()
   },
   instances: async () => {
-    const m = await import('./instances-modal.ts')
+    const m = await import('./modals/instances-modal.ts')
     await m.openInstancesModal()
   },
   bug: async () => {
-    const m = await import('./bug-modal.ts')
+    const m = await import('./modals/bug-modal.ts')
     await m.openBugModal()
   },
 }

@@ -4,7 +4,7 @@
 // Extracted from ui-renderer.ts. Each artifact type has its own render function.
 // ============================================================================
 
-import type { ArtifactInfo, ArtifactAction, TaskItem, PollOption } from './render-types.ts'
+import type { ArtifactInfo, ArtifactAction, TaskItem, PollOption } from './render/render-types.ts'
 
 // === Shared helpers ===
 

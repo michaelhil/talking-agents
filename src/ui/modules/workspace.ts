@@ -9,9 +9,9 @@
 //   - open()                  — open the master/detail modal
 // ============================================================================
 
-import { createMasterDetailModal, createButton, createInput } from './detail-modal.ts'
-import { renderArtifacts } from './render-rooms.ts'
-import type { ArtifactInfo, ArtifactAction } from './render-types.ts'
+import { createMasterDetailModal, createButton, createInput } from './modals/detail-modal.ts'
+import { renderArtifacts } from './render/render-rooms.ts'
+import type { ArtifactInfo, ArtifactAction } from './render/render-types.ts'
 import { $selectedRoomArtifacts, $myAgentId, $selectedRoomId } from './stores.ts'
 
 export interface Workspace {
