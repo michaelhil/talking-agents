@@ -189,7 +189,9 @@ export interface ModalElements {
 // stay visible. Caller appends into scrollBody (and footer if needed).
 export const createModal = (config: ModalConfig): ModalElements => {
   const overlay = document.createElement('div')
-  overlay.className = 'fixed inset-0 flex items-center justify-center z-50 p-4'
+  // z-[1100]: must beat Leaflet's controls (z-index 1000) and panes (400+)
+  // so a Settings modal opened over a chat-inline map renders above it.
+  overlay.className = 'fixed inset-0 flex items-center justify-center z-[1100] p-4'
   overlay.style.background = 'var(--shadow-overlay)'
 
   const card = document.createElement('div')

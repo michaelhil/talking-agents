@@ -36,11 +36,11 @@ afterEach(() => {
 describe('resolver — strict-match short-circuit', () => {
   test('first source wins', async () => {
     const localFn: SourceFn = async () => f('Bergen', 60.39, 5.32, 'local')
-    const bundledFn: SourceFn = async () => f('Bergen', 0, 0, 'bundled')
+    const bundledFn: SourceFn = async () => f('Bergen', 0, 0, 'overpass')
     const r = await resolveLocation('Bergen', 'city', {
       sources: [
         { name: 'local', fn: localFn },
-        { name: 'bundled', fn: bundledFn },
+        { name: 'overpass', fn: bundledFn },
       ],
       cacheUpstream: false,
     })
@@ -55,7 +55,7 @@ describe('resolver — strict-match short-circuit', () => {
     const r = await resolveLocation('Bergen', 'city', {
       sources: [
         { name: 'local', fn: localFn },
-        { name: 'bundled', fn: bundledFn },
+        { name: 'overpass', fn: bundledFn },
         { name: 'overpass', fn: overpassFn },
       ],
       cacheUpstream: false,
@@ -67,7 +67,7 @@ describe('resolver — strict-match short-circuit', () => {
     const r = await resolveLocation('Atlantis', 'city', {
       sources: [
         { name: 'local', fn: async () => null },
-        { name: 'bundled', fn: async () => null },
+        { name: 'overpass', fn: async () => null },
       ],
       cacheUpstream: false,
     })

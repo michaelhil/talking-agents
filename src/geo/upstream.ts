@@ -11,6 +11,7 @@
 // further sources.
 
 import { canonical } from './canonical.ts'
+import { getCategory } from './categories.ts'
 import type { GeoCategory, GeoFeature, GeoSource } from './types.ts'
 
 const USER_AGENT = 'samsinn/1.0 (multi-agent research assistant; mhilde@gmail.com)'
@@ -161,21 +162,14 @@ interface OverpassResponse {
   readonly elements: ReadonlyArray<OverpassElement>
 }
 
-const overpassQueryFor = (category: GeoCategory, query: string): string | null => {
-  // Escape regex specials in the name so Overpass treats it literally.
+const overpassQueryFor = async (category: GeoCategory, query: string): Promise<string | null> => {
+  const meta = await getCategory(category)
+  if (!meta?.osmQuery) return null
+  // Regex-escape the runtime name. The template content itself is trusted —
+  // the user (or their AI) wrote it; only the variable substitution is sanitised.
   const safe = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  switch (category) {
-    case 'airport':
-      return `[out:json][timeout:10]; (node[aeroway=aerodrome][name~"^${safe}$",i]; way[aeroway=aerodrome][name~"^${safe}$",i];); out center 5;`
-    case 'city':
-      return `[out:json][timeout:10]; (node[place~"^(city|town)$"][name~"^${safe}$",i];); out 5;`
-    case 'offshore-platform':
-      return `[out:json][timeout:10]; (node[man_made=offshore_platform][name~"^${safe}$",i]; way[man_made=offshore_platform][name~"^${safe}$",i];); out center 5;`
-    case 'landmark':
-      return `[out:json][timeout:10]; (node[tourism][name~"^${safe}$",i]; node[historic][name~"^${safe}$",i];); out 5;`
-    default:
-      return null
-  }
+  const inner = meta.osmQuery.replace('{name}', safe)
+  return `[out:json][timeout:10]; (${inner}); out center 5;`
 }
 
 const elementCoords = (el: OverpassElement): [number, number] | null => {
@@ -221,7 +215,7 @@ export const lookupOverpass = async (
   query: string,
   category: GeoCategory,
 ): Promise<GeoFeature | null> => {
-  const q = overpassQueryFor(category, query)
+  const q = await overpassQueryFor(category, query)
   if (!q) return null
   const url = nextOverpassMirror()
   let res: Response

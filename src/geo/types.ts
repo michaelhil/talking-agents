@@ -1,33 +1,29 @@
 // ============================================================================
 // Geodata types — canonical Feature shape, store + index types.
 //
-// One format end-to-end: bundled repo, local user-edits, agent input, API
-// responses. Standard GeoJSON Feature with a strict `properties` shape.
-// Geometry is `Point` for v1; lines/polygons can come later without breaking
-// readers.
+// One format end-to-end: user-paste imports, agent-tool input, store on
+// disk, API responses. Standard GeoJSON Feature with a strict `properties`
+// shape. Geometry is `Point` for v1; lines/polygons can come later without
+// breaking readers.
 //
-// Property contract:
-//   - id is canonical kebab-case, unique within (source, category)
-//   - name is the human display string (raw, not folded)
-//   - aliases are alternate display strings; canonical-form matching folds
-//     all of them at lookup time
-//   - verified=true means curated (bundled, or user-promoted local)
-//   - verified=false means upstream-cached or freshly-added by agent
+// Categories are no longer a closed union — users define them via the
+// paste-import flow, validated against the registry at runtime. The
+// `category` field is therefore typed as `string` here, with runtime
+// validation in src/geo/categories.ts.
 //
 // ID space: cross-source collisions are allowed. Lookups walk the cascade
 // and surface the first hit; the (source, id) pair is the unique key for
 // remove/update operations.
 // ============================================================================
 
-export type GeoSource = 'local' | 'bundled' | 'nominatim' | 'overpass'
+import type { MarkerIcon } from '../ui/modules/map/normalise.ts'
+export { MARKER_ICONS, isMarkerIcon, type MarkerIcon } from '../ui/modules/map/normalise.ts'
 
-export type GeoCategory =
-  | 'airport'
-  | 'offshore-platform'
-  | 'city'
-  | 'landmark'
-  | 'address'
-  | 'other'
+export type GeoSource = 'local' | 'overpass' | 'nominatim'
+
+// Open category type. Validation is registry-driven at runtime — see
+// src/geo/categories.ts.
+export type GeoCategory = string
 
 export interface GeoProperties {
   readonly id: string
@@ -62,20 +58,18 @@ export interface GeoFeatureCollection {
   readonly features: ReadonlyArray<GeoFeature>
 }
 
-// One file per category. The category lives in properties.category, but the
-// filename mirrors it for fast file-level operations + diff-friendly PRs.
-export type CategoryFileMap = Record<GeoCategory, string>
+// Category metadata as stored in ~/.samsinn/geodata/categories.json.
+export interface CategoryMeta {
+  readonly id: string                       // kebab-case, /^[a-z][a-z0-9-]{0,62}$/
+  readonly displayName: string
+  readonly icon: MarkerIcon
+  readonly osmQuery?: string                // Overpass template with `{name}` placeholder
+  readonly addedAt?: string                 // ISO 8601 — when first registered
+}
 
-// Top-level index in the bundled repo. Lists category → file. No
-// schema_version: bundle bumps are clean breaks (matches snapshot policy).
-export interface GeoIndex {
-  readonly version: string                            // matches the git tag, e.g. "0.1.0"
-  readonly generated_at: string                       // ISO 8601
-  readonly categories: ReadonlyArray<{
-    readonly category: GeoCategory
-    readonly file: string                             // path relative to repo root
-    readonly count: number
-  }>
+export interface CategoryRegistryFile {
+  readonly version: 1
+  readonly categories: ReadonlyArray<CategoryMeta>
 }
 
 // Resolver result. Single-source short-circuit: the first cascade source to
@@ -94,7 +88,7 @@ export interface MapEnvelopeFromGeo {
     readonly lat: number
     readonly lng: number
     readonly label?: string
-    readonly icon?: 'pin' | 'plane' | 'airport' | 'platform' | 'ship' | 'city' | 'dot'
+    readonly icon?: MarkerIcon
     readonly color?: string
   }>
 }

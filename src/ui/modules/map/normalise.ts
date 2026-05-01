@@ -33,11 +33,15 @@
 
 export type MapView = { center: [number, number]; zoom: number }
 
-export type MarkerIcon = 'pin' | 'plane' | 'airport' | 'platform' | 'ship' | 'city' | 'dot'
+// Single source of truth for the marker icon set. Imported by the geo
+// subsystem (category-registry validator), the import modal (prompt
+// template), and the renderer (SVG mapping in icons.ts).
+export const MARKER_ICONS = ['pin', 'platform', 'airport', 'plane', 'ship', 'city', 'dot'] as const
 
-export const MARKER_ICONS: ReadonlySet<MarkerIcon> = new Set([
-  'pin', 'plane', 'airport', 'platform', 'ship', 'city', 'dot',
-])
+export type MarkerIcon = typeof MARKER_ICONS[number]
+
+export const isMarkerIcon = (s: unknown): s is MarkerIcon =>
+  typeof s === 'string' && (MARKER_ICONS as ReadonlyArray<string>).includes(s)
 
 export type EnvelopeFeature =
   | { type: 'marker'; lat: number; lng: number; label?: string; color?: string; icon?: MarkerIcon }
@@ -92,8 +96,8 @@ const validateEnvelopeFeature = (raw: unknown): EnvelopeFeature | null => {
       // the marker still renders (default bitmap pin), the agent just doesn't
       // get the colour treatment. Strict failure here would break maps over a
       // typo in a single feature.
-      if (typeof f.icon === 'string' && MARKER_ICONS.has(f.icon as MarkerIcon)) {
-        (out as { icon?: MarkerIcon }).icon = f.icon as MarkerIcon
+      if (isMarkerIcon(f.icon)) {
+        (out as { icon?: MarkerIcon }).icon = f.icon
       }
       return out
     }

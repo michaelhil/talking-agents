@@ -10,7 +10,6 @@
 // the resolver accepts a SourceList and walks them in order. The default
 // list is what production uses.
 
-import { lookupBundled } from './bundled.ts'
 import { lookupInCategory, upsertFeature } from './store.ts'
 import { lookupNominatim, lookupOverpass } from './upstream.ts'
 import type { GeoCategory, GeoFeature, GeoLookupResult, GeoSource } from './types.ts'
@@ -31,12 +30,8 @@ export interface ResolverOptions {
 const localSource: SourceFn = async (query, category) =>
   lookupInCategory(category, query, { includeUnverified: true })
 
-const bundledSource: SourceFn = async (query, category) =>
-  lookupBundled(category, query)
-
 const DEFAULT_SOURCES: ReadonlyArray<{ name: GeoSource; fn: SourceFn }> = [
   { name: 'local',     fn: localSource },
-  { name: 'bundled',   fn: bundledSource },
   { name: 'overpass',  fn: lookupOverpass },
   { name: 'nominatim', fn: lookupNominatim },
 ]

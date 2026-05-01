@@ -118,7 +118,7 @@ describe('store — remove', () => {
   test('remove with wrong source is a noop', async () => {
     const f = makeFeature({ name: 'Bergen', lat: 60.39, lng: 5.32, verified: false, source: 'local' })
     await upsertFeature(f)
-    const r = await removeFeature('city', 'bundled', f.properties.id)
+    const r = await removeFeature('city', 'overpass', f.properties.id)
     expect(r.removed).toBe(false)
   })
 })

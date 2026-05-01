@@ -63,8 +63,9 @@ import { createWSManager } from './api/ws-handler.ts'
 import {
   createPassTool, createGetTimeTool, createTestToolTool, createListSkillsTool,
   createWebTools, createWriteSkillTool, createWriteToolTool, createPackTools,
-  createGeoLookupTool, createGeoAddTool, createGeoRemoveTool,
+  createGeoLookupTool, createGeoAddTool, createGeoRemoveTool, createGeoListCategoriesTool,
 } from './tools/built-in/index.ts'
+import { runGeodataMigrationOnce } from './geo/migrate.ts'
 
 const DRAIN_TIMEOUT_MS = 5_000
 
@@ -150,11 +151,14 @@ export const bootstrap = async (): Promise<void> => {
   shared.sharedToolRegistry.register(createGetTimeTool())
   shared.sharedToolRegistry.register(createTestToolTool(shared.sharedToolRegistry))
   shared.sharedToolRegistry.register(createListSkillsTool(shared.sharedSkillStore))
-  // Geo tools — process-wide; they operate on the shared geodata store at
-  // ~/.samsinn/geodata/ and a process-pinned bundled snapshot.
+  // Geo: one-shot migration of any pre-registry layout, then register the
+  // shared geodata tools. The migration is idempotent — subsequent boots
+  // see the registry file and do nothing.
+  await runGeodataMigrationOnce()
   shared.sharedToolRegistry.register(createGeoLookupTool())
   shared.sharedToolRegistry.register(createGeoAddTool())
   shared.sharedToolRegistry.register(createGeoRemoveTool())
+  shared.sharedToolRegistry.register(createGeoListCategoriesTool())
   for (const tool of createWikiTools(shared.wikiRegistry)) {
     shared.sharedToolRegistry.register(tool)
   }
