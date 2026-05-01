@@ -1,6 +1,7 @@
 {
   "name": "samsinn",
   "version": "0.9.2",
+  "geodataVersion": "0.0.0",
   "description": "Multi-agent room communication system with multi-instance deploy, delivery modes, scripts (improv scenes), artifacts, MCP server, and bug reporting to GitHub",
   "module": "src/index.ts",
   "type": "module",

@@ -28,6 +28,7 @@ import { bookmarkRoutes } from './routes/bookmarks.ts'
 import { toolRoutes } from './routes/tools.ts'
 import { loggingRoutes } from './routes/logging.ts'
 import { scriptRoutes } from './routes/scripts.ts'
+import { geodataRoutes } from './routes/geodata.ts'
 import type { RouteContext } from './routes/types.ts'
 
 // Route helpers live in ./routes/helpers.ts to keep http-routes.ts cycle-free.
@@ -54,6 +55,8 @@ const allRoutes = [
   ...bookmarkRoutes,
   // Scripts before rooms (avoids /rooms/:name/script being shadowed)
   ...scriptRoutes,
+  // Geodata routes — process-wide, no instance binding.
+  ...geodataRoutes,
   // Artifacts before rooms (avoids /rooms/:name/artifacts being shadowed)
   ...artifactRoutes,
   ...roomRoutes,

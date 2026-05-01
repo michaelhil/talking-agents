@@ -4,7 +4,7 @@
 
 import { domRefs } from './app-dom.ts'
 
-type SettingsRow = 'prompt' | 'providers' | 'tools' | 'skills' | 'scripts' | 'packs' | 'wikis' | 'logging' | 'instances' | 'bug'
+type SettingsRow = 'prompt' | 'providers' | 'tools' | 'skills' | 'scripts' | 'packs' | 'wikis' | 'geodata' | 'logging' | 'instances' | 'bug'
 
 const openers: Record<SettingsRow, () => Promise<void> | void> = {
   prompt: async () => {
@@ -34,6 +34,10 @@ const openers: Record<SettingsRow, () => Promise<void> | void> = {
   wikis: async () => {
     const m = await import('./wikis-modal.ts')
     await m.openWikisModal()
+  },
+  geodata: async () => {
+    const m = await import('./geodata-modal.ts')
+    await m.openGeodataModal()
   },
   logging: async () => {
     const m = await import('./logging-modal.ts')

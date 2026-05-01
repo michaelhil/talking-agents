@@ -10,6 +10,9 @@
 //     skills/<name>/                            ← global skills
 //     tools/                                    ← drop-in TS tools
 //     knowledge/                                ← shared knowledge files
+//     geodata/                                  ← user-local GeoJSON store
+//       <category>.geojson
+//       .bundled/<version>/                     ← cached pinned snapshot
 //     logs/admin.jsonl                          ← janitor + registry events
 //     instances/                                ← per-instance state
 //       <id>/
@@ -40,6 +43,8 @@ export const sharedPaths = {
   scripts: (): string => join(samsinnHome(), 'scripts'),
   tools: (): string => join(samsinnHome(), 'tools'),
   knowledge: (): string => join(samsinnHome(), 'knowledge'),
+  geodata: (): string => join(samsinnHome(), 'geodata'),
+  geodataBundleCache: (): string => join(samsinnHome(), 'geodata', '.bundled'),
   // Legacy global memory dir. Moves to per-instance in Phase I; keep for
   // now so single-tenant agents keep their notes.log/facts.json.
   memoryLegacy: (): string => join(samsinnHome(), 'memory'),

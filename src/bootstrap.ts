@@ -63,6 +63,7 @@ import { createWSManager } from './api/ws-handler.ts'
 import {
   createPassTool, createGetTimeTool, createTestToolTool, createListSkillsTool,
   createWebTools, createWriteSkillTool, createWriteToolTool, createPackTools,
+  createGeoLookupTool, createGeoAddTool, createGeoRemoveTool,
 } from './tools/built-in/index.ts'
 
 const DRAIN_TIMEOUT_MS = 5_000
@@ -149,6 +150,11 @@ export const bootstrap = async (): Promise<void> => {
   shared.sharedToolRegistry.register(createGetTimeTool())
   shared.sharedToolRegistry.register(createTestToolTool(shared.sharedToolRegistry))
   shared.sharedToolRegistry.register(createListSkillsTool(shared.sharedSkillStore))
+  // Geo tools — process-wide; they operate on the shared geodata store at
+  // ~/.samsinn/geodata/ and a process-pinned bundled snapshot.
+  shared.sharedToolRegistry.register(createGeoLookupTool())
+  shared.sharedToolRegistry.register(createGeoAddTool())
+  shared.sharedToolRegistry.register(createGeoRemoveTool())
   for (const tool of createWikiTools(shared.wikiRegistry)) {
     shared.sharedToolRegistry.register(tool)
   }
