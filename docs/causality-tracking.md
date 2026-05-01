@@ -1,6 +1,6 @@
 # Causality Tracking — Design Document
 
-> **Status (2026-04):** V1 (`inReplyTo` stamping + LLM rendering) is implemented — see `src/agents/ai-agent.ts`, `src/agents/evaluation.ts`, `src/agents/context-builder.ts`, `src/core/types/messaging.ts`. The V2 tombstone section below is **historical**: the message-cap pruning it was designed to fix was removed in commit 33aad8b in favour of per-room summary + compression (`src/core/summary-engine.ts`, `src/core/summary-scheduler.ts`). `compressedIds` still exists on Room, but is now driven by the new compression path, not by a silent splice. Read V2 as background only.
+> **Status (2026-04):** V1 (`inReplyTo` stamping + LLM rendering) is implemented — see `src/agents/ai-agent.ts`, `src/agents/evaluation.ts`, `src/agents/context-builder.ts`, `src/core/types/messaging.ts`. The V2 tombstone section below is **historical**: the message-cap pruning it was designed to fix was removed in commit 33aad8b in favour of per-room summary + compression (`src/core/summaries/summary-engine.ts`, `src/core/summaries/summary-scheduler.ts`). `compressedIds` still exists on Room, but is now driven by the new compression path, not by a silent splice. Read V2 as background only.
 
 ## Problem Statement
 
@@ -251,8 +251,7 @@ Explicit trigger (tool call or API endpoint) runs an LLM over the batch before s
 | File | Reason |
 |---|---|
 | `core/house.ts` | Room management only, no message content |
-| `core/delivery-modes.ts` | Flow/broadcast logic, no message creation |
-| `core/room-flows.ts` / `room-todos.ts` | Sub-systems, no message creation |
+| `core/rooms/delivery-modes.ts` | Flow/broadcast logic, no message creation |
 | `tools/built-in/*` | Tool results don't carry inReplyTo (known gap, accepted) |
 | `integrations/mcp/` | Messages returned as-is, inReplyTo included automatically |
 | `api/http-routes.ts` | Reads messages from room, inReplyTo included automatically |

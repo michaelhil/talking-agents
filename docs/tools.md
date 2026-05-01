@@ -512,7 +512,7 @@ Drop a `.ts` file in `./tools/` (project-local) or `~/.samsinn/tools/` (user-glo
 
 ```typescript
 // tools/my-tool.ts
-import type { Tool } from '../src/core/types.ts'
+import type { Tool } from '../src/core/types/tool.ts'
 
 const myTool: Tool = {
   name: 'my_tool',

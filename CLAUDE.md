@@ -68,12 +68,17 @@ Samsinn is a multi-agent room-based chat system with two delivery modes (`broadc
 ### Core domain (`src/core/`)
 
 - `house.ts` — the root singleton owning all rooms and agents; every request goes through it
-- `room.ts` — membership, messages, mute/pause state; `addressing.ts` resolves `[[AgentName]]` mentions
-- `delivery.ts` + `delivery-modes.ts` — decides which agents receive each posted message. Modes: `broadcast` (all eligible) and `manual` (humans + sender only; AI peers activated explicitly). `[[AgentName]]` / `[[tag:X]]` addressing overrides in all modes.
-- `snapshot.ts` — persistence (load/save to `data/snapshot.json`). Current `SNAPSHOT_VERSION = 13`. Bumping is a clean break — no migration ladder
-- `summary-engine.ts` + `summary-scheduler.ts` — per-room running summary + compression. Two independent schedules (time and message-count) per target (`summary` vs `compression`). Compression keeps last X fresh and folds older Y into a single evolving `room_summary` at the top of history; IDs tracked in `room.compressedIds`. Surfaced via 🗜 room-header control, `/api/rooms/:name/summary-config|summary|summary/regenerate`, and `summary_run_*` WS events. This replaced the earlier message-cap pruning and per-agent history compression
-- `artifact-store.ts` + `artifact-type-registry.ts` + `artifact-types/*` — pluggable per-room artifacts (task-list, document, poll, mermaid). New artifact types register themselves via the registry pattern
-- `types/` — split into domain modules (`agent.ts`, `room.ts`, `artifact.ts`, `llm.ts`, `ws-protocol.ts`, etc). **Import from the specific submodule**, not a barrel
+- `rooms/` — `room.ts` (membership, messages, mute/pause state), `addressing.ts` (`[[AgentName]]`/`[[tag:X]]`), `delivery-modes.ts` (broadcast helper), `room-export.ts`
+- `delivery.ts` — message router (`createMessageRouter`). Modes: `broadcast` (all eligible) and `manual` (humans + sender only; AI peers activated explicitly). `[[AgentName]]` / `[[tag:X]]` addressing overrides in non-manual modes; inert in manual
+- `storage/` — `snapshot.ts` (load/save to `data/snapshot.json`, current `SNAPSHOT_VERSION = 17`, clean-break), `artifact-store.ts`, `instance-cleanup.ts` lives in `instances/` (not here)
+- `summaries/` — `summary-engine.ts` + `summary-scheduler.ts`. Per-room running summary + compression. Two independent schedules (time and message-count) per target (`summary` vs `compression`). Compression keeps last X fresh and folds older Y into a single evolving `room_summary` at the top of history; IDs tracked in `room.compressedIds`. Surfaced via 🗜 room-header control, `/api/rooms/:name/summary-config|summary|summary/regenerate`, and `summary_run_*` WS events. Replaced the earlier message-cap pruning and per-agent history compression
+- `scripts/` — `script-runner.ts` (reactive listener, queue-per-room), `script-md-parser.ts`, `script-render.ts`, `script-store.ts`, `script-whisper.ts`. See `docs/scripts.md`
+- `instances/` — `system-registry.ts` (per-tenant House lifecycle, lazy-load, idle-evict), `instance-cleanup.ts` (janitor: trash + purge), `seed-example.ts` (first-run Cafe + AI + Human)
+- `artifact-types/` — pluggable per-room artifact type definitions (task-list, document, poll, mermaid, map). Register via `registry.ts`; `artifact-store.ts` lives in `storage/`
+- `triggers/` — per-agent scheduled prompts (`scheduler.ts` + `types.ts`). Pinned to a `roomId`; cascade-cleaned on room/agent delete
+- `room-operations.ts` — system-level membership ops (`addAgentToRoom`, `removeAgentFromRoom`, `removeRoom`, `cancelGenerationsInRoom`)
+- `fetch-utils.ts` — shared `fetchWithTimeout` (used by LLM adapters AND web tools)
+- `types/` — split into domain modules (`agent.ts`, `room.ts`, `artifact.ts`, `llm.ts`, `ws-protocol.ts`, `summary.ts`, `messaging.ts`, `script.ts`, etc). **Import from the specific submodule**, not a barrel
 
 ### Agents (`src/agents/`)
 
@@ -93,8 +98,8 @@ Multi-provider with failover. The shape is a layered stack:
 - **`openai-compatible.ts`** — one HTTP adapter covering Groq / Cerebras / OpenRouter / Mistral / SambaNova (all speak OpenAI Chat Completions). Incremental tool-call accumulation in SSE streams; `<think>...</think>` extraction for DeepSeek R1-style content streams.
 - **`errors.ts`** — typed discriminated errors: `OllamaError`, `GatewayError`, `CloudProviderError`. Use `isFallbackable(err)` to decide whether the router should fall through. `parseRetryAfterMs` handles both integer-seconds and HTTP-date formats.
 - **`router.ts`** — `createProviderRouter({providers}, {order})` implements `LLMProvider`. Per-request failover with per-provider cooldown (driven by `Retry-After` when present). Soft preference by `(model → last-success provider)` stops ping-pong. Prefix-pinned models (`groq:llama-3.3-70b`) skip failover. Prefix split on **first colon only** — OpenRouter slugs contain colons. Emits `ProviderBoundEvent` / `ProviderAllFailedEvent` / `ProviderStreamFailedEvent` via `onRoutingEvent`.
-- **`providers-config.ts`** — env parser → `ProviderConfig`. `PROVIDER=ollama` forces single-Ollama mode; `PROVIDER_ORDER` overrides priority; missing API keys dropped with a startup log line. Accepts an optional `fileStore: MergedProviders` to merge stored keys (env wins).
-- **`providers-store.ts`** — file-backed provider config at `~/.samsinn/providers.json` (mode 0600). `loadProviderStore` / `saveProviderStore` (atomic write via temp+rename). `mergeWithEnv` resolves env-vs-stored precedence and returns per-provider `source: 'env' | 'stored' | 'none'`. Keys are never logged; `maskKey` produces `•••last4`.
+- **`providers-config.ts`** — env parser → `ProviderConfig`. `PROVIDER=ollama` forces single-Ollama mode; `PROVIDER_ORDER` overrides priority. When given `fileStore: MergedProviders` (the post-M2 canonical path), derives cloud entries directly from the merged result — does NOT re-read `<NAME>_API_KEY` / `<NAME>_MAX_CONCURRENT` / `<NAME>_BASE_URL` env vars in that branch. Bootstrap-only env (`PROVIDER`, `PROVIDER_ORDER`, `OLLAMA_URL`, `FORCE_PROVIDER_FAIL`) still read directly.
+- **`providers-store.ts`** — file-backed provider config at `~/.samsinn/providers.json` (mode 0600). `loadProviderStore` / `saveProviderStore` (atomic write via temp+rename). `mergeWithEnv` is the **single source of truth** for env-vs-stored precedence on cloud-provider keys/maxConcurrent/baseUrl; `parseProviderConfig` consumes its output rather than re-reading env. Returns per-provider `source: 'env' | 'stored' | 'none'`. Keys are never logged; `maskKey` produces `•••last4`.
 - **`providers-setup.ts`** — builds gateways from config. Cloud gateways get `isPermanentError: isCloudProviderError` so fallbackable errors don't double-count against the router's cooldown map.
 - **`tool-capability.ts`** — converts `Tool[]` → OpenAI-format `ToolDefinition[]`. Provider-neutral.
 
@@ -102,22 +107,27 @@ Multi-provider with failover. The shape is a layered stack:
 
 Router routing events are wired to late-bound callbacks on `System` (see `setOnProviderBound` / `setOnProviderAllFailed` / `setOnProviderStreamFailed`). `ws-handler.ts` subscribes to those and broadcasts `provider_*` WS messages, which the UI dispatcher turns into toasts with 5 s dedup per (agentId, provider).
 
-**Provider admin surface.** `GET/PUT /api/providers[/:name]` and `POST /api/providers/:name/test` live in `src/api/routes/providers.ts` — cross-provider config, never returns raw keys. `POST /api/system/shutdown` (in `src/api/routes/system.ts`) sends SIGTERM to the own process to trigger the existing graceful shutdown (snapshot flush + MCP disconnect); the supervisor is expected to respawn. UI panel is in `src/ui/modules/providers-panel.ts`, polls `/api/providers` every 10 s while the dialog is open.
+**Provider admin surface.** `GET/PUT /api/providers[/:name]` and `POST /api/providers/:name/{test,test-model,refresh-models}` are split across `src/api/routes/providers-list.ts` (status), `providers-config.ts` (PUT order + per-name keys/baseUrl/etc.), and `providers-test.ts` (active probes). Cross-provider config; never returns raw keys. `POST /api/system/shutdown` (in `src/api/routes/system.ts`) sends SIGTERM to the own process to trigger graceful shutdown (snapshot flush + MCP disconnect); the supervisor respawns. UI panel is in `src/ui/modules/panels/providers/index.ts`, polls `/api/providers` every 10 s while open.
 
 ### Tool + skill system
 
 - Built-in tools: `src/tools/built-in/*` — hand-written, always loaded
 - External tools: `.ts` files dropped in `./tools/` or `~/.samsinn/tools/`, discovered by `src/tools/loader.ts` at startup
 - Skills: `~/.samsinn/skills/<name>/SKILL.md` (+ optional `tools/` subdir) loaded by `src/skills/loader.ts`. Agents can create skills at runtime via `write_skill` / `write_tool`
-- All tools register into `src/core/tool-registry.ts`; agents see only the tool names listed in their config
+- All tools register into `src/core/tool-registry.ts` (with an overlay registry per-instance for house-bound built-ins); agents see only the tool names listed in their config
 
 ### Front-end (`src/ui/modules/`)
 
-Plain TypeScript, no framework. Nanostores for state (`stores.ts`), one WebSocket (`ws-client.ts`) dispatched by `ws-dispatch.ts`. Rendering is split into focused `render-*.ts` modules (agents, rooms, messages, thinking, mermaid). `app.ts` is the shell — do not put render logic there.
+Plain TypeScript, no framework. Nanostores for state (`stores.ts`), one WebSocket (`ws-client.ts`) dispatched by `ws-dispatch/index.ts`. Sub-directorized:
+- `modals/` — every dialog (~17 files: bug, detail, instances, providers, system-prompt, tools-list, wikis, …)
+- `panels/` — sidebar/settings panels (bookmarks, geodata, logging, packs, providers, summary, triggers, wikis, scripts)
+- `render/` — message/room/agent rendering (`render-message`, `render-rooms`, `render-agents`, `render-thinking`, `render-types`, `render-room-members`, `render-room-switcher`)
+
+`app.ts` is the shell — do not put render logic there. Other shared root files: `app-dom.ts`, `app-thinking.ts`, `thinking-state.ts`, `send-as-picker.ts`, `agent-selection.ts`, `settings-nav.ts`, `toast.ts`, `icon.ts`, `theme.ts`, `auth.ts`.
 
 ### MCP integration (`src/integrations/mcp/`)
 
-Wraps the same `House` object for external LLMs. Tool handlers live in `tools/*-tools.ts`. Keep MCP tool surface in sync with the REST API — both are thin wrappers over `House`.
+Wraps the same `House` object for external Claude Code / MCP clients. Tool handlers live in `tools/*-tools.ts`. The MCP tool surface intentionally diverges from the REST/built-in surface — see "Rejected refactors" above for the audience-distinction rationale.
 
 ## Conventions specific to this repo
 
@@ -128,7 +138,7 @@ Wraps the same `House` object for external LLMs. Tool handlers live in `tools/*-
 - **Snapshot compatibility** — changes to persisted shapes require bumping version + migration in `snapshot.ts`
 - **Two delivery modes** — `broadcast` and `manual` (see `delivery-modes.ts`). Any new delivery behavior should plug into the mode switch, not branch around it. Multi-agent orchestration (improv scenes) is the script engine's concern, not the room's.
 - **No silent skips on optional dependencies.** `if (x) doX()` patterns hide latent bugs when `x` is sometimes-undefined due to ordering and the codebase's invariants drift. Either: (a) add a one-line comment explaining why "skip" is correct semantics (e.g. `// evicted-during-event drop is intentional`), or (b) assert `x` is present and throw when it isn't, or (c) use the type system to make `x` non-optional. The bug fixed in `5d73a8e` (broadcast wiring silently skipped for cookie-bound instances) was three layers of unannotated `if`s lined up. Reviewers look for the pattern; future-you greps for it when bug-hunting.
-- **Cross-cutting concerns get end-to-end tests, not just unit tests.** Streaming, snapshot save/restore, instance reset, cookie/auth flow, pack install propagation. When a feature touches >3 layers (e.g. eval → late-binding → wsManager → broadcastToInstance → WS → UI dispatch), one integration test that exercises the full chain is worth more than five unit tests of individual layers. Unit tests of any single layer pass while the chain is broken; the integration test is what catches the disconnected wire. Existing examples: `src/api/streaming.test.ts`, `src/llm/system-wiring.test.ts`.
+- **Cross-cutting concerns get end-to-end tests, not just unit tests.** Streaming, snapshot save/restore, instance reset, cookie/auth flow, pack install propagation. When a feature touches >3 layers (e.g. eval → late-binding → wsManager → broadcastToInstance → WS → UI dispatch), one integration test that exercises the full chain is worth more than five unit tests of individual layers. Unit tests of any single layer pass while the chain is broken; the integration test is what catches the disconnected wire. Existing examples: `src/api/broadcast-wiring.test.ts`, `src/llm/system-wiring.test.ts`.
 - **Beware "boot-once cache of derived state with external inputs."** The wiki bug fixed in commit `b660b3e` (followed by the `resolveActiveWikis` refactor) had this exact shape: `wikiRegistry.setWikis(merge(stored, discovered))` was called once at boot. The CRUD endpoints re-synced, but the GET handler didn't — and `discovered` (GitHub org listing) could change without any local action. Result: GET showed wikis the registry didn't know about; refresh 404'd. Lesson: if `X = compute(A, B)` is cached, ensure the cache is invalidated whenever `A` or `B` can change, regardless of which trigger fires. Better yet, derive `X` fresh on each read (compute is usually cheap; one disk + one cached fetch). The pattern to watch for is: `setX(computeX())` at boot followed by reads that assume `X` is current. The packs/tools/skills registries don't have this risk because their inputs are local-write-through; only wiki had the external (GitHub) input + boot-time freeze combo. Audit any new "registry" subsystem against this pattern before merge.
 
 ## Docs worth reading before non-trivial work
