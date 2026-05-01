@@ -33,7 +33,7 @@ import type { SummaryConfig } from '../types/summary.ts'
 import { DEFAULT_SUMMARY_CONFIG } from '../types/summary.ts'
 import { SYSTEM_SENDER_ID } from '../types/constants.ts'
 import { parseAddressedAgents } from './addressing.ts'
-import { deliverBroadcast } from '../delivery-modes.ts'
+import { deliverBroadcast } from './delivery-modes.ts'
 
 export interface RoomCallbacks {
   readonly deliver?: DeliverFn

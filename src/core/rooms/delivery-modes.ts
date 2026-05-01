@@ -10,7 +10,7 @@
 //   manual     — handled inline in room.post() (humans + sender only)
 // ============================================================================
 
-import type { DeliverFn, Message } from './types/messaging.ts'
+import type { DeliverFn, Message } from '../types/messaging.ts'
 
 // --- Broadcast mode ---
 
