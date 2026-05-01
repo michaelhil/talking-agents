@@ -87,44 +87,58 @@ export interface ParseOptions {
   readonly fileStore?: MergedProviders
 }
 
+// When `opts.fileStore` is supplied, env-vs-stored precedence for cloud-
+// provider keys / maxConcurrent / baseUrl has already been resolved by
+// mergeWithEnv (providers-store.ts). This function therefore does NOT
+// re-read those env vars in that path — it consumes the merged result. Only
+// bootstrap-only env vars (`PROVIDER`, `PROVIDER_ORDER`, `OLLAMA_URL`,
+// `FORCE_PROVIDER_FAIL`) — which are not represented in MergedProviders —
+// are still read here directly.
 export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => {
   const env = opts.env ?? process.env
   const getEnv = (k: string): string | undefined => env[k]
 
   const ollamaOnly = (getEnv('PROVIDER') ?? '').toLowerCase() === 'ollama'
   const ollamaUrl = getEnv('OLLAMA_URL') ?? DEFAULTS.ollamaBaseUrl
-  const ollamaMaxConcurrent = opts.fileStore?.ollama.maxConcurrent
-    ?? intEnv('OLLAMA_MAX_CONCURRENT', 2)
+  // OLLAMA_MAX_CONCURRENT: when fileStore is given, mergeWithEnv has already
+  // applied env-over-stored precedence; trust the merged value. Otherwise
+  // fall through to direct env read.
+  const ollamaMaxConcurrent = opts.fileStore
+    ? (opts.fileStore.ollama.maxConcurrent ?? 2)
+    : intEnv('OLLAMA_MAX_CONCURRENT', 2)
   const forceFailProvider = getEnv('FORCE_PROVIDER_FAIL') ?? null
 
-  // Collect cloud provider configs. Precedence (handled by mergeWithEnv if a
-  // fileStore is supplied): env > stored. Without a fileStore we fall back
-  // to env-only — identical to previous behaviour.
+  // Collect cloud provider configs.
+  //   - With fileStore: derive entirely from MergedProviders (env precedence
+  //     already applied upstream).
+  //   - Without fileStore: env-only fallback for tests / edge cases.
   const cloud: Partial<Record<CloudProviderName, CloudProviderConfigWithSource>> = {}
   if (!ollamaOnly) {
-    for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
-      const merged = opts.fileStore?.cloud[name]
-      const envKey = getEnv(`${name.toUpperCase()}_API_KEY`)?.trim()
-      const apiKey = envKey && envKey.length > 0 ? envKey : (merged?.apiKey ?? '')
-      // Cloud providers need a key to be eligible. Local providers (llamacpp)
-      // register without one — llama-server accepts requests without auth by
-      // default; the optional --api-key flag is supported via the same
-      // <NAME>_API_KEY env / store path.
-      if (!apiKey && !isLocal(name)) continue
-      const source: 'env' | 'stored' = envKey && envKey.length > 0
-        ? 'env'
-        : (apiKey ? 'stored' : 'stored')  // local-no-key is 'stored' by convention
-
-      // Enabled: env-sourced keys default to enabled; stored keys honour the
-      // stored enabled flag (default true if missing). Local providers are
-      // enabled by default — no key required to be useful.
-      const enabledDefault = isLocal(name) ? true : true
-      const enabled = source === 'env' ? true : (merged?.enabled ?? enabledDefault)
-      if (!enabled) continue
-
-      const maxConcurrent = merged?.maxConcurrent
-        ?? intEnv(`${name.toUpperCase()}_MAX_CONCURRENT`, PROVIDER_PROFILES[name].defaultMaxConcurrent)
-      cloud[name] = { apiKey, maxConcurrent, source, enabled }
+    if (opts.fileStore) {
+      for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
+        const merged = opts.fileStore.cloud[name]
+        if (!merged) continue
+        // Cloud providers need a key. Local providers (llamacpp) register
+        // without one — llama-server accepts requests without auth by default.
+        if (!merged.apiKey && !isLocal(name)) continue
+        if (!merged.enabled) continue
+        const maxConcurrent = merged.maxConcurrent
+          ?? PROVIDER_PROFILES[name].defaultMaxConcurrent
+        // MergedProviderEntry.source is 'env' | 'stored' | 'none'; the
+        // CloudProviderConfigWithSource shape uses only 'env' | 'stored'.
+        // A keyless local provider lands here with source='none' — map to
+        // 'stored' by convention (matches prior behavior).
+        const source: 'env' | 'stored' = merged.source === 'env' ? 'env' : 'stored'
+        cloud[name] = { apiKey: merged.apiKey, maxConcurrent, source, enabled: true }
+      }
+    } else {
+      for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
+        const envKey = getEnv(`${name.toUpperCase()}_API_KEY`)?.trim()
+        const apiKey = envKey && envKey.length > 0 ? envKey : ''
+        if (!apiKey && !isLocal(name)) continue
+        const maxConcurrent = intEnv(`${name.toUpperCase()}_MAX_CONCURRENT`, PROVIDER_PROFILES[name].defaultMaxConcurrent)
+        cloud[name] = { apiKey, maxConcurrent, source: apiKey ? 'env' : 'stored', enabled: true }
+      }
     }
   }
 
@@ -162,17 +176,20 @@ export const parseProviderConfig = (opts: ParseOptions = {}): ProviderConfig => 
       order = ['ollama']
     }
   }
-  // Per-provider baseUrl overrides. Convention: <NAME>_BASE_URL env var,
-  // falling back to the stored value in MergedProviders if present, else
-  // the profile default (resolved by the consumer). Currently only local
-  // providers use this — cloud baseUrls are fixed in PROVIDER_PROFILES.
+  // Per-provider baseUrl overrides. Only local providers use this — cloud
+  // baseUrls are fixed in PROVIDER_PROFILES. With fileStore, env-vs-stored
+  // precedence is already resolved on the merged entry; without fileStore,
+  // fall back to direct env read.
   const baseUrls: Partial<Record<CloudProviderName, string>> = {}
   for (const name of Object.keys(PROVIDER_PROFILES) as CloudProviderName[]) {
     if (!isLocal(name)) continue
-    const envUrl = getEnv(`${name.toUpperCase()}_BASE_URL`)?.trim()
-    const storedUrl = (opts.fileStore?.cloud[name] as { baseUrl?: string } | undefined)?.baseUrl?.trim()
-    if (envUrl) baseUrls[name] = envUrl
-    else if (storedUrl) baseUrls[name] = storedUrl
+    if (opts.fileStore) {
+      const url = opts.fileStore.cloud[name]?.baseUrl
+      if (url) baseUrls[name] = url
+    } else {
+      const envUrl = getEnv(`${name.toUpperCase()}_BASE_URL`)?.trim()
+      if (envUrl) baseUrls[name] = envUrl
+    }
   }
 
   return {

@@ -169,6 +169,10 @@ export interface MergeOptions {
   readonly env?: Record<string, string | undefined>
 }
 
+// mergeWithEnv is the SINGLE source of truth for env-vs-stored precedence
+// for cloud-provider keys / maxConcurrent / baseUrl. parseProviderConfig
+// (providers-config.ts) consumes this output; it does NOT re-read those
+// env vars when given a fileStore.
 export const mergeWithEnv = (
   store: ProvidersFileShape,
   opts: MergeOptions = {},
