@@ -585,6 +585,12 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   })
   scriptHook.set((roomId, message) => scriptRunner.onRoomMessage(roomId, message))
 
+  // Cascade-stop active scripts when their room is deleted. Without this,
+  // the run sits in scriptRunner.runs forever holding ScriptRun + dialogue
+  // history (no further messages arrive in a deleted room, so the
+  // findMissingCast defensive abort never fires).
+  roomDeleted.add((roomId) => { void scriptRunner.stop(roomId) })
+
   const buildWikisCatalogForAgent = (roomId: string, agentId: string): string => {
     const room = house.getRoom(roomId)
     if (!room) return ''

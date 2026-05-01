@@ -371,6 +371,18 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
       try { entry.system.summaryScheduler.dispose() } catch (err) {
         console.error(`[registry] evict ${id} summaryScheduler.dispose threw: ${err instanceof Error ? err.message : String(err)}`)
       }
+      // Stop any active script runs. Less leak risk than the scheduler
+      // intervals (no setInterval pinning the System), but in-flight LLM
+      // whisper calls + bounded setTimeouts keep the closure alive briefly;
+      // explicit stop releases queue chains and any spawned cast that
+      // wasn't already drained. Best-effort — eviction proceeds regardless.
+      try {
+        for (const run of entry.system.scriptRunner.listRuns()) {
+          void entry.system.scriptRunner.stop(run.roomId).catch(() => { /* best-effort */ })
+        }
+      } catch (err) {
+        console.error(`[registry] evict ${id} scriptRunner cleanup threw: ${err instanceof Error ? err.message : String(err)}`)
+      }
       map.delete(id)
     })()
 
