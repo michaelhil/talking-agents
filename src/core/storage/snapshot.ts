@@ -186,39 +186,22 @@ const isValidSnapshot = (raw: Record<string, unknown>): boolean =>
 // --- Save / Load ---
 
 // A snapshot is "skippable" iff persisting it adds no value the user would
-// notice — either truly empty, or matches the seed-only shape exactly
-// (one Cafe room, one AI agent, one Human agent, no chat messages, no
-// artifacts, no bookmarks). Used by createAutoSaver to skip persistence
-// so cookieless drive-by visits and seed-only instances don't leave dirs
-// on disk.
+// notice — i.e. truly empty (no rooms, no agents, no artifacts, no
+// bookmarks). Used by createAutoSaver to skip persistence when seeding is
+// disabled (SAMSINN_SEED_EXAMPLE=0) and nothing was created.
 //
-// First real chat message, custom room, additional/custom agent, artifact,
-// or bookmark flips this to non-skippable and the autosaver writes through
-// normally.
-//
-// Shape is pinned by SEED_ROOM_NAME / SEED_AI_NAME / SEED_HUMAN_NAME in
-// seed-example.ts — there's a unit test that fails if the seed drifts.
+// Previously this also recognized "seed-only" snapshots (1 Cafe + 1 AI + 1
+// Human + no chat) as skippable to avoid drive-by visitors leaving dirs on
+// disk. That coupled the check to seed-example.ts and only compared agent
+// NAMES — persona/model/triggers/tools edits without a chat message were
+// silently dropped (it half-undid F1's "agent edits trigger save"). Dropped
+// in favour of letting the janitor handle drive-by cleanup (instance-
+// cleanup.ts: demote idle → trash after 48h, purge after 7d). The auth-
+// gated prod deploy bounds drive-by traffic; one snapshot file is ~5–20KB.
 export const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
   if (snap.artifacts && snap.artifacts.length > 0) return false
   if (snap.bookmarks && snap.bookmarks.length > 0) return false
-
-  // Truly empty (seed disabled or failed before any state was created).
-  if (snap.rooms.length === 0 && snap.agents.length === 0) return true
-
-  // Seed-only: exactly the shape produced by seedFreshInstance.
-  if (snap.rooms.length !== 1) return false
-  if (snap.agents.length !== 1) return false
-  if (snap.humans.length !== 1) return false
-  const room = snap.rooms[0]!
-  const ai = snap.agents[0]!
-  const human = snap.humans[0]!
-  if (room.profile.name !== 'Cafe') return false
-  if (ai.config.name !== 'AI') return false
-  if (human.name !== 'Human') return false
-  for (const msg of room.messages) {
-    if (msg.type === 'chat') return false
-  }
-  return true
+  return snap.rooms.length === 0 && snap.agents.length === 0
 }
 
 export const saveSnapshot = async (snapshot: SystemSnapshot, path: string): Promise<void> => {
