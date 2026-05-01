@@ -25,6 +25,7 @@ import {
   type AgentContext,
 } from './stores.ts'
 import { agentIdToName } from './identity-lookups.ts'
+import { firstChunkSeen } from './thinking-state.ts'
 import {
   updateThinkingPreview,
   updateThinkingTool,
@@ -36,12 +37,11 @@ import {
 
 export interface ThinkingDisplayDeps {
   readonly messagesDiv: HTMLElement
-  readonly firstChunkSeen: Set<string>
   readonly showContextModal: (ctx: AgentContext, warnings?: string[]) => void
 }
 
 export const initThinkingDisplay = (deps: ThinkingDisplayDeps): void => {
-  const { messagesDiv, firstChunkSeen, showContextModal } = deps
+  const { messagesDiv, showContextModal } = deps
 
   $thinkingPreviews.listen((previews, _old, changedId) => {
     if (!changedId) return

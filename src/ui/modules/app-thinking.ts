@@ -29,13 +29,13 @@ import { derivePhase, phaseLabel, THINKING_MARKER } from './thinking-phase.ts'
 import type { MapStore, ReadableAtom } from '../lib/nanostores.ts'
 import type { AgentContext, AgentEntry, IndicatorState } from './stores.ts'
 import { computeMinVisibleDecision, type MinVisibleEntry } from './min-visible-duration.ts'
+import { firstChunkSeen } from './thinking-state.ts'
 
 const MIN_VISIBLE_MS = 400  // perceptual floor for "I saw an indicator"
 
 interface ThinkingDeps {
   readonly messagesDiv: HTMLElement
   readonly send: (data: unknown) => void
-  readonly firstChunkSeen: Set<string>
   readonly $agents: MapStore<Record<string, AgentEntry>>
   readonly $agentContexts: MapStore<Record<string, AgentContext>>
   readonly $agentWarnings: MapStore<Record<string, string[]>>
@@ -54,7 +54,7 @@ interface ThinkingController {
 
 export const createThinkingController = (deps: ThinkingDeps): ThinkingController => {
   const {
-    messagesDiv, send, firstChunkSeen,
+    messagesDiv, send,
     $agentContexts, $agentWarnings, $thinkingTools, $thinkingPreviews,
     $visibleThinkingIndicators,
     showContextModal,

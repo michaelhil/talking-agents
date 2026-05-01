@@ -26,6 +26,8 @@ import type {
 import { derivePhase, phaseLabel, THINKING_MARKER } from './thinking-phase.ts'
 import { openTextEditorModal } from './modals/detail-modal.ts'
 import { createWorkspace } from './workspace.ts'
+import { openSendAsPicker } from './send-as-picker.ts'
+import { reconcileSelectionForRoom } from './agent-selection.ts'
 import { wsDispatch, pendingCreateHooks } from './ws-dispatch/index.ts'
 import { batched } from '../lib/nanostores.ts'
 import { showToast } from './toast.ts'
@@ -112,9 +114,6 @@ let workspace: ReturnType<typeof createWorkspace>
 // The `client` reference is held in ws-send.ts so any UI module can call
 // `send(...)` without being threaded the client through imports.
 let client: WSClient | null = null
-
-// Thinking indicator ephemeral state (DOM-local, not in stores)
-const firstChunkSeen = new Set<string>()
 
 // === Action helpers ===
 
@@ -281,32 +280,6 @@ $agentListView.subscribe(({ agents, selectedAgentId, selectedRoomId, roomMemberI
   })
   updateAgentsLabel()
 })
-
-// Auto-select / GC on room enter:
-//   - GC stale per-room selections (selected agent was deleted)
-//   - If exactly one human is a member of the room and no valid selection,
-//     set them as poster.
-const reconcileSelectionForRoom = (roomId: string): void => {
-  const posterMap = $selectedHumanByRoom.get()
-  const view = $agentListView.get()
-  const memberSet = new Set(view.roomMemberIds)
-  const allAgents = view.agents
-
-  const current = posterMap[roomId]
-  const currentValid = current && allAgents[current] && allAgents[current].kind === 'human'
-  if (!currentValid && current) {
-    // Drop stale entry. setKey with undefined removes via the underlying map.
-    const next = { ...posterMap }
-    delete next[roomId]
-    $selectedHumanByRoom.set(next)
-  }
-  if (currentValid) return
-
-  const humansInRoom = Object.values(allAgents).filter(a => a.kind === 'human' && memberSet.has(a.id))
-  if (humansInRoom.length === 1) {
-    $selectedHumanByRoom.setKey(roomId, humansInRoom[0]!.id)
-  }
-}
 
 $selectedRoomId.subscribe((roomId) => {
   if (!roomId) return
@@ -496,7 +469,6 @@ $roomMessages.listen((allMessages, _old, changedRoomId) => {
 const { ensureThinkingIndicator, clearThinkingIndicator, syncThinkingIndicators } = createThinkingController({
   messagesDiv,
   send,
-  firstChunkSeen,
   $agents,
   $agentContexts,
   $agentWarnings,
@@ -513,7 +485,7 @@ $agents.listen((_agents, _old, _changedId) => {
 
 // --- Thinking-indicator subscriptions live in thinking-display.ts.
 //     Preview / tools / contexts / warnings listeners wired by initThinkingDisplay. ---
-initThinkingDisplay({ messagesDiv, firstChunkSeen, showContextModal })
+initThinkingDisplay({ messagesDiv, showContextModal })
 
 // --- Artifacts → workspace badge ---
 $selectedRoomArtifacts.subscribe((artifacts) => {
@@ -599,7 +571,7 @@ chatForm.onsubmit = (e) => {
       $selectedHumanByRoom.setKey(roomId, senderId)
     } else {
       // Hand off to the send-as picker. It re-submits when the user selects.
-      void openSendAsPicker(roomId, content)
+      void openSendAsPicker(roomId, content, { chatInput, resetChatInputHeight })
       return
     }
   }
@@ -607,111 +579,6 @@ chatForm.onsubmit = (e) => {
   send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId })
   chatInput.value = ''; resetChatInputHeight()
   resetChatInputHeight()
-}
-
-// Quick "create human" path used by the send-as picker when no humans exist.
-// Inline prompt → POST /api/agents/human → add to current room → select → re-send.
-const createHumanInline = async (roomId: string, content: string): Promise<void> => {
-  const name = window.prompt('Name for the new human:')?.trim()
-  if (!name) return
-  const roomName = roomIdToName(roomId)
-  if (!roomName) return
-  try {
-    const res = await fetch('/api/agents/human', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, roomName }),
-    })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({})) as { error?: string }
-      showToast(document.body, data.error ?? `Create failed (${res.status})`, { type: 'error', position: 'fixed' })
-      return
-    }
-    const { id } = await res.json() as { id: string }
-    $selectedHumanByRoom.setKey(roomId, id)
-    if (content) {
-      send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId: id })
-      chatInput.value = ''; resetChatInputHeight()
-    }
-  } catch {
-    showToast(document.body, 'Create failed', { type: 'error', position: 'fixed' })
-  }
-}
-
-// Send-as picker — modal listing humans (in-room first, then others).
-// On select: sets per-room selection, closes modal, re-fires the send.
-// If no humans exist anywhere, opens the create-agent modal pre-filled with
-// kind=human; the new human is added to the current room and selected.
-const openSendAsPicker = async (roomId: string, content: string): Promise<void> => {
-  const allAgents = Object.values($agents.get())
-  const humans = allAgents.filter(a => a.kind === 'human')
-  const memberSet = new Set($agentListView.get().roomMemberIds)
-  const roomName = roomIdToName(roomId)
-  if (!roomName) return
-
-  if (humans.length === 0) {
-    // No humans in the system. Open the existing agent-create modal,
-    // pre-fill the human path. On creation, auto-add to current room,
-    // select, and (best-effort) re-send the queued message.
-    await createHumanInline(roomId, content)
-    return
-  }
-
-  const overlay = document.createElement('div')
-  overlay.className = 'fixed inset-0 flex items-center justify-center z-50 p-4'
-  overlay.style.background = 'var(--shadow-overlay)'
-  const card = document.createElement('div')
-  card.className = 'rounded-lg shadow-xl w-full max-w-md bg-surface text-text overflow-hidden'
-  const header = document.createElement('div')
-  header.className = 'px-6 py-3 border-b border-border'
-  header.innerHTML = `<h3 class="text-base font-semibold">Post as…</h3><div class="text-xs text-text-muted mt-1">Pick a human to attribute this message to in <strong>${roomName}</strong>.</div>`
-  card.appendChild(header)
-
-  const body = document.createElement('div')
-  body.className = 'px-6 py-3 max-h-[60vh] overflow-y-auto'
-  const inRoom = humans.filter(h => memberSet.has(h.id))
-  const elsewhere = humans.filter(h => !memberSet.has(h.id))
-
-  const close = (): void => overlay.remove()
-  overlay.onclick = (e) => { if (e.target === overlay) close() }
-  const onEsc = (e: KeyboardEvent): void => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc) } }
-  document.addEventListener('keydown', onEsc)
-
-  const buildRow = (h: AgentInfo, needsAdd: boolean): HTMLElement => {
-    const row = document.createElement('div')
-    row.className = 'py-2 flex items-center gap-2 border-b border-border last:border-b-0 cursor-pointer hover:bg-surface-muted px-2 -mx-2 rounded'
-    row.innerHTML = `<span class="font-medium flex-1">${h.name}</span><span class="text-[10px] uppercase tracking-wide text-text-subtle">${needsAdd ? 'add to room' : 'in room'}</span>`
-    row.onclick = () => {
-      if (needsAdd) {
-        if (!confirm(`Add ${h.name} to ${roomName}?`)) return
-        send({ type: 'add_to_room', roomName, agentName: h.name })
-      }
-      $selectedHumanByRoom.setKey(roomId, h.id)
-      send({ type: 'post_message', target: { rooms: [roomName] }, content, senderId: h.id })
-      chatInput.value = ''; resetChatInputHeight()
-      close()
-    }
-    return row
-  }
-  for (const h of inRoom) body.appendChild(buildRow(h, false))
-  for (const h of elsewhere) body.appendChild(buildRow(h, true))
-
-  const footer = document.createElement('div')
-  footer.className = 'px-6 py-3 border-t border-border flex justify-between gap-2'
-  const newBtn = document.createElement('button')
-  newBtn.className = 'px-3 py-1 text-xs border border-border-strong rounded hover:bg-surface-muted'
-  newBtn.textContent = '+ New human'
-  newBtn.onclick = async () => { close(); await createHumanInline(roomId, content) }
-  const cancel = document.createElement('button')
-  cancel.className = 'px-3 py-1 text-xs text-text-muted'
-  cancel.textContent = 'Cancel'
-  cancel.onclick = close
-  footer.appendChild(newBtn)
-  footer.appendChild(cancel)
-  card.appendChild(body)
-  card.appendChild(footer)
-  overlay.appendChild(card)
-  document.body.appendChild(overlay)
 }
 
 document.getElementById('btn-create-room')!.onclick = (e) => {
