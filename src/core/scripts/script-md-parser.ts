@@ -25,7 +25,7 @@
 // AST-driven, no string substitution. Fails loudly with line context.
 // ============================================================================
 
-import type { Script, CastMember, Step } from './types/script.ts'
+import type { Script, CastMember, Step } from '../types/script.ts'
 
 export const VALID_NAME = /^[a-z0-9][a-z0-9_-]*$/
 

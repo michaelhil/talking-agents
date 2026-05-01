@@ -4,7 +4,7 @@ import type { MessageTarget } from '../../../core/types/messaging.ts'
 import type { System } from '../../../main.ts'
 import { textResult, errorResult, resolveRoom } from './helpers.ts'
 import { asAIAgent } from '../../../agents/shared.ts'
-import { exportRoomConversation } from '../../../core/room-export.ts'
+import { exportRoomConversation } from '../../../core/rooms/room-export.ts'
 import { waitForRoomIdle } from '../../../core/wait-for-idle.ts'
 
 export const registerMessageTools = (mcpServer: McpServer, system: System): void => {

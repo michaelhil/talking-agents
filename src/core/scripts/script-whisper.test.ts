@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test'
 import { __test, classifyWhisper } from './script-whisper.ts'
-import type { LLMProvider, ChatRequest, ChatResponse } from './types/llm.ts'
+import type { LLMProvider, ChatRequest, ChatResponse } from '../types/llm.ts'
 
 const present = ['Alex', 'Sam']
 

@@ -17,9 +17,9 @@
 // as "skippable" so cookieless drive-by visits don't accumulate dirs.
 // ============================================================================
 
-import type { System } from '../main.ts'
-import { CURATED_MODELS } from '../llm/models/catalog.ts'
-import { resolveDefaultModel, type ProviderSnapshot } from '../llm/models/default-resolver.ts'
+import type { System } from '../../main.ts'
+import { CURATED_MODELS } from '../../llm/models/catalog.ts'
+import { resolveDefaultModel, type ProviderSnapshot } from '../../llm/models/default-resolver.ts'
 
 // Pick the seed model from live provider state so a fresh instance lands on
 // a provider the user actually has a key for. Walks the same preference

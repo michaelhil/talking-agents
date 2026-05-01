@@ -49,16 +49,16 @@
 // "look up the saver from the registry" into the hook.
 // ============================================================================
 
-import type { System } from '../main.ts'
-import type { SharedRuntime } from './shared-runtime.ts'
-import { createSystem } from '../main.ts'
+import type { System } from '../../main.ts'
+import type { SharedRuntime } from '../shared-runtime.ts'
+import { createSystem } from '../../main.ts'
 import {
   loadSnapshot, restoreFromSnapshot, createAutoSaver, type AutoSaver,
-} from './snapshot.ts'
-import { instancePaths, isValidInstanceId, sharedPaths, trashPath } from './paths.ts'
+} from '../storage/snapshot.ts'
+import { instancePaths, isValidInstanceId, sharedPaths, trashPath } from '../paths.ts'
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { asAIAgent } from '../agents/shared.ts'
+import { asAIAgent } from '../../agents/shared.ts'
 import { seedFreshInstance } from './seed-example.ts'
 
 // --- Defaults & env ---

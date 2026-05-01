@@ -16,7 +16,7 @@
 
 import { readdir, stat, rename, rm, mkdir } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
-import { sharedPaths, isValidInstanceId, trashPath } from './paths.ts'
+import { sharedPaths, isValidInstanceId, trashPath } from '../paths.ts'
 
 const HOUR_MS = 60 * 60_000
 const DAY_MS = 24 * HOUR_MS

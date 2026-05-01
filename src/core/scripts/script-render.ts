@@ -12,7 +12,7 @@
 // Never string-substitutes the original source.
 // ============================================================================
 
-import type { Script, ScriptRun, DialogueEntry, CastMember } from './types/script.ts'
+import type { Script, ScriptRun, DialogueEntry, CastMember } from '../types/script.ts'
 
 const personaOneLine = (persona: string): string => {
   const trimmed = persona.trim()

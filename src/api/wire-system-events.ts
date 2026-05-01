@@ -21,7 +21,7 @@
 // ============================================================================
 
 import type { System } from '../main.ts'
-import type { AutoSaver } from '../core/snapshot.ts'
+import type { AutoSaver } from '../core/storage/snapshot.ts'
 import type { WSManager } from './ws-handler.ts'
 import { asAIAgent } from '../agents/shared.ts'
 

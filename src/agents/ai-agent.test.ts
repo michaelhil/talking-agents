@@ -6,7 +6,7 @@ import type { LLMProvider } from '../core/types/llm.ts'
 import type { Message, RoomProfile } from '../core/types/messaging.ts'
 import type { Room } from '../core/types/room.ts'
 import { SYSTEM_SENDER_ID } from '../core/types/constants.ts'
-import { createRoom } from '../core/room.ts'
+import { createRoom } from '../core/rooms/room.ts'
 
 // --- Test helpers ---
 

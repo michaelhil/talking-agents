@@ -5,7 +5,7 @@
 // Handles Bun.serve setup, static file serving, and WebSocket upgrade.
 // ============================================================================
 
-import type { SystemRegistry } from '../core/system-registry.ts'
+import type { SystemRegistry } from '../core/instances/system-registry.ts'
 import type { WSManager } from './ws-handler.ts'
 import { DEFAULTS } from '../core/types/constants.ts'
 import { authEnabled, isValidSession, sessionFromRequest, validateToken, issueSession, buildSessionCookie } from './auth.ts'

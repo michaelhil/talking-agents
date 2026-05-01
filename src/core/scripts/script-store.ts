@@ -12,7 +12,7 @@
 
 import { readdir, readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Script } from './types/script.ts'
+import type { Script } from '../types/script.ts'
 import { parseScriptMd, VALID_NAME } from './script-md-parser.ts'
 
 // Hard cap on script source size. Scripts are markdown — the largest realistic

@@ -3,9 +3,9 @@ import { mkdtemp, rm, stat, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSystemRegistry, type SystemRegistry } from './system-registry.ts'
-import { createSharedRuntime } from './shared-runtime.ts'
-import { instancePaths } from './paths.ts'
-import { generateInstanceId } from '../api/instance-cookie.ts'
+import { createSharedRuntime } from '../shared-runtime.ts'
+import { instancePaths } from '../paths.ts'
+import { generateInstanceId } from '../../api/instance-cookie.ts'
 
 // Phase D registry tests use the SAMSINN_HOME env var to redirect all paths
 // into a per-test tmpdir. The shared runtime is built with no providers

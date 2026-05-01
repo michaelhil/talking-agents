@@ -3,7 +3,7 @@ import { mkdtemp, rm, mkdir, writeFile, utimes, readdir } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runJanitorOnce } from './instance-cleanup.ts'
-import { sharedPaths } from './paths.ts'
+import { sharedPaths } from '../paths.ts'
 
 const HOUR = 60 * 60_000
 const DAY = 24 * HOUR

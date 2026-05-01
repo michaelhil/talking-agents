@@ -13,13 +13,13 @@
 // queue (Promise<void> chain) prevents whisper races.
 // ============================================================================
 
-import type { System } from '../main.ts'
-import type { Script, ScriptRun, WhisperRecord, StepLog, DialogueEntry, CastMember } from './types/script.ts'
-import type { Message, DeliveryMode } from './types/messaging.ts'
-import type { AIAgentConfig } from './types/agent.ts'
+import type { System } from '../../main.ts'
+import type { Script, ScriptRun, WhisperRecord, StepLog, DialogueEntry, CastMember } from '../types/script.ts'
+import type { Message, DeliveryMode } from '../types/messaging.ts'
+import type { AIAgentConfig } from '../types/agent.ts'
 import { classifyWhisper } from './script-whisper.ts'
 import { renderLivingScript } from './script-render.ts'
-import { SYSTEM_SENDER_ID } from './types/constants.ts'
+import { SYSTEM_SENDER_ID } from '../types/constants.ts'
 
 // === Public surface ===
 

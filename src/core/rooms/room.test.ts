@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 import { createRoom } from './room.ts'
-import type { Message, RoomProfile } from './types/messaging.ts'
-import { SYSTEM_SENDER_ID } from './types/constants.ts'
+import type { Message, RoomProfile } from '../types/messaging.ts'
+import { SYSTEM_SENDER_ID } from '../types/constants.ts'
 
 const makeProfile = (overrides?: Partial<RoomProfile>): RoomProfile => ({
   id: 'test-room',

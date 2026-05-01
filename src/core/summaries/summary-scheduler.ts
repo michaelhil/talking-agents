@@ -8,9 +8,9 @@
 // If a run is already in-flight and another trigger fires, it's dropped —
 // the next natural trigger picks it up. Manual `triggerNow` drops if busy.
 
-import type { Message } from './types/messaging.ts'
-import type { Room } from './types/room.ts'
-import type { SummaryConfig, SummaryFeatureConfig, CompressionFeatureConfig } from './types/summary.ts'
+import type { Message } from '../types/messaging.ts'
+import type { Room } from '../types/room.ts'
+import type { SummaryConfig, SummaryFeatureConfig, CompressionFeatureConfig } from '../types/summary.ts'
 import type { SummaryEngine } from './summary-engine.ts'
 import { compressionDue } from './summary-engine.ts'
 

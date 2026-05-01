@@ -1,8 +1,8 @@
 import { describe, test, expect } from 'bun:test'
-import { createRoom } from './room.ts'
-import type { ChatRequest, LLMProvider, StreamChunk } from './types/llm.ts'
-import type { RoomProfile } from './types/messaging.ts'
-import { DEFAULT_SUMMARY_CONFIG } from './types/summary.ts'
+import { createRoom } from '../rooms/room.ts'
+import type { ChatRequest, LLMProvider, StreamChunk } from '../types/llm.ts'
+import type { RoomProfile } from '../types/messaging.ts'
+import { DEFAULT_SUMMARY_CONFIG } from '../types/summary.ts'
 import { compressionDue, createSummaryEngine, pickCompressionCandidates } from './summary-engine.ts'
 
 const makeProfile = (): RoomProfile => ({

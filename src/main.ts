@@ -13,9 +13,9 @@ import type {
   OnRoomCreated, OnRoomDeleted, OnSummaryConfigChanged, OnSummaryUpdated,
   OnTurnChanged,
 } from './core/types/room.ts'
-import type { SummaryScheduler, SummaryTarget } from './core/summary-scheduler.ts'
-import { createSummaryEngine } from './core/summary-engine.ts'
-import { createSummaryScheduler } from './core/summary-scheduler.ts'
+import type { SummaryScheduler, SummaryTarget } from './core/summaries/summary-scheduler.ts'
+import { createSummaryEngine } from './core/summaries/summary-engine.ts'
+import { createSummaryScheduler } from './core/summaries/summary-scheduler.ts'
 import { createTriggerScheduler, type TriggerScheduler } from './core/triggers/scheduler.ts'
 import type { OnArtifactChanged } from './core/types/artifact.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
@@ -65,8 +65,8 @@ import { mermaidArtifactType } from './core/artifact-types/mermaid.ts'
 import { mapArtifactType } from './core/artifact-types/map.ts'
 // Native-only tool calling — no capability probing needed
 import { type SkillStore } from './skills/loader.ts'
-import { createScriptStore, type ScriptStore } from './core/script-store.ts'
-import { createScriptRunner, type ScriptRunner, type ScriptEventEmitter } from './core/script-runner.ts'
+import { createScriptStore, type ScriptStore } from './core/scripts/script-store.ts'
+import { createScriptRunner, type ScriptRunner, type ScriptEventEmitter } from './core/scripts/script-runner.ts'
 import { createWriteScriptTool } from './tools/built-in/script-codegen.ts'
 import { sharedPaths } from './core/paths.ts'
 

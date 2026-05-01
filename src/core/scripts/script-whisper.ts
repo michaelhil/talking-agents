@@ -10,8 +10,8 @@
 // See docs/scripts.md.
 // ============================================================================
 
-import type { LLMProvider } from './types/llm.ts'
-import type { Whisper } from './types/script.ts'
+import type { LLMProvider } from '../types/llm.ts'
+import type { Whisper } from '../types/script.ts'
 
 export interface ClassifyArgs {
   readonly llm: LLMProvider

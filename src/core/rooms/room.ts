@@ -24,16 +24,16 @@
 import type {
   DeliverFn, DeliveryMode, Message, PostParams,
   ResolveAgentName, ResolveTagFn, RoomProfile,
-} from './types/messaging.ts'
+} from '../types/messaging.ts'
 import type {
   OnDeliveryModeChanged, OnMessagePosted, OnSummaryConfigChanged,
   OnSummaryUpdated, OnTurnChanged, Room, RoomRestoreParams, RoomState,
-} from './types/room.ts'
-import type { SummaryConfig } from './types/summary.ts'
-import { DEFAULT_SUMMARY_CONFIG } from './types/summary.ts'
-import { SYSTEM_SENDER_ID } from './types/constants.ts'
+} from '../types/room.ts'
+import type { SummaryConfig } from '../types/summary.ts'
+import { DEFAULT_SUMMARY_CONFIG } from '../types/summary.ts'
+import { SYSTEM_SENDER_ID } from '../types/constants.ts'
 import { parseAddressedAgents } from './addressing.ts'
-import { deliverBroadcast } from './delivery-modes.ts'
+import { deliverBroadcast } from '../delivery-modes.ts'
 
 export interface RoomCallbacks {
   readonly deliver?: DeliverFn

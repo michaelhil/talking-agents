@@ -10,8 +10,8 @@
 // that, not a frozen schema.
 // ============================================================================
 
-import type { Message } from './types/messaging.ts'
-import type { Room } from './types/room.ts'
+import type { Message } from '../types/messaging.ts'
+import type { Room } from '../types/room.ts'
 
 export interface RoomExport {
   readonly roomId: string

@@ -8,7 +8,7 @@
 // ============================================================================
 
 import type { Tool } from '../../core/types/tool.ts'
-import { type ScriptStore, MAX_SCRIPT_SOURCE_BYTES } from '../../core/script-store.ts'
+import { type ScriptStore, MAX_SCRIPT_SOURCE_BYTES } from '../../core/scripts/script-store.ts'
 
 export interface CatalogChangedEmitter {
   (): void

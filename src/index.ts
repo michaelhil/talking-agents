@@ -17,7 +17,7 @@ export type { ChatRequest, ChatResponse, LLMProvider } from './core/types/llm.ts
 export { SYSTEM_SENDER_ID, DEFAULTS } from './core/types/constants.ts'
 
 // Core factories
-export { createRoom } from './core/room.ts'
+export { createRoom } from './core/rooms/room.ts'
 export { createHouse } from './core/house.ts'
 export { createMessageRouter } from './core/delivery.ts'
 

@@ -10,10 +10,10 @@
 // The shared prompt prefix (system + message history) lets provider-side
 // prompt caching amortise the cost.
 
-import type { LLMProvider, StreamChunk } from './types/llm.ts'
-import type { Message } from './types/messaging.ts'
-import type { Room } from './types/room.ts'
-import type { Aggressiveness } from './types/summary.ts'
+import type { LLMProvider, StreamChunk } from '../types/llm.ts'
+import type { Message } from '../types/messaging.ts'
+import type { Room } from '../types/room.ts'
+import type { Aggressiveness } from '../types/summary.ts'
 
 export interface SummaryEngineDeps {
   readonly llm: { readonly stream?: LLMProvider['stream'] }

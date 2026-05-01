@@ -11,9 +11,9 @@
 import type { Artifact, ArtifactStore, ArtifactTypeRegistry, OnArtifactChanged } from './types/artifact.ts'
 import type { Bookmark, CreateResult, House, HouseCallbacks, Room, RoomConfig } from './types/room.ts'
 import type { RoomProfile } from './types/messaging.ts'
-import { createRoom, type RoomCallbacks } from './room.ts'
-import { createArtifactStore } from './artifact-store.ts'
-import { createArtifactTypeRegistry } from './artifact-type-registry.ts'
+import { createRoom, type RoomCallbacks } from './rooms/room.ts'
+import { createArtifactStore } from './storage/artifact-store.ts'
+import { createArtifactTypeRegistry } from './artifact-types/registry.ts'
 import { ensureUniqueName, validateName } from './names.ts'
 
 const DEFAULT_HOUSE_PROMPT = `You are part of samsinn, a collaborative multi-agent system. Be respectful and constructive. When uncertain, say so rather than guessing. Prioritise responding to new messages and direct questions. Use the pass tool when the conversation genuinely does not need your input.`

@@ -17,7 +17,7 @@
 
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
-import { renderLivingScript } from '../../core/script-render.ts'
+import { renderLivingScript } from '../../core/scripts/script-render.ts'
 
 export const scriptRoutes: ReadonlyArray<RouteEntry> = [
   // --- Catalog ---

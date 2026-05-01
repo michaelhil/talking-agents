@@ -34,8 +34,8 @@
 // the lifecycle invariant above is broken — fix it there.
 // ============================================================================
 
-import { createSystemRegistry } from './core/system-registry.ts'
-import { startJanitor } from './core/instance-cleanup.ts'
+import { createSystemRegistry } from './core/instances/system-registry.ts'
+import { startJanitor } from './core/instances/instance-cleanup.ts'
 import { DEFAULTS } from './core/types/constants.ts'
 import { registerAllMCPServers } from './integrations/mcp/client.ts'
 import { existsSync } from 'node:fs'

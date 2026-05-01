@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { describe, test, expect } from 'bun:test'
-import { createRoom } from './room.ts'
+import { createRoom } from './rooms/room.ts'
 import type { AIAgent } from './types/agent.ts'
 import { waitForRoomIdle } from './wait-for-idle.ts'
 

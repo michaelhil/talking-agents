@@ -42,7 +42,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSharedRuntime } from '../core/shared-runtime.ts'
-import { createSystemRegistry } from '../core/system-registry.ts'
+import { createSystemRegistry } from '../core/instances/system-registry.ts'
 import { createWSManager, type WSManager } from './ws-handler.ts'
 import { wireSystemEvents } from './wire-system-events.ts'
 import { wireAgentTracking } from './agent-tracking.ts'
@@ -51,7 +51,7 @@ import type { ProviderGateway } from '../llm/provider-gateway.ts'
 import type { ProviderHealth, GatewayMetrics, ChatRequest, ChatResponse } from '../core/types/llm.ts'
 import type { ProviderSetupResult } from '../llm/providers-setup.ts'
 import type { WSOutbound } from '../core/types/ws-protocol.ts'
-import type { AutoSaver } from '../core/snapshot.ts'
+import type { AutoSaver } from '../core/storage/snapshot.ts'
 
 const baseConfig = {
   order: ['stub'] as ReadonlyArray<string>,

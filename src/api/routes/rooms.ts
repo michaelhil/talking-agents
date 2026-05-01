@@ -5,7 +5,7 @@ import type { SettableDeliveryMode } from '../../core/types/messaging.ts'
 import type { SummaryConfig } from '../../core/types/summary.ts'
 import type { RouteEntry } from './types.ts'
 import { asAIAgent } from '../../agents/shared.ts'
-import { exportRoomConversation } from '../../core/room-export.ts'
+import { exportRoomConversation } from '../../core/rooms/room-export.ts'
 
 export const roomRoutes: RouteEntry[] = [
   {

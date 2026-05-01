@@ -29,13 +29,13 @@
 //      the summary-engine's replaceCompression() now.
 // ============================================================================
 
-import type { Agent, AIAgentConfig } from './types/agent.ts'
-import type { Artifact } from './types/artifact.ts'
-import type { DeliveryMode, Message, RoomProfile } from './types/messaging.ts'
-import type { Bookmark, Room } from './types/room.ts'
-import type { SummaryConfig } from './types/summary.ts'
-import type { Trigger } from './triggers/types.ts'
-import { asAIAgent } from '../agents/shared.ts'
+import type { Agent, AIAgentConfig } from '../types/agent.ts'
+import type { Artifact } from '../types/artifact.ts'
+import type { DeliveryMode, Message, RoomProfile } from '../types/messaging.ts'
+import type { Bookmark, Room } from '../types/room.ts'
+import type { SummaryConfig } from '../types/summary.ts'
+import type { Trigger } from '../triggers/types.ts'
+import { asAIAgent } from '../../agents/shared.ts'
 import { mkdir, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 

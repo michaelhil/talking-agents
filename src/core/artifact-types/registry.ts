@@ -5,7 +5,7 @@
 // Types are registered at system init; looked up by ArtifactStore during CRUD.
 // ============================================================================
 
-import type { ArtifactTypeDefinition, ArtifactTypeRegistry } from './types/artifact.ts'
+import type { ArtifactTypeDefinition, ArtifactTypeRegistry } from '../types/artifact.ts'
 
 export const createArtifactTypeRegistry = (): ArtifactTypeRegistry => {
   const defs = new Map<string, ArtifactTypeDefinition>()
