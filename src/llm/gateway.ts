@@ -44,6 +44,23 @@ export const GATEWAY_DEFAULTS: OllamaGatewayConfig = {
   healthPollIntervalMs: 15_000,
 }
 
+// Validate an unknown JSON body against the OllamaGatewayConfig shape and
+// return a typed partial. Lives next to the type so adding a new field
+// doesn't require remembering to update a separate routes-side whitelist.
+export const parseOllamaConfigPatch = (body: unknown): Partial<OllamaGatewayConfig> => {
+  if (!body || typeof body !== 'object') return {}
+  const b = body as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  if (typeof b.maxConcurrent === 'number') out.maxConcurrent = b.maxConcurrent
+  if (typeof b.maxQueueDepth === 'number') out.maxQueueDepth = b.maxQueueDepth
+  if (typeof b.queueTimeoutMs === 'number') out.queueTimeoutMs = b.queueTimeoutMs
+  if (typeof b.circuitBreakerThreshold === 'number') out.circuitBreakerThreshold = b.circuitBreakerThreshold
+  if (typeof b.circuitBreakerCooldownMs === 'number') out.circuitBreakerCooldownMs = b.circuitBreakerCooldownMs
+  if (typeof b.keepAlive === 'string') out.keepAlive = b.keepAlive
+  if (typeof b.healthPollIntervalMs === 'number') out.healthPollIntervalMs = b.healthPollIntervalMs
+  return out as Partial<OllamaGatewayConfig>
+}
+
 // === Gateway Interface ===
 
 export interface OllamaGateway extends Omit<ProviderGateway, 'getHealth' | 'getConfig' | 'updateConfig' | 'onHealthChange' | 'chat' | 'stream'> {

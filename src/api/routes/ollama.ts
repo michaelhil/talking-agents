@@ -1,7 +1,7 @@
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 import type { System } from '../../main.ts'
-import type { LLMGateway } from '../../llm/gateway.ts'
+import { parseOllamaConfigPatch, type LLMGateway } from '../../llm/gateway.ts'
 
 // Guard: all /api/ollama/* routes need Ollama to be a configured provider.
 // When Ollama is excluded from the router, these endpoints return 503.
@@ -93,16 +93,7 @@ export const ollamaRoutes: RouteEntry[] = [
     pattern: /^\/api\/ollama\/config$/,
     handler: async (req, _match, { system }) => {
       const gw = requireOllama(system); if (gw instanceof Response) return gw
-      const body = await parseBody(req)
-      const update: Record<string, unknown> = {}
-      if (typeof body.maxConcurrent === 'number') update.maxConcurrent = body.maxConcurrent
-      if (typeof body.maxQueueDepth === 'number') update.maxQueueDepth = body.maxQueueDepth
-      if (typeof body.queueTimeoutMs === 'number') update.queueTimeoutMs = body.queueTimeoutMs
-      if (typeof body.circuitBreakerThreshold === 'number') update.circuitBreakerThreshold = body.circuitBreakerThreshold
-      if (typeof body.circuitBreakerCooldownMs === 'number') update.circuitBreakerCooldownMs = body.circuitBreakerCooldownMs
-      if (typeof body.keepAlive === 'string') update.keepAlive = body.keepAlive
-      if (typeof body.healthPollIntervalMs === 'number') update.healthPollIntervalMs = body.healthPollIntervalMs
-      gw.updateConfig(update)
+      gw.updateConfig(parseOllamaConfigPatch(await parseBody(req)))
       return json(gw.getConfig())
     },
   },
