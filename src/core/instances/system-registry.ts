@@ -359,6 +359,18 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
         console.error(`[registry] evict ${id} hook threw: ${err instanceof Error ? err.message : String(err)}`)
       }
       entry.autoSaver.dispose()
+      // Stop the per-instance schedulers' setIntervals. Without this, the
+      // timer closures pin the entire System (House + agents + history) and
+      // keep firing every tick on an evicted instance — memory leak +
+      // wasted CPU proportional to (evicted-with-active-schedulers) ×
+      // tick frequency. autoSaver.dispose handles its own debounce timer;
+      // these handle theirs.
+      try { entry.system.triggerScheduler.stop() } catch (err) {
+        console.error(`[registry] evict ${id} triggerScheduler.stop threw: ${err instanceof Error ? err.message : String(err)}`)
+      }
+      try { entry.system.summaryScheduler.dispose() } catch (err) {
+        console.error(`[registry] evict ${id} summaryScheduler.dispose threw: ${err instanceof Error ? err.message : String(err)}`)
+      }
       map.delete(id)
     })()
 
