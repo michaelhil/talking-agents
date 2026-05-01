@@ -42,7 +42,7 @@ import { callLLM } from './agents/evaluation.ts'
 import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
 import type { HumanAgent } from './agents/human-agent.ts'
-import { addAgentToRoom, removeAgentFromRoom } from './agents/actions.ts'
+import { createRoomOperations } from './core/room-operations.ts'
 import {
   // House-bound built-ins (registered into the per-instance overlay).
   // Process-wide built-ins (createPassTool, createGetTimeTool, createWebTools,
@@ -382,69 +382,18 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   house.artifactTypes.register(mapArtifactType)
 
 
-  // System-level membership operations
-  const systemAddAgentToRoom = async (agentId: string, roomId: string, invitedBy?: string): Promise<void> => {
-    const agent = team.getAgent(agentId)
-    const room = house.getRoom(roomId)
-    if (!agent || !room) return
-    await addAgentToRoom(agentId, agent.name, roomId, invitedBy, team, routeMessage, house)
-    membershipChanged.proxy(roomId, room.profile.name, agentId, agent.name, 'added')
-  }
-
-  const systemRemoveAgentFromRoom = (agentId: string, roomId: string, removedBy?: string): void => {
-    const agent = team.getAgent(agentId)
-    const room = house.getRoom(roomId)
-    if (!agent || !room) return
-    removeAgentFromRoom(agentId, agent.name, roomId, removedBy, team, routeMessage, house)
-    membershipChanged.proxy(roomId, room.profile.name, agentId, agent.name, 'removed')
-    // Auto-delete room if last member left
-    if (room.getParticipantIds().length === 0) {
-      systemRemoveRoom(roomId)
-    }
-  }
-
-  const systemRemoveRoom = (roomId: string): boolean => {
-    const room = house.getRoom(roomId)
-    if (!room) return false
-    for (const agentId of room.getParticipantIds()) {
-      team.getAgent(agentId)?.leave(roomId)
-    }
-    const removed = house.removeRoom(roomId)
-    if (removed) {
-      // Clean up artifacts exclusively scoped to the deleted room
-      for (const artifact of house.artifacts.list({ scope: roomId })) {
-        if (artifact.scope.length === 1 && artifact.scope[0] === roomId) {
-          house.artifacts.remove(artifact.id)
-        }
-      }
-      // Cascade-clean triggers pinned to the deleted room. Without this,
-      // triggers become orphans — the scheduler skips them silently
-      // (room.getRoom returns undefined) but they pile up in storage and
-      // confuse the UI.
-      for (const agent of team.listAgents()) {
-        const triggers = agent.getTriggers?.() ?? []
-        for (const t of triggers) {
-          if (t.roomId === roomId) agent.deleteTrigger?.(t.id)
-        }
-      }
-      triggerScheduler.invalidate()
-    }
-    return removed
-  }
-
-  // Cancel in-flight AI generation only for agents whose current generation
-  // context is this room. Called by the room's onManualModeEntered hook.
-  function cancelGenerationsInRoom(roomId: string): void {
-    const room = house.getRoom(roomId)
-    if (!room) return
-    for (const id of room.getParticipantIds()) {
-      const agent = team.getAgent(id)
-      if (!agent || agent.kind !== 'ai') continue
-      if (agent.state.getContext() !== roomId) continue
-      const ai = asAIAgent(agent)
-      ai?.cancelGeneration()
-    }
-  }
+  // System-level membership operations — extracted to core/room-operations.ts.
+  const roomOps = createRoomOperations({
+    team,
+    house,
+    routeMessage,
+    onMembershipChanged: (...args) => membershipChanged.proxy(...args),
+    triggerScheduler,
+  })
+  const systemAddAgentToRoom = roomOps.addAgentToRoom
+  const systemRemoveAgentFromRoom = roomOps.removeAgentFromRoom
+  const systemRemoveRoom = roomOps.removeRoom
+  const cancelGenerationsInRoom = roomOps.cancelGenerationsInRoom
 
   // Explicit one-turn activation for manual mode. Catches the agent up on
   // messages it hasn't seen, then forces a single evaluation. If the agent

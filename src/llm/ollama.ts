@@ -1,5 +1,6 @@
 import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk } from '../core/types/llm.ts'
 import { createOllamaError } from './errors.ts'
+import { fetchWithTimeout } from './fetch-utils.ts'
 
 interface OllamaToolCall {
   readonly function: {
@@ -49,20 +50,6 @@ const CHAT_TIMEOUT_MS = 300_000 // 5 minutes — large models can be slow
 const TAGS_TIMEOUT_MS = 10_000
 const STREAM_IDLE_TIMEOUT_MS = 30_000  // abort if no chunk arrives within 30s
 const DEFAULT_NUM_CTX = 16384  // modern models support 32K+; 16K gives room for rich context + history
-
-const fetchWithTimeout = async (
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-): Promise<Response> => {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
 
 const validateChatResponse = (data: unknown): OllamaChatResponse => {
   if (

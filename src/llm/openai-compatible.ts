@@ -16,6 +16,7 @@ import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk } from '../cor
 import type { NativeToolCall } from '../core/types/tool.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
 import { createCloudProviderError, parseRetryAfterMs } from './errors.ts'
+import { fetchWithTimeout } from './fetch-utils.ts'
 import { normalizeModelId } from './models/normalize.ts'
 
 const DEFAULT_CHAT_TIMEOUT_MS = 300_000
@@ -323,16 +324,6 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
       'Content-Type': 'application/json',
       ...auth,
       ...(config.extraHeaders?.() ?? {}),
-    }
-  }
-
-  const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number): Promise<Response> => {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-    try {
-      return await fetch(url, { ...init, signal: controller.signal })
-    } finally {
-      clearTimeout(timer)
     }
   }
 
