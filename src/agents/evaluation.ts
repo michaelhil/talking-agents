@@ -108,7 +108,10 @@ export interface LLMCallMetrics {
   readonly model?: string
 }
 
-const streamWithRetry = async (
+// Exposed for unit testing — streamWithRetry encapsulates the LLM stream-or-
+// chat call plus per-attempt retry/backoff. Not part of the agent-loop public
+// contract; agents should call evaluate() / callLLM() / streamLLM().
+export const streamWithRetry = async (
   provider: LLMProvider,
   _config: AIAgentConfig,
   request: ChatRequest,
