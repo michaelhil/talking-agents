@@ -12,6 +12,7 @@ import type { System } from '../main.ts'
 import type { WSOutbound } from '../core/types/ws-protocol.ts'
 import { authEnabled, isValidSession, sessionFromRequest } from './auth.ts'
 import { houseRoutes } from './routes/house.ts'
+import { skillRoutes } from './routes/skills.ts'
 import { roomRoutes } from './routes/rooms.ts'
 import { artifactRoutes } from './routes/artifacts.ts'
 import { agentRoutes } from './routes/agents.ts'
@@ -44,6 +45,7 @@ const allRoutes = [
   // are matched before any catch-all patterns elsewhere.
   ...toolRoutes,
   ...houseRoutes,
+  ...skillRoutes,
   ...ollamaRoutes,
   ...providersListRoutes,
   ...providersConfigRoutes,
