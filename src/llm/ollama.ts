@@ -1,6 +1,6 @@
 import type { LLMProvider, ChatRequest, ChatResponse, StreamChunk } from '../core/types/llm.ts'
 import { createOllamaError } from './errors.ts'
-import { fetchWithTimeout } from './fetch-utils.ts'
+import { fetchWithTimeout } from '../core/fetch-utils.ts'
 
 interface OllamaToolCall {
   readonly function: {

@@ -20,6 +20,7 @@
 // ============================================================================
 
 import type { Tool, ToolContext, ToolResult } from '../../core/types/tool.ts'
+import { fetchWithTimeout as sharedFetchWithTimeout } from '../../core/fetch-utils.ts'
 import { htmlToMarkdown } from './html-to-md.ts'
 
 // === Configuration ===
@@ -39,15 +40,10 @@ const USER_AGENT = 'samsinn/1.0 (multi-agent research assistant)'
 
 // === Internal helpers ===
 
-const fetchWithTimeout = async (url: string, init?: RequestInit): Promise<Response> => {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), DEFAULT_FETCH_TIMEOUT_MS)
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)  // always clean up, even if AbortError fires
-  }
-}
+// Thin wrapper over the shared core/fetch-utils helper so call sites stay
+// terse — every web-tools fetch uses the same DEFAULT_FETCH_TIMEOUT_MS.
+const fetchWithTimeout = (url: string, init?: RequestInit): Promise<Response> =>
+  sharedFetchWithTimeout(url, init ?? {}, DEFAULT_FETCH_TIMEOUT_MS)
 
 const parseAndValidateUrl = (raw: string): { href: string } | { error: string } => {
   try {
