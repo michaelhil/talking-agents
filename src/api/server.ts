@@ -217,15 +217,16 @@ export const createServer = (config: ServerConfig) => {
       // Resolve the system for this cookie (lazy-loads from disk if evicted).
       const system = await registry.getOrLoad(instanceId)
       const remoteAddress = server.requestIP(req)?.address
-      const apiResponse = await handleAPI(
-        req, pathname, system, instanceId,
-        wsManager.broadcast, wsManager.subscribeAgentState, wsManager.unsubscribeAgentState,
+      const apiResponse = await handleAPI(req, pathname, system, instanceId, {
+        broadcast: wsManager.broadcast,
+        subscribeAgentState: wsManager.subscribeAgentState,
+        unsubscribeAgentState: wsManager.unsubscribeAgentState,
         remoteAddress,
-        config.resetInstance,
-        wsManager.broadcastToInstance,
-        config.instances,
-        config.diagnostics,
-      )
+        resetInstance: config.resetInstance,
+        broadcastToInstance: wsManager.broadcastToInstance,
+        instances: config.instances,
+        diagnostics: config.diagnostics,
+      })
       if (apiResponse) {
         // Only append the cookieless-fallback Set-Cookie if the route didn't
         // already set its own samsinn_instance cookie (e.g. /switch). Otherwise

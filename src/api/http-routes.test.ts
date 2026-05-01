@@ -78,7 +78,10 @@ const req = (method: string, path: string, body?: unknown): Request => {
 }
 
 const call = (system: System, r: Request, path: string) =>
-  handleAPI(r, path, system, TEST_INSTANCE_ID, noopBroadcast, noopSubscribe)
+  handleAPI(r, path, system, TEST_INSTANCE_ID, {
+    broadcast: noopBroadcast,
+    subscribeAgentState: noopSubscribe,
+  })
 
 // === Tests ===
 

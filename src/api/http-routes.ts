@@ -74,24 +74,29 @@ const allRoutes = [
 
 // === Dispatcher ===
 
+// Per-request dependencies: everything routes need that isn't `req` /
+// `pathname` / `system` / `instanceId`. Bundled into one shape so the
+// server.ts → handleAPI seam stays narrow as new cross-cutting capabilities
+// land (resetInstance, instances, diagnostics, …).
+export interface RouteDeps {
+  readonly broadcast: (msg: WSOutbound) => void
+  readonly subscribeAgentState: RouteContext['subscribeAgentState']
+  readonly unsubscribeAgentState?: (agentId: string) => void
+  readonly remoteAddress?: string
+  readonly resetInstance?: RouteContext['resetInstance']
+  readonly broadcastToInstance?: RouteContext['broadcastToInstance']
+  readonly instances?: RouteContext['instances']
+  readonly diagnostics?: RouteContext['diagnostics']
+}
+
 export const handleAPI = async (
   req: Request,
   pathname: string,
   system: System,
   instanceId: string,
-  broadcast: (msg: WSOutbound) => void,
-  subscribeAgentState: RouteContext['subscribeAgentState'],
-  unsubscribeAgentState?: (agentId: string) => void,
-  remoteAddress?: string,
-  resetInstance?: RouteContext['resetInstance'],
-  broadcastToInstance?: RouteContext['broadcastToInstance'],
-  instances?: RouteContext['instances'],
-  diagnostics?: RouteContext['diagnostics'],
+  deps: RouteDeps,
 ): Promise<Response | null> => {
-  const ctx: RouteContext = {
-    system, instanceId, broadcast, subscribeAgentState, unsubscribeAgentState,
-    remoteAddress, resetInstance, broadcastToInstance, instances, diagnostics,
-  }
+  const ctx: RouteContext = { system, instanceId, ...deps }
 
   // Auth gate. Scoped to /api/* so static paths (/, /index.html, /dist.css,
   // /favicon.ico) can load and the UI can boot to show the token prompt.
