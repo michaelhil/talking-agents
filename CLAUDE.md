@@ -41,6 +41,8 @@ These have been evaluated and rejected as motion-without-progress. Do NOT includ
 
 - **Extracting `createSystem` into 4 "boot phase" sub-functions.** Also evaluated — it just spreads the 22 `lateBinding` slots across more files without eliminating them. If `main.ts` size is the problem, prefer targeted extractions of self-contained subsystems (as was done for `ollama-urls.ts`), not whole-factory splits.
 
+- **MCP-vs-REST tool-surface "parity".** They serve different audiences and intentionally diverge. REST/built-in is the **agent-facing** surface (what an in-process AI agent uses during eval — `list_rooms`, `pass`, `geo_lookup`, `wiki_search`, `install_pack`, `write_skill`, etc.). MCP is the **host-facing** surface (what an external Claude Code or other MCP client uses to inspect/control the system from outside — `create_agent`, `update_agent_persona`, `wait_for_idle`, `export_room`, `reset_system`, `configure_logging`). Each side has tools the other doesn't, and that's the design — agents don't need `reset_system`; external hosts don't need `pass`. When adding a new capability, decide whether it belongs to the agent loop, the external-host workflow, or both — and register only on the surfaces it serves. Auditing the two as if one is missing tools the other has produces noise. Revisit only when a specific external-host workflow concretely needs a tool that exists agent-side (or vice versa).
+
 When in doubt: the `lateBinding` pattern is working. Ugly ≠ broken. Move on.
 
 ## Commands
