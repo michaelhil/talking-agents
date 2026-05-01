@@ -17,7 +17,9 @@ import { artifactRoutes } from './routes/artifacts.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { messageRoutes } from './routes/messages.ts'
 import { ollamaRoutes } from './routes/ollama.ts'
-import { providersRoutes } from './routes/providers.ts'
+import { providersListRoutes } from './routes/providers-list.ts'
+import { providersConfigRoutes } from './routes/providers-config.ts'
+import { providersTestRoutes } from './routes/providers-test.ts'
 import { wikisRoutes } from './routes/wikis.ts'
 import { triggerRoutes } from './routes/triggers.ts'
 import { packsRoutes } from './routes/packs.ts'
@@ -42,7 +44,9 @@ const allRoutes = [
   ...toolRoutes,
   ...houseRoutes,
   ...ollamaRoutes,
-  ...providersRoutes,
+  ...providersListRoutes,
+  ...providersConfigRoutes,
+  ...providersTestRoutes,
   // Wiki routes BEFORE roomRoutes so /api/rooms/:name/wikis matches first.
   ...wikisRoutes,
   // Trigger routes BEFORE agentRoutes so /api/agents/:name/triggers matches first.
