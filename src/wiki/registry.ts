@@ -126,6 +126,11 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
     }
   }
 
+  // Concurrency cap for parallel page fetches during warm. Authenticated
+  // GitHub gives 5000 req/hr — a single warm at this cap is well within
+  // budget. The cap keeps us courteous on shared raw.githubusercontent.com.
+  const WARM_CONCURRENCY = 8
+
   const warm: WikiRegistry['warm'] = async (wikiId) => {
     const s = states.get(wikiId)
     if (!s) throw new Error(`unknown wiki: ${wikiId}`)
@@ -139,8 +144,15 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
       s.scopeMd = undefined
     }
     const slugs = extractIndexSlugs(s.indexMd)
+
+    // Parallel page fetches with a concurrency cap. Sequential per-page
+    // await was ~50ms × N pages = ~5s wall time for a 100-page wiki; this
+    // drops it to roughly N/cap × 50ms (~700ms at cap=8). Order of
+    // `warnings` is non-deterministic; previously-implicit-by-loop ordering
+    // is not part of any contract.
     let okCount = 0
-    for (const slug of slugs) {
+    let cursor = 0
+    const fetchOne = async (slug: string): Promise<void> => {
       try {
         const { path, body } = await s.adapter.fetchPage(slug)
         cache.put(wikiId, parseWikiPage(path, body))
@@ -149,6 +161,17 @@ export const createWikiRegistry = (opts: WikiRegistryOptions): WikiRegistry => {
         warnings.push(`page ${slug}: ${(err as Error).message}`)
       }
     }
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const i = cursor++
+        if (i >= slugs.length) return
+        const slug = slugs[i]
+        if (slug !== undefined) await fetchOne(slug)
+      }
+    }
+    const workerCount = Math.min(WARM_CONCURRENCY, Math.max(1, slugs.length))
+    await Promise.all(Array.from({ length: workerCount }, () => worker()))
+
     s.lastWarmAt = Date.now()
     return { pageCount: okCount, warnings }
   }
