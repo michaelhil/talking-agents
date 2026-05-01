@@ -7,16 +7,24 @@ import { __resetBundledCache, bundledStats, lookupBundled } from './bundled.ts'
 let prevHome: string | undefined
 let testDir: string
 
+let prevVersion: string | undefined
+
 beforeEach(() => {
   prevHome = process.env.SAMSINN_HOME
+  prevVersion = process.env.SAMSINN_GEODATA_VERSION
   testDir = mkdtempSync(join(tmpdir(), 'samsinn-geo-bundled-test-'))
   process.env.SAMSINN_HOME = testDir
+  // Force the unset sentinel for these offline tests, regardless of the
+  // current package.json pin.
+  process.env.SAMSINN_GEODATA_VERSION = '0.0.0'
   __resetBundledCache()
 })
 
 afterEach(() => {
   if (prevHome === undefined) delete process.env.SAMSINN_HOME
   else process.env.SAMSINN_HOME = prevHome
+  if (prevVersion === undefined) delete process.env.SAMSINN_GEODATA_VERSION
+  else process.env.SAMSINN_GEODATA_VERSION = prevVersion
   rmSync(testDir, { recursive: true, force: true })
   __resetBundledCache()
 })

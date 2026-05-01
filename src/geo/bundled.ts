@@ -17,7 +17,7 @@
 
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { sharedPaths } from '../core/paths.ts'
 import { canonical } from './canonical.ts'
 import type { GeoCategory, GeoFeature, GeoFeatureCollection, GeoIndex as GeoIndexFile } from './types.ts'
@@ -41,6 +41,9 @@ let cached: BundledCache | null = null
 let loadInFlight: Promise<BundledCache> | null = null
 
 const readPackageGeodataVersion = async (): Promise<string> => {
+  // Env override exists for tests + emergency pin overrides without a redeploy.
+  const envOverride = process.env.SAMSINN_GEODATA_VERSION
+  if (envOverride && envOverride.length > 0) return envOverride
   try {
     // package.json sits at repo root — same lookup pattern as bootstrap.ts.
     const path = join(process.cwd(), 'package.json')
@@ -85,12 +88,11 @@ const fetchAndCache = async (
   const res = await fetchWithTimeout(url)
   if (!res.ok) throw new Error(`bundled fetch failed: ${url} → HTTP ${res.status}`)
   const text = await res.text()
-  await mkdir(cacheDir(version), { recursive: true, mode: 0o700 })
+  // Create the parent directory of the *target file*, not just the cache root.
+  // For nested paths like airports/world.geojson, this is cache/<version>/airports/.
+  await mkdir(dirname(local), { recursive: true, mode: 0o700 })
   // jsdelivr serves immutable @<tag> URLs; once cached, no need to revalidate.
   await writeFile(local, text, { mode: 0o600 })
-  // For nested paths, also create subdirs.
-  const dir = local.substring(0, local.lastIndexOf('/'))
-  if (dir !== cacheDir(version)) await mkdir(dir, { recursive: true, mode: 0o700 })
   return text
 }
 
