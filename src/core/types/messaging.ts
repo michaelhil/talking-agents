@@ -87,6 +87,15 @@ export interface AgentProfile {
   readonly kind: 'ai' | 'human'
   readonly model?: string
   readonly tags?: ReadonlyArray<string>
+  // Snapshot-only: convey current generation state so a tab reload
+  // mid-generation can render the thinking indicator immediately. The
+  // event-driven WS protocol carries these via `agent_state` once a
+  // session is live; these fields are how the SAME signal arrives in
+  // the initial snapshot. Optional everywhere — agent_joined and other
+  // contexts that never see a generating agent omit them.
+  readonly state?: 'idle' | 'generating'
+  readonly context?: string
+  readonly generationStarted?: number
 }
 
 // === Agent History — unified per-agent state across all contexts ===

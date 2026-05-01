@@ -171,8 +171,11 @@ export const createWSManager = (deps: WSManagerDeps): WSManager => {
     if (agent.kind !== 'ai') return
     if (stateUnsubs.has(agent.id)) return
     const agentName = agent.name
-    const unsub = agent.state.subscribe((state: StateValue, _agentId: string, context?: string) => {
-      broadcastToInstance(instanceId, { type: 'agent_state', agentName, state, context })
+    const unsub = agent.state.subscribe((state: StateValue, _agentId: string, context?: string, startedAt?: number) => {
+      broadcastToInstance(instanceId, {
+        type: 'agent_state', agentName, state, context,
+        ...(startedAt !== undefined ? { generationStarted: startedAt } : {}),
+      })
     })
     stateUnsubs.set(agent.id, unsub)
   }
@@ -208,7 +211,13 @@ export const createWSManager = (deps: WSManagerDeps): WSManager => {
       .map(a => {
         const ai = asAIAgent(a)
         const ctx = a.state.getContext()
-        return { id: a.id, name: a.name, kind: a.kind, state: a.state.get(), ...(ctx ? { context: ctx } : {}), ...(ai ? { model: ai.getModel() } : {}) }
+        const startedAt = a.state.getStartedAt()
+        return {
+          id: a.id, name: a.name, kind: a.kind, state: a.state.get(),
+          ...(ctx ? { context: ctx } : {}),
+          ...(startedAt !== undefined ? { generationStarted: startedAt } : {}),
+          ...(ai ? { model: ai.getModel() } : {}),
+        }
       })
     return {
       type: 'snapshot',

@@ -25,7 +25,7 @@ export const createListAgentsTool = (team: Team): Tool => ({
     data: team.listAgents().map((a): Pick<AgentProfile, 'name' | 'kind' | 'model'> => ({
       name: a.name,
       kind: a.kind,
-      model: 'model' in a ? (a as AgentProfile).model : undefined,
+      model: 'model' in a ? (a as { model?: string }).model : undefined,
     })),
   }),
 })

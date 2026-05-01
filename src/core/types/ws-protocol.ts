@@ -51,7 +51,7 @@ export type WSInbound =
 
 export type WSOutbound =
   | { readonly type: 'message'; readonly message: Message }
-  | { readonly type: 'agent_state'; readonly agentName: string; readonly state: StateValue; readonly context?: string }
+  | { readonly type: 'agent_state'; readonly agentName: string; readonly state: StateValue; readonly context?: string; readonly generationStarted?: number }
   | { readonly type: 'room_created'; readonly profile: RoomProfile }
   | { readonly type: 'agent_joined'; readonly agent: AgentProfile }
   | { readonly type: 'agent_removed'; readonly agentName: string }

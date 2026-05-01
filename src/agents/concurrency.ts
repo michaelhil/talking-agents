@@ -32,18 +32,26 @@ export interface ConcurrencyManager {
   readonly isEpochCurrent: (epoch: number) => boolean
   readonly whenIdle: (timeoutMs?: number) => Promise<void>
   readonly cancelAll: () => void
+  // Fires the AgentState subscribers. The third arg (startedAt) is read
+  // from internal `startedAt` — callers only supply value + context.
   readonly notifyState: (value: StateValue, context?: string) => void
+  // Wall-clock timestamp the current generation started at, or undefined
+  // when idle. Mirrored on AgentState.getStartedAt so the UI snapshot path
+  // can convey it on reconnect mid-generation.
+  readonly getStartedAt: () => number | undefined
 }
 
 export const createConcurrencyManager = (agentId: string): ConcurrencyManager => {
   let activeRoom: string | undefined      // the ONE room currently generating
+  let startedAt: number | undefined        // Date.now() when activeRoom was set
   const pendingRooms = new Set<string>()   // rooms waiting for their turn
   let idleResolvers: Array<() => void> = []
   const stateSubscribers = new Set<StateSubscriber>()
   let generationEpoch = 0
 
   const notifyState = (value: StateValue, context?: string): void => {
-    for (const fn of stateSubscribers) fn(value, agentId, context)
+    // startedAt is read from closure — callers don't thread it through.
+    for (const fn of stateSubscribers) fn(value, agentId, context, startedAt)
   }
 
   const checkIdle = (): void => {
@@ -57,6 +65,7 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
   const state: AgentState = {
     get: () => activeRoom ? 'generating' : 'idle',
     getContext: () => activeRoom,
+    getStartedAt: () => startedAt,
     subscribe: (fn: StateSubscriber) => {
       stateSubscribers.add(fn)
       return () => { stateSubscribers.delete(fn) }
@@ -78,9 +87,10 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
     state,
     isBusy: () => activeRoom !== undefined,
     getActiveRoom: () => activeRoom,
-    startGeneration: (roomId: string) => { activeRoom = roomId },
+    startGeneration: (roomId: string) => { activeRoom = roomId; startedAt = Date.now() },
     endGeneration: (_roomId: string) => {
       activeRoom = undefined
+      startedAt = undefined
       notifyState('idle')
       checkIdle()
     },
@@ -101,6 +111,7 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
     cancelAll: () => {
       generationEpoch++
       activeRoom = undefined
+      startedAt = undefined
       pendingRooms.clear()
       const resolvers = idleResolvers
       idleResolvers = []
@@ -108,5 +119,6 @@ export const createConcurrencyManager = (agentId: string): ConcurrencyManager =>
       notifyState('idle')
     },
     notifyState,
+    getStartedAt: () => startedAt,
   }
 }

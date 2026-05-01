@@ -21,6 +21,7 @@ export interface AgentEntry {
   readonly model?: string
   readonly state: StateValue
   readonly context?: string          // roomId the agent is generating in
+  readonly generationStarted?: number // wall-clock ms when state went 'generating'
 }
 
 // Re-export for convenience
@@ -122,6 +123,43 @@ export const $generatingRoomIds: ReadableAtom<Set<string>> = computed(
       }
     }
     return result
+  },
+)
+
+// === Derived: thinking indicators that should currently be visible ===
+
+/** Per-agent indicator state for the currently-selected room.
+ *
+ *  Single source of truth for "should this agent's thinking indicator exist
+ *  in the DOM right now". Derived purely from agent state — no time-based
+ *  fallback rules. The renderer (app-thinking.ts) consumes this and applies
+ *  a minimum-visible-duration on top so fast generations don't flash-and-
+ *  vanish.
+ *
+ *  startedAt: when present, drives the elapsed-seconds counter. Falls back
+ *  to Date.now() when the snapshot didn't include it (defensive — should
+ *  always be present for a generating agent post-snapshot). */
+export interface IndicatorState {
+  readonly agentId: string
+  readonly agentName: string
+  readonly startedAt: number
+}
+
+export const $visibleThinkingIndicators: ReadableAtom<ReadonlyArray<IndicatorState>> = computed(
+  [$agents, $selectedRoomId],
+  (agents: Record<string, AgentEntry>, selectedRoom: string | null) => {
+    if (!selectedRoom) return []
+    const out: IndicatorState[] = []
+    for (const a of Object.values(agents)) {
+      if (a.state === 'generating' && a.context === selectedRoom) {
+        out.push({
+          agentId: a.id,
+          agentName: a.name,
+          startedAt: a.generationStarted ?? Date.now(),
+        })
+      }
+    }
+    return out
   },
 )
 

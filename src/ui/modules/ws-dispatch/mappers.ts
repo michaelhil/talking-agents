@@ -35,7 +35,12 @@ export const toAgentEntry = (a: AgentProfile): AgentEntry => ({
   name: a.name,
   kind: a.kind,
   model: a.model,
-  state: 'idle',
+  // Honor the snapshot's state/context/generationStarted when present, so a
+  // tab reload mid-generation reconstructs the thinking indicator. Default
+  // to 'idle' for fresh agent_joined events that don't carry these fields.
+  state: a.state ?? 'idle',
+  ...(a.context ? { context: a.context } : {}),
+  ...(a.generationStarted !== undefined ? { generationStarted: a.generationStarted } : {}),
 })
 
 export const toUIArtifact = (a: Artifact): ArtifactInfo => ({

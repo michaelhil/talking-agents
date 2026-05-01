@@ -61,6 +61,7 @@ import {
   $roomMembers,
   $mutedAgents,
   $generatingRoomIds,
+  $visibleThinkingIndicators,
   $roomMessages,
   $artifacts,
   $selectedRoomArtifacts,
@@ -489,6 +490,7 @@ const { ensureThinkingIndicator, clearThinkingIndicator, syncThinkingIndicators 
   $thinkingTools,
   $thinkingPreviews,
   $selectedRoomId,
+  $visibleThinkingIndicators,
   showContextModal,
 })
 

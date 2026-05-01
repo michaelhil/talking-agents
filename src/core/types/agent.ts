@@ -13,10 +13,16 @@ export type StateValue = 'idle' | 'generating'
 export interface AgentState {
   readonly get: () => StateValue
   readonly getContext: () => string | undefined
+  // Wall-clock timestamp (Date.now()) when the current generation started.
+  // undefined when state === 'idle'. Surfaces through the WS snapshot so a
+  // tab reload mid-generation can render the thinking indicator immediately
+  // with the correct elapsed-seconds, instead of waiting for the next
+  // notifyState event (which never comes for the in-flight call).
+  readonly getStartedAt: () => number | undefined
   readonly subscribe: (fn: StateSubscriber) => () => void
 }
 
-export type StateSubscriber = (state: StateValue, agentId: string, context?: string) => void
+export type StateSubscriber = (state: StateValue, agentId: string, context?: string, startedAt?: number) => void
 
 // === Agent — unified interface for AI agents and humans ===
 

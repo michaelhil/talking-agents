@@ -208,22 +208,18 @@ const handlers: Handlers = {
       ...current,
       state: msg.state,
       context: msg.context,
+      // Carry the server's generation start time when present. Drives the
+      // computed $visibleThinkingIndicators and the indicator's elapsed
+      // counter — survives tab reload via the snapshot path.
+      ...(msg.generationStarted !== undefined ? { generationStarted: msg.generationStarted } : {}),
     })
 
-    if (msg.state !== 'generating') {
-      const previews = { ...$thinkingPreviews.get() }
-      delete previews[id]
-      $thinkingPreviews.set(previews)
-      const tools = { ...$thinkingTools.get() }
-      delete tools[id]
-      $thinkingTools.set(tools)
-      const ctxs = { ...$agentContexts.get() }
-      delete ctxs[id]
-      $agentContexts.set(ctxs)
-      const warns = { ...$agentWarnings.get() }
-      delete warns[id]
-      $agentWarnings.set(warns)
-    }
+    // Per-agent content stores ($thinkingPreviews / $thinkingTools /
+    // $agentContexts / $agentWarnings) used to be cleared synchronously on
+    // state→idle. That raced with the new MIN_VISIBLE_MS hold in the
+    // renderer — preview text would vanish during the 400ms hold leaving
+    // an empty box. Cleanup is now done by the renderer as part of its
+    // clearThinkingIndicator path, AFTER the hold.
   },
 
   agent_activity(msg) {

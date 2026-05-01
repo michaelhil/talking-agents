@@ -44,6 +44,7 @@ export const createHumanAgent = (
   const state: AgentState = {
     get: () => 'idle',
     getContext: () => undefined,
+    getStartedAt: () => undefined,
     subscribe: () => () => {},
   }
 
