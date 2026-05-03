@@ -28,8 +28,8 @@ import type { Room } from '../core/types/room.ts'
 import type { ToolDefinition, ToolExecutor } from '../core/types/tool.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types/constants.ts'
 import { extractAgentProfile as extractProfile } from './shared.ts'
-import { buildContext, buildSystemSections, estimateTokens, flushIncoming, type BuildContextDeps } from './context-builder.ts'
-import { callLLM, evaluate, type OnDecision } from './evaluation.ts'
+import { buildContext, buildSystemSections, estimateTokens, flushIncoming, type BuildContextDeps, type ContextResult } from './context-builder.ts'
+import { callLLM, evaluate, type EvalResult, type OnDecision } from './evaluation.ts'
 import { createConcurrencyManager } from './concurrency.ts'
 import { getContextWindowSync } from '../llm/models/context-window.ts'
 import { parsePrefixedModel, isCloudProvider } from '../llm/models/parse-prefix.ts'
@@ -225,6 +225,65 @@ export const createAIAgent = (
   // triggering N separate evals. Major reduction in LLM calls for broadcast rooms.
   const EVAL_COOLDOWN_MS = 500
 
+  // Shared eval-with-fallback path used by both the receive-driven run() and
+  // the trigger-driven fireTriggerExecute. Encapsulates: build evalConfig
+  // from current settings, run evaluate(), and on a fallbackable error retry
+  // ONCE with the configured fallback model. Without this helper, both
+  // callers had ~30 LOC of identical fallback-retry — a bug-fix surface
+  // that two paths could drift on.
+  const evaluateWithFallback = async (
+    contextResult: ContextResult,
+    effectiveModel: string,
+    triggerRoomId: string,
+    signal: AbortSignal,
+    inReplyTo?: ReadonlyArray<string>,
+  ): Promise<EvalResult> => {
+    const evalConfig = {
+      ...config,
+      model: effectiveModel,
+      persona: currentPersona,
+      temperature: currentTemperature,
+      thinking: currentThinking,
+      historyLimit,
+      maxToolResultChars: maxToolResultCharsCfg ?? config.maxToolResultChars,
+      maxToolIterations: maxToolIterationsCfg,
+    }
+    const evalToolExec = includeTools ? toolExecutor : undefined
+    const evalToolDefs = includeTools ? toolDefinitions : undefined
+    const evalEventCb = onEvalEvent
+      ? (event: EvalEvent) => onEvalEvent(config.name, event)
+      : undefined
+    const evalOpts = {
+      ...(evalToolDefs ? { toolDefinitions: evalToolDefs } : {}),
+      ...(inReplyTo ? { inReplyTo } : {}),
+      ...(evalEventCb ? { onEvent: evalEventCb } : {}),
+      signal,
+    }
+
+    const first = await evaluate(
+      contextResult, evalConfig, llmProvider, evalToolExec,
+      maxToolIterationsCfg, triggerRoomId, evalOpts,
+    )
+    if (first.decision.response.action !== 'error') return first
+    if (!FALLBACKABLE_CODES.has(first.decision.response.code)) return first
+
+    const fallback = resolveModelFallback(effectiveModel, config.modelFallback)
+    if (!fallback) return first
+
+    if (onEvalEvent) {
+      onEvalEvent(config.name, {
+        kind: 'model_fallback',
+        preferred: effectiveModel,
+        effective: fallback,
+        reason: 'preferred_unavailable',
+      })
+    }
+    return evaluate(
+      contextResult, { ...evalConfig, model: fallback }, llmProvider, evalToolExec,
+      maxToolIterationsCfg, triggerRoomId, evalOpts,
+    )
+  }
+
   const tryEvaluate = (triggerRoomId: string): void => {
     if (cm.isBusy()) {
       cm.addPending(triggerRoomId)
@@ -261,22 +320,9 @@ export const createAIAgent = (
       lastFallbackTarget = null
     }
 
-    const evalConfig = {
-      ...config,
-      model: effectiveModel,
-      persona: currentPersona,
-      temperature: currentTemperature,
-      thinking: currentThinking,
-      historyLimit,
-      maxToolResultChars: maxToolResultCharsCfg ?? config.maxToolResultChars,
-      maxToolIterations: maxToolIterationsCfg,
-    }
     const inReplyTo = contextResult.flushInfo.ids.size > 0 ? [...contextResult.flushInfo.ids] : undefined
     const abortController = new AbortController()
     activeAbortController = abortController
-    const evalEventCb = onEvalEvent
-      ? (event: EvalEvent) => onEvalEvent(config.name, event)
-      : undefined
 
     const effectiveToolDefs = includeTools ? toolDefinitions : undefined
 
@@ -285,8 +331,8 @@ export const createAIAgent = (
       onEvalEvent(config.name, {
         kind: 'context_ready',
         messages: contextResult.messages,
-        model: evalConfig.model,
-        temperature: evalConfig.temperature,
+        model: effectiveModel,
+        temperature: currentTemperature,
         toolCount: effectiveToolDefs?.length ?? 0,
       })
       for (const w of contextResult.warnings) {
@@ -298,51 +344,10 @@ export const createAIAgent = (
     const run = async (): Promise<void> => {
       let wasRespond = false
       try {
-        // First-attempt eval. If it returns action='error' with a fallbackable
-        // code AND a fallback model is configured (explicit or implicit
-        // Pro→Flash), retry ONCE with the fallback. evaluate() catches LLM
-        // errors and converts them to action='error', so we don't need a
-        // try/catch around it — the error is a return value.
-        let { decision, flushInfo } = await evaluate(
-          contextResult, evalConfig, llmProvider, includeTools ? toolExecutor : undefined, maxToolIterationsCfg,
-          triggerRoomId, {
-            toolDefinitions: effectiveToolDefs,
-            inReplyTo,
-            onEvent: evalEventCb,
-            signal: abortController.signal,
-          },
+        const { decision, flushInfo } = await evaluateWithFallback(
+          contextResult, effectiveModel, triggerRoomId, abortController.signal, inReplyTo,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
-
-        if (decision.response.action === 'error' && FALLBACKABLE_CODES.has(decision.response.code)) {
-          const fallback = resolveModelFallback(effectiveModel, config.modelFallback)
-          if (fallback) {
-            // Notice the fallback in the eval-event stream so it shows in the
-            // thinking indicator and inspector. Same kind as the per-call
-            // resolver's notice — UI distinguishes by `reason`.
-            if (onEvalEvent) {
-              onEvalEvent(config.name, {
-                kind: 'model_fallback',
-                preferred: effectiveModel,
-                effective: fallback,
-                reason: 'preferred_unavailable',
-              })
-            }
-            const retryConfig = { ...evalConfig, model: fallback }
-            const retry = await evaluate(
-              contextResult, retryConfig, llmProvider, includeTools ? toolExecutor : undefined, maxToolIterationsCfg,
-              triggerRoomId, {
-                toolDefinitions: effectiveToolDefs,
-                inReplyTo,
-                onEvent: evalEventCb,
-                signal: abortController.signal,
-              },
-            )
-            if (!cm.isEpochCurrent(epoch)) return
-            decision = retry.decision
-            flushInfo = retry.flushInfo
-          }
-        }
 
         wasRespond = decision.response.action === 'respond'
 
@@ -352,7 +357,26 @@ export const createAIAgent = (
         onDecision(decision)
       } catch (err) {
         if (!cm.isEpochCurrent(epoch)) return  // cancelled, ignore error
+        // Unexpected throw — evaluate() catches LLM-layer errors and converts
+        // them to action='error' decisions, so this branch is rare (programmer
+        // error, OOM, etc.). Without a synthetic decision, the agent silently
+        // goes idle: thinking indicator vanishes, no message, no toast.
+        // Surface it as an error decision so the user sees something.
+        const message = err instanceof Error ? err.message : String(err)
         console.error(`[${config.name}] Evaluation error:`, err)
+        try {
+          onDecision({
+            response: {
+              action: 'error',
+              code: 'unknown',
+              message: `Unexpected evaluation error: ${message}`,
+            },
+            generationMs: 0,
+            triggerRoomId,
+          })
+        } catch (decisionErr) {
+          console.error(`[${config.name}] onDecision threw while reporting eval error:`, decisionErr)
+        }
       } finally {
         if (cm.isEpochCurrent(epoch)) {
           cm.endGeneration(triggerRoomId)
@@ -411,8 +435,15 @@ export const createAIAgent = (
       .join('\n')
     if (!text) return ''
     const userContent = userPrefix ? `${userPrefix}\n\n${text}` : text
+    // Resolve effective model — the user's preferred model may be on a dead
+    // provider, in which case the resolver picks an available fallback.
+    // Without this, joins to busy rooms produced no summary and no UI signal
+    // when the preferred provider was down.
+    const resolved = resolveEffective
+      ? resolveEffective(currentModel)
+      : { model: currentModel, fallback: false, reason: 'preferred_available' as const }
     return callLLM(llmProvider, {
-      model: currentModel,
+      model: resolved.model,
       systemPrompt,
       messages: [{ role: 'user', content: userContent }],
       temperature: 0.3,
@@ -702,53 +733,10 @@ export const createAIAgent = (
           flushInfo: { ids: new Set<string>(), triggerRoomId: roomId },
         }
 
-        const evalConfig = {
-          ...config,
-          model: effectiveModel,
-          persona: currentPersona,
-          temperature: currentTemperature,
-          thinking: currentThinking,
-          historyLimit,
-          maxToolResultChars: maxToolResultCharsCfg ?? config.maxToolResultChars,
-          maxToolIterations: maxToolIterationsCfg,
-        }
-
-        let { decision } = await evaluate(
-          contextResult, evalConfig, llmProvider,
-          includeTools ? toolExecutor : undefined,
-          maxToolIterationsCfg, roomId,
-          {
-            toolDefinitions: includeTools ? toolDefinitions : undefined,
-            signal: abortController.signal,
-          },
+        const { decision } = await evaluateWithFallback(
+          contextResult, effectiveModel, roomId, abortController.signal,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled
-        // Mirror tryEvaluate's fallback retry — trigger-driven evals hit
-        // the same Pro-503 capacity issues as user-message evals.
-        if (decision.response.action === 'error' && FALLBACKABLE_CODES.has(decision.response.code)) {
-          const fallback = resolveModelFallback(effectiveModel, config.modelFallback)
-          if (fallback) {
-            if (onEvalEvent) {
-              onEvalEvent(config.name, {
-                kind: 'model_fallback',
-                preferred: effectiveModel,
-                effective: fallback,
-                reason: 'preferred_unavailable',
-              })
-            }
-            const retry = await evaluate(
-              contextResult, { ...evalConfig, model: fallback }, llmProvider,
-              includeTools ? toolExecutor : undefined,
-              maxToolIterationsCfg, roomId,
-              {
-                toolDefinitions: includeTools ? toolDefinitions : undefined,
-                signal: abortController.signal,
-              },
-            )
-            if (!cm.isEpochCurrent(epoch)) return
-            decision = retry.decision
-          }
-        }
         onDecision(decision)
       } catch (err) {
         if (cm.isEpochCurrent(epoch)) {
