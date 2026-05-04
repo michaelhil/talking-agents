@@ -92,14 +92,3 @@ jobs:
             /home/samsinn/.bun/bin/bun run scripts/streaming-probe.ts --evict-reload
           '
 
-      - name: LLM observability log dump (Phase 4 diagnosis — temporary)
-        # Pulls [llm] / [llm-bcast] structured log lines from journalctl that
-        # the probe just produced. Used to diagnose the chunks=0 vs chunks>0
-        # asymmetry seen across runs. Remove this step once root cause is
-        # identified and the chunks=0 path is closed by code fix.
-        if: always()
-        continue-on-error: true
-        run: |
-          ssh -i ~/.ssh/deploy_key root@${{ secrets.DEPLOY_HOST }} '
-            journalctl -u samsinn --since "5 minutes ago" --no-pager | grep -F "[llm" | tail -50 || true
-          '
