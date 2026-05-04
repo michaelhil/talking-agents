@@ -141,7 +141,21 @@ export const wireSystemEvents = (
     sched()
   })
 
+  // Counters per (agentName, kind) — let an operator confirm chunk events
+  // are actually reaching the broadcaster. Pairs with [llm] in evaluation.ts:
+  // disagreement between chunks_emit there and chunk count here pinpoints
+  // a wiring break in the proxy chain (lateBinding silent-skip class).
+  // Sampled to once per 25 chunks to avoid spamming the journal.
+  const broadcastChunkCount = new Map<string, number>()
   system.setOnEvalEvent((agentName, event) => {
+    if (event.kind === 'chunk') {
+      const k = agentName
+      const n = (broadcastChunkCount.get(k) ?? 0) + 1
+      broadcastChunkCount.set(k, n)
+      if (n === 1 || n % 25 === 0) {
+        console.log(`[llm-bcast] agent=${agentName} kind=chunk count_so_far=${n}`)
+      }
+    }
     broadcast({ type: 'agent_activity', agentName, event })
   })
 

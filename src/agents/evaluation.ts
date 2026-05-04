@@ -122,6 +122,16 @@ export const streamWithRetry = async (
     try {
       const startMs = performance.now()
 
+      // Per-call observability. One structured line tells us provider, model,
+      // chunks emitted to onEvent, content length, whether onEvent was wired,
+      // path taken (stream vs chat-fallback), and total time. Pairs with
+      // [llm-bcast] in wire-system-events.ts: if chunks_emit > 0 here but
+      // bcast count is 0, the eval→broadcaster wiring is broken (lateBinding
+      // silent-skip class). If chunks_emit == 0 with non-zero content_len,
+      // onEvent was undefined when the chunk fired (a1: spawn options didn't
+      // pass through onEvalEvent).
+      let chunksEmit = 0
+
       if (provider.stream) {
         let content = ''
         let toolCalls: ReadonlyArray<NativeToolCall> | undefined
@@ -132,7 +142,10 @@ export const streamWithRetry = async (
           }
           if (chunk.delta) {
             content += chunk.delta
-            onEvent?.({ kind: 'chunk', delta: chunk.delta })
+            if (onEvent) {
+              chunksEmit++
+              onEvent({ kind: 'chunk', delta: chunk.delta })
+            }
           }
           if (chunk.done) {
             if (chunk.toolCalls?.length) toolCalls = chunk.toolCalls
@@ -149,12 +162,18 @@ export const streamWithRetry = async (
         }
         // Strip think blocks and trim
         content = content.replace(THINK_BLOCK_RE, '').trim()
-        return { content, toolCalls, durationMs: Math.round(performance.now() - startMs), metrics }
+        const durationMs = Math.round(performance.now() - startMs)
+        console.log(`[llm] provider=${metrics.provider ?? '?'} model=${request.model} path=stream chunks_emit=${chunksEmit} content_len=${content.length} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${durationMs}`)
+        return { content, toolCalls, durationMs, metrics }
       }
 
       // Fallback: provider doesn't support streaming — use chat()
       const response = await provider.chat(request)
-      onEvent?.({ kind: 'chunk', delta: response.content })
+      if (onEvent) {
+        chunksEmit++
+        onEvent({ kind: 'chunk', delta: response.content })
+      }
+      console.log(`[llm] provider=${response.provider ?? '?'} model=${request.model} path=chat chunks_emit=${chunksEmit} content_len=${response.content.length} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${response.generationMs}`)
       return {
         content: response.content,
         toolCalls: response.toolCalls,
