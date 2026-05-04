@@ -101,5 +101,5 @@ jobs:
         continue-on-error: true
         run: |
           ssh -i ~/.ssh/deploy_key root@${{ secrets.DEPLOY_HOST }} '
-            journalctl -u samsinn --since "5 minutes ago" --no-pager | grep -E "^\[llm|^\\[llm-bcast" | tail -50 || true
+            journalctl -u samsinn --since "5 minutes ago" --no-pager | grep -F "[llm" | tail -50 || true
           '
