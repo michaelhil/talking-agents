@@ -257,19 +257,13 @@ const handlers: Handlers = {
     } else if (event.kind === 'model_fallback') {
       // Non-blocking notice that the agent's preferred model resolved to
       // a different effective model. Reason determines the copy:
-      //   preferred_unavailable — provider down, fell over to a different model
-      //   preferred_blank — agent had no model set
-      //   preferred_available — same model, different specific version (e.g.
-      //     dated Anthropic ID); informational, not an error
+      //   preferred_unavailable — runtime failover (e.g. Gemini Pro→Flash on
+      //     503), fired by ai-agent.ts after a fallbackable upstream error
+      //   preferred_blank — agent had no model set; cold-boot default kicked in
       const existing = $agentWarnings.get()[id] ?? []
-      let note: string
-      if (event.reason === 'preferred_unavailable') {
-        note = `Falling back from "${event.preferred}" to "${event.effective}" (preferred unavailable)`
-      } else if (event.reason === 'preferred_blank') {
-        note = `No model configured; using "${event.effective}"`
-      } else {
-        note = `Resolved "${event.preferred}" to specific version "${event.effective}"`
-      }
+      const note = event.reason === 'preferred_blank'
+        ? `No model configured; using "${event.effective}"`
+        : `Falling back from "${event.preferred}" to "${event.effective}" (preferred unavailable)`
       $agentWarnings.setKey(id, [...existing, note])
     }
   },

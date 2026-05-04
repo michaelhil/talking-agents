@@ -37,7 +37,6 @@ import type { LimitMetrics } from './core/limit-metrics.ts'
 import type { ProviderGateway } from './llm/provider-gateway.ts'
 import { createOverlayToolRegistry } from './core/tool-registry.ts'
 import { spawnAIAgent, spawnHumanAgent, buildToolSupport, type SpawnOptions } from './agents/spawn.ts'
-import { resolveEffectiveModel as resolveEffectiveModelFn } from './agents/resolve-model.ts'
 import { callLLM } from './agents/evaluation.ts'
 import { createHumanAgent } from './agents/human-agent.ts'
 import type { HumanAgentConfig, TransportSend } from './agents/human-agent.ts'
@@ -625,58 +624,27 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       availableModelsCache = [...fromRouter, ...fromOllama]
     } catch { /* keep prior cache on transient failure */ }
   }
-  // Match preferred against the cache and return the canonical form to send
-  // to the router. The router's resolveCandidates filters providers by
-  // exact-match against each gateway's `availableModels`, which for some
-  // providers (Anthropic) contains dated full IDs (`claude-haiku-4-5-20251001`)
-  // not friendly aliases (`claude-haiku-4-5`). A bare alias passed to the
-  // router would find zero eligible providers and fail with "All providers
-  // failed" even though the provider is healthy.
+  // Single resolution path. The agent stores the user's preferred model as a
+  // bare alias (`claude-haiku-4-5`, `gemini-2.5-pro`) or a pinned form
+  // (`groq:llama-3.3-70b-versatile`). We pass that through verbatim — the
+  // router decides eligibility by candidate-walk and the anthropic adapter
+  // translates aliases→dated canonicals on the wire.
   //
-  // Three resolutions in priority order:
-  //   1. Direct hit — preferred is verbatim in the cache; use as-is.
-  //   2. Suffix match — bare `claude-haiku-4-5` ↔ `anthropic:claude-haiku-4-5`
-  //      (provider reports the alias verbatim).
-  //   3. Versioned variant — bare `claude-haiku-4-5` ↔
-  //      `anthropic:claude-haiku-4-5-20251001` (provider reports dated ID).
-  //      Return the cached prefixed form; router pins to the provider and
-  //      sends the dated ID, which the gateway recognises in availableModels.
-  // Cache lookup with two distinct outcomes:
-  //   'present-bare' — bare preferred matches a `<provider>:<preferred>`
-  //     entry exactly (no version suffix). Same model, same provider; the
-  //     router can resolve the bare form via candidate-walk. Returning the
-  //     bare form here PRESERVES failover (router walks all providers that
-  //     list the model) — rewriting to prefixed would silently re-pin and
-  //     emit a spurious "fallback" event on every call.
-  //   'versioned' — bare preferred matches a `<provider>:<preferred>-<ver>`
-  //     entry (Anthropic dated IDs). Different model identity; the router
-  //     needs the dated form to send to the gateway. This IS a meaningful
-  //     fallback for telemetry + UI surfaces.
-  const findInCache = (preferred: string): { match: string; kind: 'direct' | 'present-bare' | 'versioned' } | undefined => {
-    if (availableModelsCache.includes(preferred)) return { match: preferred, kind: 'direct' }
-    if (preferred.includes(':')) return undefined
-    const suffixHit = availableModelsCache.find(c => c.endsWith(`:${preferred}`))
-    if (suffixHit) return { match: preferred, kind: 'present-bare' }
-    const versionedHit = availableModelsCache.find(c => c.includes(`:${preferred}-`))
-    if (versionedHit) return { match: versionedHit, kind: 'versioned' }
-    return undefined
-  }
+  // Two outcomes only:
+  //   - blank preferred (cold-boot, fresh user): substitute first-available
+  //     so the very first eval doesn't hard-fail before they pick a model.
+  //   - non-blank: pass through. If the model isn't actually routable, the
+  //     router surfaces `provider_all_failed` with `not_listed` — visible
+  //     error, not a silent swap to a different model.
   const resolveEffectiveModel: SpawnOptions['resolveEffectiveModel'] = (preferred) => {
-    const hit = findInCache(preferred)
-    if (hit) {
+    if (!preferred || preferred.trim() === '') {
       return {
-        model: hit.match,
-        // Only the versioned-variant case is a real fallback (different
-        // model identity). The present-bare and direct cases are the
-        // SAME model, just naming differences in the cache; reporting
-        // them as fallbacks creates UI noise on every eval and hides
-        // genuine fallbacks behind the spam.
-        fallback: hit.kind === 'versioned',
-        reason: 'preferred_available',
+        model: availableModelsCache[0] ?? '',
+        fallback: true,
+        reason: 'preferred_blank',
       }
     }
-    const fallback = availableModelsCache[0] ?? ''
-    return resolveEffectiveModelFn(preferred, () => false, fallback)
+    return { model: preferred, fallback: false, reason: 'preferred_available' }
   }
 
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>

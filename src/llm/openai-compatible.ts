@@ -17,7 +17,7 @@ import type { NativeToolCall } from '../core/types/tool.ts'
 import type { LimitMetrics } from '../core/limit-metrics.ts'
 import { createCloudProviderError, parseRetryAfterMs } from './errors.ts'
 import { fetchWithTimeout } from '../core/fetch-utils.ts'
-import { normalizeModelId } from './models/normalize.ts'
+import { normalizeModelId, expandAnthropicAliases } from './models/normalize.ts'
 
 const DEFAULT_CHAT_TIMEOUT_MS = 300_000
 const DEFAULT_MODELS_TIMEOUT_MS = 10_000
@@ -315,6 +315,21 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
   const modelsTimeoutMs = config.modelsTimeoutMs ?? DEFAULT_MODELS_TIMEOUT_MS
   const streamIdleTimeoutMs = config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS
 
+  // Anthropic ships dated canonical ids in /models (`claude-haiku-4-5-20251001`)
+  // but the curated UI list and agents carry the bare alias (`claude-haiku-4-5`).
+  // We publish BOTH forms in `models()` so the router's exact-match filter
+  // accepts the alias, then translate alias→canonical at request time so the
+  // wire payload uses the id Anthropic's API actually accepts. Empty until
+  // the first models() resolves; chat()/stream() before that point fall
+  // through identity (the request was always going to fail or hit a different
+  // provider anyway).
+  let anthropicAliasMap: ReadonlyMap<string, string> = new Map()
+
+  const resolveWireModel = (model: string): string => {
+    if (config.name !== 'anthropic') return model
+    return anthropicAliasMap.get(model) ?? model
+  }
+
   const headers = (): Record<string, string> => {
     const key = config.getApiKey()
     const auth = config.authHeaders
@@ -329,7 +344,8 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
 
   const chat = async (request: ChatRequest): Promise<ChatResponse> => {
     const startMs = performance.now()
-    const body = buildOAIBody(request, false, config.name)
+    const wireRequest = { ...request, model: resolveWireModel(request.model) }
+    const body = buildOAIBody(wireRequest, false, config.name)
 
     const response = await fetchWithTimeout(
       `${config.getBaseUrl()}/chat/completions`,
@@ -389,7 +405,8 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
   }
 
   const stream = async function* (request: ChatRequest, externalSignal?: AbortSignal): AsyncIterable<StreamChunk> {
-    const body = buildOAIBody(request, true, config.name)
+    const wireRequest = { ...request, model: resolveWireModel(request.model) }
+    const body = buildOAIBody(wireRequest, true, config.name)
 
     const controller = new AbortController()
     let idleTimer = setTimeout(() => controller.abort(), streamIdleTimeoutMs)
@@ -615,7 +632,13 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
     // Provider-specific id normalization (e.g. strip Gemini's "models/" prefix
     // so the catalog matches user-facing names). Single place for these quirks:
     // src/llm/models/normalize.ts. See that file for the full bug story.
-    return (data.data ?? []).map(m => normalizeModelId(config.name, m.id))
+    const ids = (data.data ?? []).map(m => normalizeModelId(config.name, m.id))
+    if (config.name === 'anthropic') {
+      const { expanded, aliasMap } = expandAnthropicAliases(ids)
+      anthropicAliasMap = aliasMap
+      return [...expanded]
+    }
+    return ids
   }
 
   return { chat, stream, models }
