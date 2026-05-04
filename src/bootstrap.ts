@@ -489,6 +489,23 @@ export const bootstrap = async (): Promise<void> => {
     }
   }
 
+  // === Per-instance evict ===
+  // Drops the cookie's System from memory; the on-disk snapshot is
+  // untouched, so the next request lazy-reloads via restoreFromSnapshot.
+  // Used by the post-deploy streaming probe to exercise the
+  // evict→reload boundary that hid the unsubscribeAgentState bug.
+  const evictInstance = async (req: Request) => {
+    const { getInstanceId } = await import('./api/instance-cookie.ts')
+    const id = getInstanceId(req)
+    if (!id) return { ok: false as const, reason: 'no instance cookie' }
+    try {
+      await registry.evictOne(id)
+      return { ok: true as const, instanceId: id }
+    } catch (err) {
+      return { ok: false as const, reason: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   // === Instances admin ===
   // Capability bundle for the Instances modal under Settings. Delete reuses
   // registry.resetInstance (trashes the dir, drops in-memory state). The id
@@ -545,6 +562,7 @@ export const bootstrap = async (): Promise<void> => {
     wsManager,
     port: parseInt(process.env.PORT ?? String(DEFAULTS.port), 10),
     resetInstance,
+    evictInstance,
     instances: instancesAdmin,
     diagnostics,
   })

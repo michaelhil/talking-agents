@@ -424,4 +424,54 @@ describe('GET /api/system/limits (no auth)', () => {
     expect(data.configured.maxWsBufferedBytes).toBe(8 * 1024 * 1024)
     expect(data.configured.maxRateLimitKeys).toBe(4096)
   })
+
+  // --- POST /api/system/evict ---
+  // Cookie-bound evict: drops the System from memory, snapshot stays.
+  // Mirrors /api/system/reset's auth shape but without the countdown
+  // and without trashing the directory.
+
+  test('POST /api/system/evict returns 501 when evictInstance not wired', async () => {
+    const r = req('POST', '/api/system/evict')
+    const sys = makeSystem()
+    const res = await handleAPI(r, '/api/system/evict', sys, TEST_INSTANCE_ID, {
+      broadcast: noopBroadcast,
+      subscribeAgentState: noopSubscribe,
+    })
+    expect(res?.status).toBe(501)
+  })
+
+  test('POST /api/system/evict calls evictInstance and returns 200 on success', async () => {
+    let calledWith: Request | undefined
+    const evictInstance = async (rq: Request) => {
+      calledWith = rq
+      return { ok: true as const, instanceId: TEST_INSTANCE_ID }
+    }
+    const r = new Request('http://test/api/system/evict', {
+      method: 'POST',
+      headers: { Cookie: `samsinn_instance=${TEST_INSTANCE_ID}` },
+    })
+    const sys = makeSystem()
+    const res = await handleAPI(r, '/api/system/evict', sys, TEST_INSTANCE_ID, {
+      broadcast: noopBroadcast,
+      subscribeAgentState: noopSubscribe,
+      evictInstance,
+    })
+    expect(res?.status).toBe(200)
+    expect(calledWith).toBe(r)
+    const body = await res!.json() as { evicted: boolean; instanceId: string }
+    expect(body.evicted).toBe(true)
+    expect(body.instanceId).toBe(TEST_INSTANCE_ID)
+  })
+
+  test('POST /api/system/evict surfaces evictInstance failure as 400', async () => {
+    const evictInstance = async () => ({ ok: false as const, reason: 'no instance cookie' })
+    const r = req('POST', '/api/system/evict')
+    const sys = makeSystem()
+    const res = await handleAPI(r, '/api/system/evict', sys, TEST_INSTANCE_ID, {
+      broadcast: noopBroadcast,
+      subscribeAgentState: noopSubscribe,
+      evictInstance,
+    })
+    expect(res?.status).toBe(400)
+  })
 })

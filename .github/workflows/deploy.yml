@@ -43,7 +43,7 @@ jobs:
     # Skip when CI failed. workflow_dispatch (manual) always runs.
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
 
     steps:
       - name: SSH key + known_hosts
@@ -76,10 +76,18 @@ jobs:
             exit 1
           '
 
-      - name: Smoke test (broadcast wiring)
+      - name: Streaming probe (real eval + evict→reload)
+        # Subsumes the older smoke-streaming.ts: this probe runs an actual
+        # LLM eval through a fresh probe-instance, evicts that instance,
+        # lazy-reloads it, and asserts agent_state 'generating' + chunk
+        # broadcasts arrive on the reloaded agent. The evict→reload boundary
+        # is the path that hid the unsubscribeAgentState leak fixed in
+        # 6d107de — this gate is what stops that bug class from re-shipping.
+        # Smoke-streaming.ts is retained for local dev (lighter, no LLM call)
+        # but is no longer in the deploy gate.
         run: |
           ssh -i ~/.ssh/deploy_key root@${{ secrets.DEPLOY_HOST }} '
             set -a; source /etc/samsinn/env; set +a
             cd /opt/samsinn
-            /home/samsinn/.bun/bin/bun run scripts/smoke-streaming.ts
+            /home/samsinn/.bun/bin/bun run scripts/streaming-probe.ts --evict-reload
           '

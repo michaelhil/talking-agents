@@ -40,6 +40,9 @@ interface ServerConfig {
   readonly uiPath?: string
   // Per-instance reset wired by bootstrap.
   readonly resetInstance: (req: Request) => Promise<import('./routes/types.ts').ResetInstanceResult>
+  // Per-instance evict (drop from memory, keep snapshot) — exercises the
+  // evict→reload boundary in the deploy gate. Wired by bootstrap.
+  readonly evictInstance: (req: Request) => Promise<import('./routes/types.ts').EvictInstanceResult>
   // Instances admin (list / create / switch / delete) wired by bootstrap.
   readonly instances: import('./routes/types.ts').InstanceAdmin
   // Read-only diagnostics snapshot (per-instance broadcast wiring health).
@@ -223,6 +226,7 @@ export const createServer = (config: ServerConfig) => {
         unsubscribeAgentState: wsManager.unsubscribeAgentState,
         remoteAddress,
         resetInstance: config.resetInstance,
+        evictInstance: config.evictInstance,
         broadcastToInstance: wsManager.broadcastToInstance,
         instances: config.instances,
         diagnostics: config.diagnostics,

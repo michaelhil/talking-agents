@@ -12,6 +12,15 @@ export interface ResetInstanceFail {
 }
 export type ResetInstanceResult = ResetInstanceOk | ResetInstanceFail
 
+// Distinct from reset: evict drops the System from in-memory state but
+// leaves the on-disk snapshot intact. The next request lazy-reloads via
+// restoreFromSnapshot, exercising the evict→reload boundary that the
+// streaming-probe deploy gate uses to catch unsubscribeAgentState-style
+// regressions.
+export type EvictInstanceResult =
+  | { readonly ok: true; readonly instanceId: string }
+  | { readonly ok: false; readonly reason: string }
+
 // Capabilities that the Instances admin routes need. Wired in bootstrap.ts.
 export interface InstanceAdmin {
   readonly listOnDisk: () => Promise<ReadonlyArray<{ id: string; snapshotMtimeMs: number; snapshotSizeBytes: number }>>
@@ -55,6 +64,10 @@ export interface RouteContext {
   // instance directory, drops it from the registry. The same id is kept;
   // the next request from the same cookie lazy-creates a fresh empty House.
   readonly resetInstance?: (req: Request) => Promise<ResetInstanceResult>
+  // Drop the cookie's instance from memory without trashing its snapshot —
+  // the next WS upgrade lazy-reloads via restoreFromSnapshot. Used by the
+  // post-deploy streaming probe to exercise the evict→reload boundary.
+  readonly evictInstance?: (req: Request) => Promise<EvictInstanceResult>
   // Instances admin (list / create / switch / delete). Wired in bootstrap.
   readonly instances?: InstanceAdmin
   // Read-only health/wiring snapshot. Wired in bootstrap.

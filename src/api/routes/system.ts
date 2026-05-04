@@ -166,6 +166,21 @@ export const systemRoutes: RouteEntry[] = [
     },
   },
   {
+    // Per-instance evict — drops the cookie's System from memory, leaves
+    // the snapshot on disk. Distinct from /reset (which trashes the dir).
+    // No countdown, no broadcast: the WS close on the cookie's session
+    // (handled by onSystemEvicted) is the user-visible signal, identical
+    // to the idle-evict path. Cookie-only auth, mirroring /reset.
+    method: 'POST',
+    pattern: /^\/api\/system\/evict$/,
+    handler: async (req, _match, ctx) => {
+      if (!ctx.evictInstance) return errorResponse('evict not supported in this mode', 501)
+      const result = await ctx.evictInstance(req)
+      if (!result.ok) return errorResponse(result.reason, 400)
+      return json({ evicted: true, instanceId: result.instanceId })
+    },
+  },
+  {
     method: 'POST',
     pattern: /^\/api\/system\/reset\/cancel$/,
     handler: async (req, _match, ctx) => {

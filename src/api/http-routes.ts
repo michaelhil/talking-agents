@@ -86,6 +86,7 @@ export interface RouteDeps {
   readonly unsubscribeAgentState?: (agentId: string) => void
   readonly remoteAddress?: string
   readonly resetInstance?: RouteContext['resetInstance']
+  readonly evictInstance?: RouteContext['evictInstance']
   readonly broadcastToInstance?: RouteContext['broadcastToInstance']
   readonly instances?: RouteContext['instances']
   readonly diagnostics?: RouteContext['diagnostics']
