@@ -53,15 +53,23 @@ const unknownCategoryError = (id: string): { success: false; error: string } => 
   error: `category '${id}' is not registered. The user must import it first via Settings → Geodata → Import (paste-flow).`,
 })
 
+// Wrap an envelope in a ```map fenced code block — the canonical agent
+// output shape. Drop into a chat message verbatim and the renderer picks
+// it up. Saves the agent from re-stringifying or guessing the fence
+// language tag.
+const renderableFor = (envelope: { view?: unknown; features: ReadonlyArray<unknown> }): string => {
+  return '```map\n' + JSON.stringify(envelope, null, 2) + '\n```'
+}
+
 // ============================================================================
 // geo_lookup
 // ============================================================================
 
 export const createGeoLookupTool = (): Tool => ({
   name: 'geo_lookup',
-  description: 'Resolves a place name to coordinates via the cascade: local store → Overpass (OSM) → Nominatim (OSM). Returns map-envelope features ready to drop into a ```map fenced block or an add_artifact/update_artifact body. Categories are user-defined — call geo_list_categories first to discover what is available.',
-  usage: 'Use this BEFORE writing any lat/lng yourself. Strict-match — pass an exact name or alias. The result `data` field is already in envelope shape. If category is unknown, the call returns an error; ask the user to import the category first.',
-  returns: '{ features: [{type:"marker", lat, lng, label, icon}], view?: {center,zoom}, source: "local"|"overpass"|"nominatim" }, or { features: [] } when nothing matched.',
+  description: 'Resolves a place name to coordinates via the cascade: local store → Overpass (OSM) → Nominatim (OSM). Use this BEFORE writing any lat/lng yourself. Categories are user-defined — call geo_list_categories first to discover what is available. Maps render INLINE via ```map fences; do NOT use add_artifact for maps.',
+  usage: 'Strict-match — pass an exact name or alias. The result includes `data.renderable` — drop that string verbatim into your chat reply to render the map inline. If category is unknown, the call returns an error; ask the user to import the category first.',
+  returns: '{ features: [{type:"marker", lat, lng, label, icon}], view?: {center,zoom}, source: "local"|"overpass"|"nominatim", renderable: "```map\\n...\\n```" }, or { features: [] } when nothing matched.',
   parameters: {
     type: 'object',
     properties: {
@@ -87,7 +95,17 @@ export const createGeoLookupTool = (): Tool => ({
         return { success: true, data: { features: [], source: null } }
       }
       const env = buildEnvelope(result.features, meta.icon)
-      return { success: true, data: { ...env, source: result.source } }
+      return {
+        success: true,
+        data: {
+          ...env,
+          source: result.source,
+          // Drop this verbatim into your reply to render the map inline.
+          // Maps DO NOT use add_artifact — the inline ```map fence is
+          // the only render path.
+          renderable: renderableFor(env),
+        },
+      }
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }
     }
@@ -309,9 +327,9 @@ const MAX_LIMIT = 1000
 
 export const createGeoListFeaturesTool = (): Tool => ({
   name: 'geo_list_features',
-  description: 'Returns all features in a category, optionally filtered by country / operator / name-substring / tag. Use this when the user wants to see many features at once on a map (e.g. "show all Norwegian oil platforms"). One call replaces the lookup-each-name dance.',
-  usage: 'Pass `category` (exact id) OR `categoryHint` (e.g. "oil platforms"). On ambiguous hint, the call errors with the candidate ids so you can clarify with the user. Filters compose (AND): country=ISO-3166-1-alpha-2, operator=substring, nameContains=substring on name+aliases, tag=exact match. Result `data` is a map envelope ready to drop into a ```map fence or add_artifact body.',
-  returns: '{ features: [{type:"marker", lat, lng, label, icon}], view?: {center, zoom}, count, source: "merged" }, or { success:false, error, candidates? } on ambiguity.',
+  description: 'Returns all features in a category, optionally filtered by country / operator / name-substring / tag. Use this when the user wants to see many features at once on a map (e.g. "show all Norwegian oil platforms"). One call replaces the lookup-each-name dance. Maps render INLINE via ```map fences; do NOT use add_artifact for maps.',
+  usage: 'Pass `category` (exact id) OR `categoryHint` (e.g. "oil platforms"). On ambiguous hint, the call errors with the candidate ids so you can clarify with the user. Filters compose (AND): country=ISO-3166-1-alpha-2, operator=substring, nameContains=substring on name+aliases, tag=exact match. Drop `data.renderable` verbatim into your chat reply to render the map inline.',
+  returns: '{ features: [...], view?: {center, zoom}, count, totalMatched, truncated, category, source: "merged", renderable: "```map\\n{...}\\n```" }, or { success:false, error, candidates? } on ambiguity.',
   parameters: {
     type: 'object',
     properties: {
@@ -376,16 +394,23 @@ export const createGeoListFeaturesTool = (): Tool => ({
     const slice = truncated ? filtered.slice(0, requestedLimit) : filtered
 
     const view = fitView(slice)
+    const envelope = {
+      features: slice.map((f) => featureToEnvelope(f, meta!.icon)),
+      ...(view ? { view } : {}),
+    }
     return {
       success: true,
       data: {
-        features: slice.map((f) => featureToEnvelope(f, meta!.icon)),
-        ...(view ? { view } : {}),
+        ...envelope,
         count: slice.length,
         totalMatched: filtered.length,
         truncated,
         category: meta.id,
         source: 'merged' as const,
+        // Drop this verbatim into your reply to render the map inline.
+        // Maps DO NOT use add_artifact — the inline ```map fence is
+        // the only render path.
+        renderable: renderableFor(envelope),
       },
     }
   },

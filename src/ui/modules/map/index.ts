@@ -29,22 +29,24 @@ const buildMapContainer = (height = DEFAULT_HEIGHT_PX): HTMLElement => {
 
 const addEnvelopeFeature = (L: LeafletApi, map: LeafletMap, f: EnvelopeFeature): void => {
   if (f.type === 'marker') {
-    // Use a divIcon path when the marker carries an explicit `icon` or
-    // `color` — Leaflet's default bitmap pin ignores `color` silently, so
-    // honoring those fields means swapping the icon entirely. Markers with
-    // neither stay on the bitmap path (matches existing visual).
-    const opts: Record<string, unknown> = {}
-    if (f.icon || f.color) {
-      const spec = buildIconSpec(f.icon, f.color)
-      opts.icon = L.divIcon({
+    // Unified divIcon path. Previously markers without an icon/color used
+    // Leaflet's default bitmap pin, which depends on Leaflet's CSS bundle
+    // pointing at a usable image URL — when the CSS chunk fails to load
+    // OR the URL is wrong, no marker shows. The divIcon path renders an
+    // inline SVG with no external asset dependency, so a marker either
+    // shows or fails loud.
+    const spec = buildIconSpec(f.icon, f.color)
+    const m = L.marker([f.lat, f.lng], {
+      icon: L.divIcon({
         html: spec.html,
         className: 'samsinn-marker',
         iconSize: spec.size,
         iconAnchor: spec.anchor,
-      })
-    }
-    const m = L.marker([f.lat, f.lng], opts)
-    if (f.label) m.bindTooltip(f.label, { permanent: false })
+      }),
+    })
+    // Tooltip: prefer `tooltip` property if set; else fall back to `label`.
+    const tip = f.tooltip ?? f.label
+    if (tip) m.bindTooltip(tip, { permanent: false })
     m.addTo(map)
   } else if (f.type === 'line' || f.type === 'track') {
     const opts: Record<string, unknown> = {}

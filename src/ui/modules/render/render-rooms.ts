@@ -6,7 +6,6 @@ import {
   renderPollArtifact,
   renderDocumentArtifact,
   renderMermaidArtifact,
-  renderMapArtifact,
   renderGenericArtifact,
 } from '../artifact-renderers.ts'
 
@@ -86,7 +85,8 @@ export const renderArtifacts = (
     else if (artifact.type === 'poll') inner = renderPollArtifact(artifact, myAgentId, onAction)
     else if (artifact.type === 'document') inner = renderDocumentArtifact(artifact, onAction)
     else if (artifact.type === 'mermaid') inner = renderMermaidArtifact(artifact, onAction)
-    else if (artifact.type === 'map') inner = renderMapArtifact(artifact, onAction)
+    // 'map' artifact type intentionally dropped — maps render inline.
+    // Any orphaned legacy map artifacts fall through to the generic renderer.
     else inner = renderGenericArtifact(artifact, onAction)
     wrap.appendChild(inner)
     container.appendChild(wrap)

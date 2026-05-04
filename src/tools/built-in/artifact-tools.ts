@@ -80,6 +80,17 @@ export const createAddArtifactTool = (house: House): Tool => ({
   },
   execute: async (params, context) => {
     const type = params.type as string
+
+    // Maps don't go through the artifact path — they render inline via
+    // ```map fences. Catch the misroute and redirect the agent rather
+    // than letting it create a phantom artifact that never appears.
+    if (type === 'map' || type === 'geojson') {
+      return {
+        success: false,
+        error: `Maps render inline, not as artifacts. Drop the JSON envelope inside a \`\`\`map fenced code block in your reply. Example:\n\n\`\`\`map\n{\n  "features": [\n    { "type": "marker", "lat": 60.39, "lng": 5.32, "label": "Bergen" }\n  ]\n}\n\`\`\`\n\nFor curated coordinates use geo_lookup or geo_list_features — both return ready-to-paste content in their \`renderable\` field.`,
+      }
+    }
+
     const typeDef = house.artifactTypes.get(type)
     if (!typeDef) return { success: false, error: `Unknown artifact type "${type}". Use list_artifact_types to see available types.` }
 

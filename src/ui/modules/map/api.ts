@@ -22,17 +22,17 @@ const LEAFLET_CSS = `https://cdn.jsdelivr.net/npm/leaflet@${LEAFLET_VERSION}/dis
 export interface LeafletApi {
   map: (el: HTMLElement, options?: Record<string, unknown>) => LeafletMap
   tileLayer: (url: string, options?: Record<string, unknown>) => LeafletLayer
-  marker: (latlng: [number, number], options?: Record<string, unknown>) => LeafletLayer
-  polyline: (latlngs: ReadonlyArray<[number, number]>, options?: Record<string, unknown>) => LeafletLayer
-  polygon: (latlngs: ReadonlyArray<[number, number]>, options?: Record<string, unknown>) => LeafletLayer
-  circle: (latlng: [number, number], options?: Record<string, unknown>) => LeafletLayer
+  marker: (latlng: readonly [number, number], options?: Record<string, unknown>) => LeafletLayer
+  polyline: (latlngs: ReadonlyArray<readonly [number, number]>, options?: Record<string, unknown>) => LeafletLayer
+  polygon: (latlngs: ReadonlyArray<readonly [number, number]>, options?: Record<string, unknown>) => LeafletLayer
+  circle: (latlng: readonly [number, number], options?: Record<string, unknown>) => LeafletLayer
   geoJSON: (data: unknown, options?: Record<string, unknown>) => LeafletLayer
-  latLngBounds: (latlngs: ReadonlyArray<[number, number]>) => LeafletBounds
+  latLngBounds: (latlngs: ReadonlyArray<readonly [number, number]>) => LeafletBounds
   divIcon: (options: Record<string, unknown>) => unknown
 }
 
 export interface LeafletMap {
-  setView: (latlng: [number, number], zoom: number) => LeafletMap
+  setView: (latlng: readonly [number, number], zoom: number) => LeafletMap
   fitBounds: (bounds: LeafletBounds, options?: Record<string, unknown>) => LeafletMap
   remove: () => void
   invalidateSize: () => void
