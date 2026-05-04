@@ -266,12 +266,20 @@ export const bootstrap = async (): Promise<void> => {
         wsManager.sessions.delete(token)
         wsManager.wsConnections.delete(token)
       }
-      // Detach all agents from the reverse index — late provider events
-      // for evicted agents drop silently. (per-agent detach also fires on
-      // removeAgent; this catches the bulk evict path where individual
-      // removes don't run.)
+      // Detach all agents from the reverse index AND drop their state
+      // subscriptions. Without the unsubscribeAgentState call, stateUnsubs
+      // keeps entries bound to dead agent.state closures from this evicted
+      // System; on lazy-reload the snapshot restores agents with the SAME
+      // IDs but FRESH state objects, the idempotent guard in
+      // subscribeAgentState silently skips re-subscription, and the
+      // restored agents' notifyState() calls fire to nowhere — no
+      // 'generating' broadcast, no thinking indicator, no streaming
+      // visible in the UI even though chunks broadcast fine. Entire bug
+      // class is invisible to smoke-streaming.ts because that script
+      // exercises in-memory wired instances, not evict-reload cycles.
       for (const a of system.team.listAgents()) {
         registry.detachAgent(a.id)
+        wsManager.unsubscribeAgentState(a.id)
       }
     },
   })

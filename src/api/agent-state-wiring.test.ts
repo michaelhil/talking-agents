@@ -262,4 +262,144 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     sys.removeAgent(helper.id)
     expect(unsubscribed).toContain(helper.id)
   })
+
+  test('evict + reload cycle: agent_state broadcasts still arrive for snapshot-restored agents', async () => {
+    // Regression for the "responses pop in fully formed, no thinking
+    // indicator" bug on samsinn.app. Cause: onSystemEvicted closed WS
+    // sessions but did not call wsManager.unsubscribeAgentState for the
+    // evicted agents. stateUnsubs (a process-global Map keyed by
+    // agent.id) kept entries bound to the dead agent.state closures.
+    // On lazy-reload, restoreFromSnapshot restored agents with the SAME
+    // ids but FRESH state objects; subscribeAgentState's idempotent
+    // guard saw stateUnsubs.has(id) === true and silently skipped
+    // re-subscription. The reloaded agents' notifyState() fired to
+    // nowhere — no 'generating' broadcast, no thinking indicator,
+    // even though chunk broadcasts worked fine. Fix in bootstrap.ts
+    // onSystemEvicted: also unsubscribe each agent.
+    const shared = createSharedRuntime({
+      providerConfig: baseConfig,
+      providerSetup: makeSetup(makeStubGateway()),
+    })
+
+    let wsManager!: WSManager
+
+    const registry = createSystemRegistry({
+      shared,
+      idleMs: 10_000_000, // disable idle eviction; we'll evict explicitly
+      drainMs: 100,
+      onSystemCreated: async (system, id, autoSaver: AutoSaver) => {
+        wireAgentTracking(system, id, {
+          attach: registry.attachAgent,
+          detach: registry.detachAgent,
+          subscribeAgentState: wsManager.subscribeAgentState,
+          unsubscribeAgentState: wsManager.unsubscribeAgentState,
+        })
+        wireSystemEvents(system, wsManager, autoSaver, id)
+      },
+      onSystemEvicted: (system, _id) => {
+        // Mirror bootstrap.ts: detach + unsubscribe every agent so
+        // stateUnsubs doesn't carry stale closures across reload.
+        // If the unsubscribeAgentState call below is removed, the
+        // post-reload assertion in this test fails — that is the
+        // regression this test pins.
+        for (const a of system.team.listAgents()) {
+          registry.detachAgent(a.id)
+          wsManager.unsubscribeAgentState(a.id)
+        }
+      },
+    })
+
+    wsManager = createWSManager({ getSystem: (id) => registry.tryGetLive(id) })
+
+    // Register a fake WS session/connection so broadcastToInstance has
+    // something to send to. The fake records every message it receives.
+    const wsMessages: string[] = []
+    const fakeToken = 'fake-session-token'
+    const cookieIdInstance = 'evictreloadtest1'
+    wsManager.sessions.set(fakeToken, {
+      instanceId: cookieIdInstance,
+      // The other ClientSession fields aren't read by broadcastToInstance;
+      // only instanceId is used to filter. Cast satisfies the structural
+      // type without committing to fields the test doesn't care about.
+    } as unknown as Parameters<typeof wsManager.sessions.set>[1])
+    wsManager.wsConnections.set(fakeToken, {
+      send: (data: string) => { wsMessages.push(data) },
+      close: () => {},
+      getBufferedAmount: () => 0,
+    } as unknown as Parameters<typeof wsManager.wsConnections.set>[1])
+
+    const cookieId = cookieIdInstance
+
+    // First load: seed runs, Helper spawned, subscription installed,
+    // and a flush persists snapshot to disk so reload sees it.
+    const sys1 = await registry.getOrLoad(cookieId)
+    const helper1 = sys1.team.listAgents().find(a => a.kind === 'ai')!
+    const helperId = helper1.id
+    expect(helper1.name).toBe('AI')
+
+    // Wait for autosave to flush (seed triggers one).
+    await new Promise(r => setTimeout(r, 100))
+
+    // Trigger eval pre-evict — confirm baseline that broadcasts work.
+    const room1 = sys1.house.listAllRooms()[0]!
+    sys1.routeMessage(
+      { rooms: [room1.id] },
+      { senderId: 'system', senderName: 'system', content: '[[AI]] ping1', type: 'chat' },
+    )
+    const isGenerating = (data: string): boolean => {
+      try {
+        const m = JSON.parse(data) as { type?: string; state?: string; agentName?: string }
+        return m.type === 'agent_state' && m.state === 'generating' && m.agentName === 'AI'
+      } catch { return false }
+    }
+    {
+      const deadline = Date.now() + 2000
+      while (Date.now() < deadline) {
+        if (wsMessages.some(isGenerating)) break
+        await new Promise(r => setTimeout(r, 25))
+      }
+    }
+    expect(wsMessages.filter(isGenerating).length).toBeGreaterThan(0)
+
+    // Wait for agent to settle to idle so eviction can drain.
+    await new Promise(r => setTimeout(r, 200))
+
+    // Evict the instance. stateUnsubs MUST be cleared for helperId;
+    // without the fix, it persists across the reload.
+    await registry.evictOne(cookieId)
+
+    // Lazy-reload: snapshot restores Helper with the SAME id.
+    const sys2 = await registry.getOrLoad(cookieId)
+    const helper2 = sys2.team.listAgents().find(a => a.kind === 'ai')!
+    expect(helper2.id).toBe(helperId)
+    // Critical assertion: this is a DIFFERENT object than helper1.
+    expect(helper2).not.toBe(helper1)
+
+    // Cut off pre-evict broadcasts to count only post-reload events.
+    const beforeReloadCount = wsMessages.length
+
+    // Trigger eval on the reloaded Helper. Without the fix, no
+    // agent_state broadcast arrives — the reloaded helper2.state has
+    // no subscriber because stateUnsubs.has(helperId) was true and
+    // subscribeAgentState silently skipped.
+    const room2 = sys2.house.listAllRooms()[0]!
+    sys2.routeMessage(
+      { rooms: [room2.id] },
+      { senderId: 'system', senderName: 'system', content: '[[AI]] ping2', type: 'chat' },
+    )
+
+    const deadline = Date.now() + 2000
+    while (Date.now() < deadline) {
+      if (wsMessages.slice(beforeReloadCount).some(isGenerating)) break
+      await new Promise(r => setTimeout(r, 25))
+    }
+    const postReloadGenerating = wsMessages.slice(beforeReloadCount).filter(isGenerating)
+    if (postReloadGenerating.length === 0) {
+      const types = wsMessages.slice(beforeReloadCount).map(d => {
+        try { const m = JSON.parse(d) as { type?: string; state?: string }; return `${m.type}/${m.state ?? '-'}` } catch { return '?' }
+      })
+      throw new Error(`No 'generating' broadcast post-reload. Got ${wsMessages.length - beforeReloadCount} messages: [${types.join(', ')}] — onSystemEvicted likely didn't unsubscribeAgentState.`)
+    }
+    expect(postReloadGenerating.length).toBeGreaterThan(0)
+  })
 })
