@@ -509,6 +509,42 @@ export const bootstrap = async (): Promise<void> => {
   // are uniform across instances anyway.
   console.log(`Tools: ${shared.sharedToolRegistry.list().map(t => t.name).join(', ')}`)
 
+  // Activation summary — operator-visible verification that the pack
+  // surface is what they expect. Counts fan out from the shared registry:
+  //   - 'core' tools: kind='built-in'
+  //   - 'local' tools: kind='external'
+  //   - per-pack tools: kind='pack-bundled', grouped by source.pack
+  // Skills counted similarly via the shared skill store.
+  // A new room with empty activePacks sees only core + local. The numbers
+  // here are upper bounds per pack — the per-room filter applies the
+  // 'core'/'local' implicit-active rule on top.
+  {
+    const entries = shared.sharedToolRegistry.listEntries()
+    const skillEntries = shared.sharedSkillStore.list()
+    const counts = new Map<string, { tools: number; skills: number }>()
+    const bump = (pack: string, kind: 'tools' | 'skills'): void => {
+      const slot = counts.get(pack) ?? { tools: 0, skills: 0 }
+      slot[kind]++
+      counts.set(pack, slot)
+    }
+    for (const e of entries) {
+      switch (e.source.kind) {
+        case 'built-in':       bump('core', 'tools'); break
+        case 'external':       bump('local', 'tools'); break
+        case 'pack-bundled':   bump(e.source.pack ?? 'local', 'tools'); break
+        case 'skill-bundled':  bump(e.source.pack ?? 'local', 'tools'); break
+      }
+    }
+    for (const s of skillEntries) bump(s.pack ?? 'local', 'skills')
+    const ordered: ReadonlyArray<readonly [string, { tools: number; skills: number }]> = [
+      ['core',  counts.get('core')  ?? { tools: 0, skills: 0 }],
+      ['local', counts.get('local') ?? { tools: 0, skills: 0 }],
+      ...[...counts.entries()].filter(([k]) => k !== 'core' && k !== 'local').sort((a, b) => a[0].localeCompare(b[0])),
+    ]
+    const fmt = ordered.map(([ns, c]) => `${ns}=${c.tools}t/${c.skills}s`).join(' ')
+    console.log(`[packs] activation surface: ${fmt}  (per-room: room.activePacks ⊕ core+local)`)
+  }
+
   // === Janitor + idle-eviction timer ===
   const janitor = startJanitor({
     isActive: id => registry.list().some(m => m.id === id),
