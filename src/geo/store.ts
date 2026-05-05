@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path'
 import { sharedPaths } from '../core/paths.ts'
 import { canonical } from './canonical.ts'
 import { getDiscoveredFeatures } from './discovered-cache.ts'
+import { getPackFeatures, getAllPackFeatures } from './pack-source.ts'
 import { extractCategoryMetaFromFeatures } from './projection.ts'
 import type { CategoryMeta, GeoCategory, GeoFeature, GeoFeatureCollection, GeoSource } from './types.ts'
 
@@ -99,18 +100,23 @@ const buildIndex = (features: ReadonlyArray<GeoFeature>): GeoIndex => {
 }
 
 // ============================================================================
-// Merge — discovered + local. Discovered wins on (category, canonical name).
-// Local features keep their `properties.source = 'local'`; discovered keep
-// `'discovered'`. Cascade reporters can attribute from `properties.source`.
+// Merge — local + pack + discovered. Collision wins by precedence:
+//   discovered > pack > local
+// (discovered/curated wins over pack-bundled, both win over local user-paste).
+// Each layer keeps its `properties.source` so callers can attribute. The
+// `pack` field is preserved so the room-aware filter can gate by activation.
 // ============================================================================
 
 const mergeFeatures = (
   local: ReadonlyArray<GeoFeature>,
+  pack: ReadonlyArray<GeoFeature>,
   discovered: ReadonlyArray<GeoFeature>,
 ): ReadonlyArray<GeoFeature> => {
   const byKey = new Map<string, GeoFeature>()
-  // Local first; discovered wins on collision (curated > unverified).
+  // Insertion order = precedence: later layers overwrite earlier ones on
+  // (category, canonical name) collision. local → pack → discovered.
   for (const f of local) byKey.set(`${f.properties.category}:${canonical(f.properties.name)}`, f)
+  for (const f of pack) byKey.set(`${f.properties.category}:${canonical(f.properties.name)}`, f)
   for (const f of discovered) byKey.set(`${f.properties.category}:${canonical(f.properties.name)}`, f)
   return [...byKey.values()]
 }
@@ -119,7 +125,10 @@ const mergeFeatures = (
 // Public API — feature reads
 // ============================================================================
 
-// All features (local + discovered, merged) in a category.
+// All features (local + pack + discovered, merged) in a category. Does NOT
+// filter by room.activePacks — that gate lives in the room-aware variant
+// `listCategoryForRoom`. The unfiltered form is still useful for admin
+// surfaces (categoryStats, removeCategory, etc.) that want the global view.
 export const listCategory = async (category: GeoCategory): Promise<ReadonlyArray<GeoFeature>> => {
   let local: ReadonlyArray<GeoFeature> = []
   try {
@@ -128,8 +137,26 @@ export const listCategory = async (category: GeoCategory): Promise<ReadonlyArray
   } catch {
     // Missing or corrupt file — fall through to discovered-only.
   }
+  const pack = getPackFeatures(category)
   const discovered = await getDiscoveredFeatures(category)
-  return mergeFeatures(local, discovered)
+  return mergeFeatures(local, pack, discovered)
+}
+
+// Room-aware variant: filters pack-sourced features by `activePacks`.
+// Non-pack features (local / discovered) are always included since they
+// don't have a pack origin to gate on. Use this from the agent surface
+// (geo_lookup, etc.) so an agent in a room with `aviation` deactivated
+// doesn't see aviation's airports.
+export const listCategoryForRoom = async (
+  category: GeoCategory,
+  activePacks: ReadonlySet<string>,
+): Promise<ReadonlyArray<GeoFeature>> => {
+  const all = await listCategory(category)
+  return all.filter(f => {
+    if (f.properties.source !== 'pack') return true
+    const ns = f.properties.pack
+    return !!ns && activePacks.has(ns)
+  })
 }
 
 // Indexed view of a category's merged features. Used by lookupInCategory.
@@ -154,21 +181,20 @@ export const listAllFeatures = async (): Promise<ReadonlyArray<GeoFeature>> => {
   // via getAllDiscoveredFeatures.
   const { getAllDiscoveredFeatures } = await import('./discovered-cache.ts')
   const discovered = await getAllDiscoveredFeatures()
+  const pack = getAllPackFeatures()
   // Merge per-category to keep collision semantics consistent.
-  const byCategory = new Map<string, { local: GeoFeature[]; discovered: GeoFeature[] }>()
-  for (const f of local) {
-    const slot = byCategory.get(f.properties.category) ?? { local: [], discovered: [] }
-    slot.local.push(f)
-    byCategory.set(f.properties.category, slot)
+  const byCategory = new Map<string, { local: GeoFeature[]; pack: GeoFeature[]; discovered: GeoFeature[] }>()
+  const slot = (cat: string) => {
+    let s = byCategory.get(cat)
+    if (!s) { s = { local: [], pack: [], discovered: [] }; byCategory.set(cat, s) }
+    return s
   }
-  for (const f of discovered) {
-    const slot = byCategory.get(f.properties.category) ?? { local: [], discovered: [] }
-    slot.discovered.push(f)
-    byCategory.set(f.properties.category, slot)
-  }
+  for (const f of local)      slot(f.properties.category).local.push(f)
+  for (const f of pack)       slot(f.properties.category).pack.push(f)
+  for (const f of discovered) slot(f.properties.category).discovered.push(f)
   const out: GeoFeature[] = []
-  for (const { local: l, discovered: d } of byCategory.values()) {
-    out.push(...mergeFeatures(l, d))
+  for (const { local: l, pack: p, discovered: d } of byCategory.values()) {
+    out.push(...mergeFeatures(l, p, d))
   }
   return out
 }

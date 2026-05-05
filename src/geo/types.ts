@@ -19,7 +19,7 @@
 import type { MarkerIcon } from '../ui/modules/map/schema.ts'
 export { MARKER_ICONS, isMarkerIcon, type MarkerIcon } from '../ui/modules/map/schema.ts'
 
-export type GeoSource = 'local' | 'overpass' | 'nominatim' | 'discovered'
+export type GeoSource = 'local' | 'overpass' | 'nominatim' | 'discovered' | 'pack'
 
 // Open category type. Validation is registry-driven at runtime — see
 // src/geo/categories.ts.
@@ -38,6 +38,10 @@ export interface GeoProperties {
   readonly tags?: ReadonlyArray<string>
   readonly verified: boolean
   readonly source: GeoSource
+  // When `source === 'pack'`, names the owning pack namespace. The room-
+  // aware filter (effectiveActivePacks ⊕ implicit core+local) gates pack
+  // features per room. Undefined for non-pack sources.
+  readonly pack?: string
   readonly added_by?: 'user' | 'agent'
   readonly added_at?: string        // ISO 8601
   // === Embedded category metadata (optional) ===

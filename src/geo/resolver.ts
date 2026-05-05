@@ -19,6 +19,12 @@ export type SourceFn = (query: string, category: GeoCategory) => Promise<GeoFeat
 export interface ResolverOptions {
   readonly sources?: ReadonlyArray<{ readonly name: GeoSource; readonly fn: SourceFn }>
   readonly cacheUpstream?: boolean    // default true: write upstream hits back to local
+  // Room-aware filter. When provided, pack-sourced features are gated by
+  // this set: a feature with `properties.source === 'pack'` is only
+  // visible if its `properties.pack` is in `activePacks`. Non-pack sources
+  // (local, discovered) are unaffected. Without this option, behavior is
+  // unchanged from pre-pack-scoping (every pack feature is visible).
+  readonly activePacks?: ReadonlySet<string>
 }
 
 // The local cascade source includes unverified entries — those are upstream
@@ -27,14 +33,19 @@ export interface ResolverOptions {
 // verified:false. The agent-facing geo_lookup tool surfaces the source field
 // in its result so callers can see "this came from the cache" without us
 // having to hide unverified data from the resolver itself.
-const localSource: SourceFn = async (query, category) =>
-  lookupInCategory(category, query, { includeUnverified: true })
-
-const DEFAULT_SOURCES: ReadonlyArray<{ name: GeoSource; fn: SourceFn }> = [
-  { name: 'local',     fn: localSource },
-  { name: 'overpass',  fn: lookupOverpass },
-  { name: 'nominatim', fn: lookupNominatim },
-]
+//
+// activePacks is captured by the closure so the per-resolver source list
+// stays the same shape; the filter applies post-lookup if a hit is from a
+// pack the room hasn't activated.
+const buildLocalSource = (activePacks?: ReadonlySet<string>): SourceFn => async (query, category) => {
+  const hit = await lookupInCategory(category, query, { includeUnverified: true })
+  if (!hit) return null
+  if (!activePacks) return hit
+  if (hit.properties.source !== 'pack') return hit
+  const ns = hit.properties.pack
+  if (ns && activePacks.has(ns)) return hit
+  return null
+}
 
 export const resolveLocation = async (
   query: string,
@@ -43,7 +54,15 @@ export const resolveLocation = async (
 ): Promise<GeoLookupResult | null> => {
   const trimmed = query.trim()
   if (!trimmed) return null
-  const sources = opts.sources ?? DEFAULT_SOURCES
+  // Default cascade rebuilt per call when an activation filter is set —
+  // closures over the filter aren't reusable across rooms with different
+  // activation sets. Cheap (4 fn allocations); avoids leaking room
+  // context into module-level state.
+  const sources = opts.sources ?? [
+    { name: 'local'     as GeoSource, fn: buildLocalSource(opts.activePacks) },
+    { name: 'overpass'  as GeoSource, fn: lookupOverpass },
+    { name: 'nominatim' as GeoSource, fn: lookupNominatim },
+  ]
   const cacheUpstream = opts.cacheUpstream !== false
 
   for (const src of sources) {

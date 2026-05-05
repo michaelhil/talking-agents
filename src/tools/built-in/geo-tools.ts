@@ -25,6 +25,28 @@ import { getCategory, listCategories } from '../../geo/categories.ts'
 import type { CategoryMeta, GeoFeature, GeoSource, MapEnvelopeFromGeo, MarkerIcon } from '../../geo/types.ts'
 import type { Tool } from '../../core/types/tool.ts'
 
+// Room-aware activation resolver. When wired (always in production via
+// bootstrap), geo_lookup applies the same effectiveActivePacks gate the
+// rest of the pack subsystem uses: pack-sourced features are visible
+// only when the owning pack is active in the trigger room. Without it
+// (tests / MCP-only), filtering is skipped and behavior matches the
+// pre-pack-scoping cascade.
+export interface GeoToolsDeps {
+  readonly getActivePacks?: (roomId: string) => ReadonlyArray<string> | undefined
+}
+
+const IMPLICIT_ACTIVE = ['core', 'local'] as const
+
+const buildActiveSet = (
+  deps: GeoToolsDeps | undefined,
+  roomId: string | undefined,
+): ReadonlySet<string> | undefined => {
+  if (!deps?.getActivePacks || !roomId) return undefined
+  const explicit = deps.getActivePacks(roomId)
+  if (!explicit) return undefined
+  return new Set([...IMPLICIT_ACTIVE, ...explicit])
+}
+
 const featureToEnvelope = (f: GeoFeature, icon: MarkerIcon | undefined): MapEnvelopeFromGeo['features'][number] => {
   const [lng, lat] = f.geometry.coordinates
   return {
@@ -65,7 +87,7 @@ const renderableFor = (envelope: { view?: unknown; features: ReadonlyArray<unkno
 // geo_lookup
 // ============================================================================
 
-export const createGeoLookupTool = (): Tool => ({
+export const createGeoLookupTool = (deps?: GeoToolsDeps): Tool => ({
   name: 'geo_lookup',
   description: 'Resolves a place name to coordinates via the cascade: local store → Overpass (OSM) → Nominatim (OSM). Use this BEFORE writing any lat/lng yourself. Categories are user-defined — call geo_list_categories first to discover what is available. Maps render INLINE via ```map fences; do NOT use add_artifact for maps.',
   usage: 'Strict-match — pass an exact name or alias. The result includes `data.renderable` — drop that string verbatim into your chat reply to render the map inline. If category is unknown, the call returns an error; ask the user to import the category first.',
@@ -78,7 +100,7 @@ export const createGeoLookupTool = (): Tool => ({
     },
     required: ['query', 'category'],
   },
-  execute: async (params: Record<string, unknown>) => {
+  execute: async (params: Record<string, unknown>, ctx) => {
     const query = params.query
     const category = params.category
     if (typeof query !== 'string' || !query.trim()) {
@@ -90,7 +112,13 @@ export const createGeoLookupTool = (): Tool => ({
     const meta = await getCategory(category)
     if (!meta) return unknownCategoryError(category)
     try {
-      const result = await resolveLocation(query, category)
+      // Pack-aware filter: derive the active set from the trigger room
+      // (when both deps and ctx.roomId are wired) and pass it to the
+      // resolver. Pack features for inactive packs are filtered out of
+      // the local cascade step, matching the per-room scoping for tools/
+      // skills/scripts.
+      const activePacks = buildActiveSet(deps, ctx.roomId)
+      const result = await resolveLocation(query, category, activePacks ? { activePacks } : {})
       if (!result) {
         return { success: true, data: { features: [], source: null } }
       }

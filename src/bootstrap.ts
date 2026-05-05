@@ -138,6 +138,25 @@ export const bootstrap = async (): Promise<void> => {
   await loadSkills(sharedPaths.skills(), shared.sharedSkillStore, shared.sharedToolRegistry)
   await loadAllPacks(sharedPaths.packs(), shared.sharedToolRegistry, shared.sharedSkillStore)
 
+  // Pack-bundled geodata: scan ~/.samsinn/packs/<ns>/geodata/*.geojson and
+  // load into the in-memory pack-source cache. Features are tagged
+  // source='pack', pack=<ns> so the room-aware filter can gate them per
+  // activePacks. Failures per-pack are logged but don't abort boot —
+  // bad geodata in one pack shouldn't sink samsinn.
+  {
+    const { refreshPackGeodata } = await import('./geo/pack-source.ts')
+    const packGeoState = await refreshPackGeodata(sharedPaths.packs())
+    if (packGeoState.perPackFeatureCounts.size > 0) {
+      const counts = [...packGeoState.perPackFeatureCounts.entries()]
+        .map(([ns, n]) => `${ns}=${n}`)
+        .join(' ')
+      console.log(`[geo/pack] loaded: ${counts}`)
+    }
+    for (const e of packGeoState.errors) {
+      console.warn(`[geo/pack] ${e.pack}/${e.file}: ${e.reason}`)
+    }
+  }
+
   // Bundled example scripts are loaded read-only from examples/scripts/ via
   // ScriptStore's extraSourceDirs (wired in main.ts). Nothing is copied into
   // $SAMSINN_HOME/scripts/ — that directory holds user-authored scripts only.
@@ -200,7 +219,21 @@ export const bootstrap = async (): Promise<void> => {
   // shared geodata tools. The migration is idempotent — subsequent boots
   // see the registry file and do nothing.
   await runGeodataMigrationOnce()
-  shared.sharedToolRegistry.register(createGeoLookupTool())
+  // Forward-bound resolver: registry is created later in this function,
+  // but createGeoLookupTool is constructed now. We hand the tool a closure
+  // that will read from `registry` at call time — by which point it's been
+  // assigned (the closure can't fire before bootstrap completes since the
+  // tool registry isn't reachable until that happens).
+  const getRoomActivePacksForGeo = (roomId: string): ReadonlyArray<string> | undefined => {
+    for (const meta of registry.list()) {
+      const sys = registry.tryGetLive(meta.id)
+      if (!sys) continue
+      const room = sys.house.getRoom(roomId)
+      if (room) return room.getActivePacks()
+    }
+    return undefined
+  }
+  shared.sharedToolRegistry.register(createGeoLookupTool({ getActivePacks: getRoomActivePacksForGeo }))
   shared.sharedToolRegistry.register(createGeoAddTool())
   shared.sharedToolRegistry.register(createGeoRemoveTool())
   shared.sharedToolRegistry.register(createGeoListCategoriesTool())
