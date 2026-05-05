@@ -122,8 +122,6 @@ export interface System {
   readonly packsDir: string
   readonly knowledgeDir: string
   readonly providersStorePath: string
-  // Shared wiki registry — read by tools and the wiki admin endpoints.
-  readonly wikiRegistry: import('./wiki/registry.ts').WikiRegistry
   // Trigger scheduler — REST handlers call invalidate() after mutating an
   // agent's trigger list so the cached "any triggers exist" flag stays
   // accurate and the timer starts/stops correctly. See lever 2 in
@@ -795,7 +793,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     packsDir,
     knowledgeDir: sharedPaths.knowledge(),
     providersStorePath: sharedPaths.providers(),
-    wikiRegistry: shared.wikiRegistry,
     triggerScheduler,
     ollamaUrls,
     removeAgent,

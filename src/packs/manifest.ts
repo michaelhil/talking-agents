@@ -2,11 +2,45 @@
 // yields an empty manifest ({}) rather than an error — the directory name is
 // the canonical namespace, so a pack without a manifest is still valid.
 
-import type { PackManifest } from './types.ts'
+import type { PackManifest, WikiRef } from './types.ts'
 import { readFile } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 
 const MANIFEST_FILENAME = 'pack.json'
+
+// Lenient: drop entries that fail validation, log once, keep the rest.
+// Same policy as the top-level fields (a malformed `name` field doesn't
+// poison the whole manifest, just the field).
+const parseWikis = (raw: unknown, filePath: string): ReadonlyArray<WikiRef> | undefined => {
+  if (!Array.isArray(raw)) return undefined
+  const out: WikiRef[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') {
+      console.warn(`[packs] ${filePath}: wikis entry is not an object — skipping`)
+      continue
+    }
+    const e = entry as Record<string, unknown>
+    if (typeof e.name !== 'string' || !e.name.trim()) {
+      console.warn(`[packs] ${filePath}: wikis entry has no name — skipping`)
+      continue
+    }
+    if (typeof e.url !== 'string' || !e.url.trim()) {
+      console.warn(`[packs] ${filePath}: wikis entry "${e.name}" has no url — skipping`)
+      continue
+    }
+    let parsedUrl: URL
+    try { parsedUrl = new URL(e.url.trim()) } catch {
+      console.warn(`[packs] ${filePath}: wikis entry "${e.name}" has malformed url — skipping`)
+      continue
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      console.warn(`[packs] ${filePath}: wikis entry "${e.name}" url protocol must be http(s) — skipping`)
+      continue
+    }
+    out.push({ name: e.name.trim(), url: e.url.trim() })
+  }
+  return out.length > 0 ? out : undefined
+}
 
 export const readManifest = async (dirPath: string): Promise<PackManifest> => {
   const filePath = join(dirPath, MANIFEST_FILENAME)
@@ -28,11 +62,13 @@ export const readManifest = async (dirPath: string): Promise<PackManifest> => {
   if (!parsed || typeof parsed !== 'object') return {}
   const obj = parsed as Record<string, unknown>
 
-  const out: { name?: string; description?: string } = {}
+  const out: { name?: string; description?: string; wikis?: ReadonlyArray<WikiRef> } = {}
   if (typeof obj.name === 'string' && obj.name.trim().length > 0) out.name = obj.name.trim()
   if (typeof obj.description === 'string' && obj.description.trim().length > 0) {
     out.description = obj.description.trim()
   }
+  const wikis = parseWikis(obj.wikis, filePath)
+  if (wikis) out.wikis = wikis
   return out
 }
 

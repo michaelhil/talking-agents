@@ -42,7 +42,6 @@ import { mergeWithEnv } from '../llm/providers-store.ts'
 import { createToolRegistry } from './tool-registry.ts'
 import { createSkillStore } from '../skills/loader.ts'
 import { createLimitMetrics, type LimitMetrics } from './limit-metrics.ts'
-import { createWikiRegistry, type WikiRegistry } from '../wiki/registry.ts'
 
 export interface SharedRuntime {
   readonly providerConfig: ProviderConfig
@@ -70,10 +69,6 @@ export interface SharedRuntime {
   // instance reads from the same store, so installing a pack in instance A
   // makes its skills visible in instance B without an instance reload.
   readonly sharedSkillStore: SkillStore
-  // Shared wiki registry — owns all configured wikis, in-memory cache, and
-  // catalog generation. Single source so two instances bound to the same
-  // wiki share one warmed cache.
-  readonly wikiRegistry: WikiRegistry
   // Cross-provider LLM policy (system default fallback chain). Loaded once
   // at boot from ~/.samsinn/llm-policy.json, mutable through the UI at
   // request time. Mutable because boot-vs-bootstrap construction order
@@ -146,9 +141,6 @@ export const createSharedRuntime = (
   // codegen/pack admin tools. createSystem then wraps this in an overlay.
   const sharedToolRegistry = createToolRegistry()
   const sharedSkillStore = createSkillStore()
-  // Empty wiki list at construction — bootstrap.ts loads from wikis.json and
-  // calls setWikis + warm asynchronously.
-  const wikiRegistry = createWikiRegistry({ wikis: [] })
   return {
     providerConfig,
     providerKeys,
@@ -158,6 +150,5 @@ export const createSharedRuntime = (
     limitMetrics,
     sharedToolRegistry,
     sharedSkillStore,
-    wikiRegistry,
   }
 }

@@ -21,7 +21,6 @@ import { ollamaRoutes } from './routes/ollama.ts'
 import { providersListRoutes } from './routes/providers-list.ts'
 import { providersConfigRoutes } from './routes/providers-config.ts'
 import { providersTestRoutes } from './routes/providers-test.ts'
-import { wikisRoutes } from './routes/wikis.ts'
 import { triggerRoutes } from './routes/triggers.ts'
 import { packsRoutes } from './routes/packs.ts'
 import { systemRoutes } from './routes/system.ts'
@@ -49,8 +48,6 @@ const allRoutes = [
   ...providersListRoutes,
   ...providersConfigRoutes,
   ...providersTestRoutes,
-  // Wiki routes BEFORE roomRoutes so /api/rooms/:name/wikis matches first.
-  ...wikisRoutes,
   // Trigger routes BEFORE agentRoutes so /api/agents/:name/triggers matches first.
   ...triggerRoutes,
   ...packsRoutes,

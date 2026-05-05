@@ -46,8 +46,6 @@ import { loadAllPacks } from './packs/loader.ts'
 import { createPolicyStore } from './llm/llm-policy-store.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
-import { resolveActiveWikis } from './wiki/resolve-active.ts'
-import { createWikiTools } from './tools/built-in/wiki-tools.ts'
 import { parseLogConfigFromEnv } from './logging/config.ts'
 import { sharedPaths } from './core/paths.ts'
 import { createToolRegistry } from './core/tool-registry.ts'
@@ -237,44 +235,10 @@ export const bootstrap = async (): Promise<void> => {
   shared.sharedToolRegistry.register(createGeoRemoveTool())
   shared.sharedToolRegistry.register(createGeoListCategoriesTool())
   shared.sharedToolRegistry.register(createGeoListFeaturesTool())
-  // Wiki tools share the same forward-bound activation resolver as the
-  // geo tools — registry isn't yet built, but `registry.list()` will be
-  // populated by the time these tools are called.
-  for (const tool of createWikiTools(shared.wikiRegistry, { getActivePacks: getRoomActivePacksForGeo })) {
-    shared.sharedToolRegistry.register(tool)
-  }
-
-  // Wikis: install the auto-warm hook on the registry so any newly-seen
-  // id (from initial reconcile here, or a later resolveActiveWikis call
-  // triggered by a route handler when discovery picks up new wikis) gets
-  // warmed in the background. One source of truth for "wiki appeared →
-  // warm it" — no duplicate logic in route handlers.
-  shared.wikiRegistry.setOnNewWiki((wikiId) => {
-    shared.wikiRegistry.warm(wikiId)
-      .then(({ pageCount, warnings }) => {
-        console.log(`[wiki:${wikiId}] warmed ${pageCount} pages${warnings.length ? ` (${warnings.length} warnings)` : ''}`)
-        for (const ww of warnings) console.warn(`[wiki:${wikiId}] ${ww}`)
-      })
-      .catch((err) => console.error(`[wiki:${wikiId}] warm failed: ${(err as Error).message}`))
-  })
-  // Initial reconcile + warm. Per-wiki warm fires from the onNewWiki hook.
-  // Operator-stored wikis.json was retired in commit M; if the file still
-  // exists from a prior install, log a one-line nudge so the operator
-  // knows to migrate. The file is never auto-deleted or read.
-  {
-    const { existsSync } = await import('node:fs')
-    const legacy = sharedPaths.wikis()
-    if (existsSync(legacy)) {
-      console.warn(`[wikis] ${legacy} detected — no longer read; restructure into a pack to restore.`)
-    }
-  }
-  try {
-    const merged = await resolveActiveWikis(shared.wikiRegistry, sharedPaths.packs())
-    const active = merged.filter(w => w.enabled)
-    console.log(`[wiki] reconciled — ${active.length} active${active.length > 0 ? ' (all from packs)' : ''}`)
-  } catch (err) {
-    console.warn(`[wiki] initial reconcile failed: ${err instanceof Error ? err.message : String(err)}`)
-  }
+  // Wikis used to be a fetched-content subsystem. As of commit N, packs
+  // declare wiki URLs as metadata only (pack.json `wikis: [{ name, url }]`)
+  // and samsinn never fetches them — they're external links surfaced in
+  // the pack panel. Operators view + edit on GitHub Pages directly.
 
   // Geodata: kick off discovery + cache warm-up in the background. Mirrors
   // the wiki pattern — fire-and-forget so a slow GitHub doesn't block boot.

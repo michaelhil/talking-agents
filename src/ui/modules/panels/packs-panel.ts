@@ -13,10 +13,15 @@
 import { showToast } from '../toast.ts'
 import { $selectedRoomId, $rooms } from '../stores.ts'
 
+interface WikiRef {
+  name: string
+  url: string
+}
+
 interface InstalledPack {
   namespace: string
   dirPath: string
-  manifest: { name?: string; description?: string }
+  manifest: { name?: string; description?: string; wikis?: ReadonlyArray<WikiRef> }
   tools: string[]
   skills: string[]
   // system: true for the synthetic 'core' and 'local' packs. UI hides
@@ -178,11 +183,22 @@ const renderInstalledSection = (
          <button class="pack-update text-text-subtle hover:text-text px-2 py-1" title="Update (git pull)">↻</button>
          <button class="pack-uninstall text-text-subtle hover:text-danger px-2 py-1" title="Uninstall">✕</button>`
 
+    // External wiki links — pack metadata only, samsinn doesn't fetch the
+    // content. People view + edit on GitHub Pages directly. Render below
+    // the counts as a small link list.
+    const wikiLinks = (pack.manifest.wikis ?? [])
+      .map(w => `<a href="${escapeHtml(w.url)}" target="_blank" rel="noopener" class="text-accent hover:underline" title="${escapeHtml(w.url)}">📖 ${escapeHtml(w.name)} ↗</a>`)
+      .join(' · ')
+    const wikisRow = wikiLinks
+      ? `<div class="text-[10px] mt-0.5">${wikiLinks}</div>`
+      : ''
+
     row.innerHTML = `
       <div class="flex-1 min-w-0">
         <div class="text-text-strong font-medium truncate">${label}</div>
         <div class="text-text-muted truncate" title="${desc}">${desc || counts}</div>
         <div class="text-text-subtle text-[10px]">${counts}</div>
+        ${wikisRow}
       </div>
       ${rightCol}
     `
