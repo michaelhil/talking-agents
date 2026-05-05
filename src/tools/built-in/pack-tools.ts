@@ -158,10 +158,28 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
     const override = typeof params.name === 'string' ? (params.name as string).trim() : ''
     if (!source) return { success: false, error: 'source is required' }
 
+    // `core` is a system pack bundled into the binary; samsinn-core (its
+    // public read-only mirror) is intentionally NOT installable. Refuse
+    // any source that would resolve to a `core` namespace, including
+    // direct attempts at the mirror URL. See README.md and
+    // .github/workflows/sync-core-mirror.yml.
+    if (override === 'core' || /(^|[/:])samsinn-core(\.git)?\/?$/i.test(source)) {
+      return {
+        success: false,
+        error: '"core" is bundled into samsinn at build time and cannot be installed as a pack. The samsinn-core mirror exists for audit only.',
+      }
+    }
+
     const isBareName =
       !source.includes('/') &&
       !/^(https?:|ssh:|git:|file:)/i.test(source) &&
       !source.includes('@')
+    if (isBareName && source === 'core') {
+      return {
+        success: false,
+        error: '"core" is bundled into samsinn at build time and cannot be installed as a pack.',
+      }
+    }
     const resolved = isBareName ? await resolveBareName(source) : resolveSource(source)
     if ('error' in resolved) return { success: false, error: resolved.error }
 

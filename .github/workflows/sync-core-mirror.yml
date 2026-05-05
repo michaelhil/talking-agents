@@ -1,0 +1,98 @@
+name: sync-core-mirror
+
+# One-way sync: src/tools/built-in/ → michaelhil/samsinn-core/tools/.
+# Triggered on every push to master that touches the built-in tools.
+# The mirror is read-only for the public; this workflow is the only writer.
+#
+# Requires a repo secret SAMSINN_CORE_DEPLOY_KEY containing the private
+# half of an SSH deploy key registered on michaelhil/samsinn-core with
+# write access. (GitHub PATs work too — set SAMSINN_CORE_PAT instead and
+# swap the auth step. Deploy keys are recommended: scoped to one repo.)
+#
+# Setup checklist (one-shot, by the maintainer):
+#   1. ssh-keygen -t ed25519 -f /tmp/samsinn-core-deploy -N ""
+#   2. gh repo deploy-key add /tmp/samsinn-core-deploy.pub \
+#        --repo michaelhil/samsinn-core --allow-write \
+#        --title "samsinn sync workflow"
+#   3. gh secret set SAMSINN_CORE_DEPLOY_KEY \
+#        --repo michaelhil/samsinn --body "$(cat /tmp/samsinn-core-deploy)"
+#   4. rm /tmp/samsinn-core-deploy /tmp/samsinn-core-deploy.pub
+#
+# Until those secrets exist this workflow runs but exits early on the
+# auth step. It does not block samsinn's CI.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/tools/built-in/**'
+      - '.github/workflows/sync-core-mirror.yml'
+  workflow_dispatch: {}
+
+# Prevent two sync runs racing if a quick succession of master pushes
+# touch the same files.
+concurrency:
+  group: sync-core-mirror
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secret presence
+        id: secret
+        env:
+          KEY: ${{ secrets.SAMSINN_CORE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "SAMSINN_CORE_DEPLOY_KEY not set — skipping sync."
+            echo "missing=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout samsinn
+        if: steps.secret.outputs.missing == '0'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up SSH agent
+        if: steps.secret.outputs.missing == '0'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SAMSINN_CORE_DEPLOY_KEY }}
+
+      - name: Clone samsinn-core
+        if: steps.secret.outputs.missing == '0'
+        run: |
+          git clone --depth=1 git@github.com:michaelhil/samsinn-core.git /tmp/samsinn-core
+
+      - name: Sync tools/
+        if: steps.secret.outputs.missing == '0'
+        run: |
+          # Mirror src/tools/built-in/ → tools/, dropping any *.test.ts
+          # files. rsync --delete keeps the mirror exact: anything removed
+          # in samsinn is removed downstream too.
+          rsync -av --delete \
+            --exclude='*.test.ts' \
+            src/tools/built-in/ /tmp/samsinn-core/tools/
+
+      - name: Commit + push if changed
+        if: steps.secret.outputs.missing == '0'
+        run: |
+          cd /tmp/samsinn-core
+          git config user.email "samsinn-sync@noreply.github.com"
+          git config user.name  "samsinn-sync"
+          if git diff --quiet --staged && git diff --quiet; then
+            git add -A
+          fi
+          git add -A
+          if git diff --quiet --cached; then
+            echo "No changes — nothing to sync."
+            exit 0
+          fi
+          SAMSINN_SHA="${{ github.sha }}"
+          SAMSINN_MSG=$(git -C "$GITHUB_WORKSPACE" log -1 --pretty=%s "$SAMSINN_SHA")
+          git commit -m "sync: ${SAMSINN_SHA:0:12} — ${SAMSINN_MSG}"
+          git push origin main

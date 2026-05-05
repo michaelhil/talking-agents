@@ -127,6 +127,32 @@ describe('install_pack', () => {
     expect(result.success).toBe(false)
   })
 
+  it('refuses to install "core" — bundled with the binary, not pack-installable', async () => {
+    const env = await makeDeps()
+    parent = env.parent
+    const install = createInstallPackTool(env.deps)
+
+    // Bare-name attempt
+    const bare = await install.execute({ source: 'core' }, CTX)
+    expect(bare.success).toBe(false)
+    expect(bare.error).toContain('bundled')
+
+    // Owner/repo attempt against the public mirror
+    const ownerRepo = await install.execute({ source: 'michaelhil/samsinn-core' }, CTX)
+    expect(ownerRepo.success).toBe(false)
+    expect(ownerRepo.error).toContain('bundled')
+
+    // Full URL attempt
+    const url = await install.execute({ source: 'https://github.com/michaelhil/samsinn-core.git' }, CTX)
+    expect(url.success).toBe(false)
+    expect(url.error).toContain('bundled')
+
+    // Override with name=core, even when source looks like a real third-party pack
+    const override = await install.execute({ source: 'someone-else/their-pack', name: 'core' }, CTX)
+    expect(override.success).toBe(false)
+    expect(override.error).toContain('bundled')
+  })
+
   it('reports git failure without leaving a stray directory', async () => {
     const env = await makeDeps()
     parent = env.parent

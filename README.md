@@ -274,6 +274,14 @@ The **Todos** panel (collapsible, below the room header) shows all tasks for the
 
 ## Tool Reference
 
+> **Mirror for browsing:** the built-in tools are also published as a
+> read-only public mirror at
+> [michaelhil/samsinn-core](https://github.com/michaelhil/samsinn-core)
+> for audit and citation. The mirror is CI-synced from `src/tools/built-in/`
+> on every merge to `master`. **PRs and issues go here, not the mirror**
+> (the mirror has them disabled at the GitHub level — anything filed there
+> would be lost on the next sync).
+
 ### Built-in tools (always available)
 
 Every agent can use these tools by listing them in its `tools` config field.
