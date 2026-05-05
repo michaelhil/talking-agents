@@ -185,4 +185,39 @@ export const providersConfigRoutes: RouteEntry[] = [
       })
     },
   },
+
+  // --- System default fallback chain (cross-provider LLM policy) ---
+  // GET returns the current chain; PUT { chain: [...] | null } sets/clears.
+  // Persisted to ~/.samsinn/llm-policy.json; LLMService re-reads at every
+  // request so changes take effect without restart.
+  {
+    method: 'GET',
+    pattern: /^\/api\/llm-policy\/fallback$/,
+    handler: (_req, _match, { system }) => {
+      const chain = system.llmPolicyStore?.getModelFallback() ?? []
+      return json({ chain })
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: /^\/api\/llm-policy\/fallback$/,
+    handler: async (req, _match, { system, broadcast }) => {
+      if (!system.llmPolicyStore) return errorResponse('llm policy store unavailable', 500)
+      const body = await parseBody(req)
+      const raw = body.chain
+      let chain: ReadonlyArray<string> | undefined
+      if (raw === null || raw === '') chain = undefined
+      else if (Array.isArray(raw)) chain = (raw as unknown[]).filter((s): s is string => typeof s === 'string' && s.trim().length > 0).map(s => s.trim())
+      else if (typeof raw === 'string') chain = raw.split(',').map(s => s.trim()).filter(s => s.length > 0)
+      else return errorResponse('chain must be an array, comma-separated string, or null', 400)
+      try {
+        await system.llmPolicyStore.setModelFallback(chain && chain.length > 0 ? chain : undefined)
+      } catch (err) {
+        return errorResponse(`failed to save policy: ${err instanceof Error ? err.message : String(err)}`, 500)
+      }
+      // UI dropdowns may show effective chain; nudge them via providers_changed.
+      try { broadcast({ type: 'providers_changed', providers: system.llm.getOrder() }) } catch { /* ignore */ }
+      return json({ saved: true, chain: system.llmPolicyStore.getModelFallback() ?? [] })
+    },
+  },
 ]

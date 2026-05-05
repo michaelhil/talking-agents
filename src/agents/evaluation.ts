@@ -354,12 +354,21 @@ export const evaluate = async (
     })
   } catch (err) {
     const classified = classifyLLMError(err)
-    onEvent?.({ kind: 'warning', message: classified.message })
+    // LLMService attaches `remediation` to thrown errors derived from the
+    // structured attempts[] array. When present, append to the user-visible
+    // message so the agent's error bubble includes actionable next steps
+    // ("Set a fallback chain in Settings → Providers", etc.) rather than
+    // just the raw upstream string.
+    const remediation = (err as { remediation?: string }).remediation
+    const message = remediation && remediation.length > 0
+      ? `${classified.message}\n\n${remediation}`
+      : classified.message
+    onEvent?.({ kind: 'warning', message })
     return makeResult({
       response: {
         action: 'error',
         code: classified.code,
-        message: classified.message,
+        message,
         ...(classified.providerHint ? { providerHint: classified.providerHint } : {}),
       },
       generationMs: totalGenerationMs,

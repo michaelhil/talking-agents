@@ -316,7 +316,7 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
 
     const system = getSystem()
     const result = await classifyWhisper({
-      llm: system.llm,
+      llm: system.llmService,
       model: run.script.cast.find(c => c.name === castName)!.model,
       message: message.content,
       scriptContext: renderLivingScript(run, castName),

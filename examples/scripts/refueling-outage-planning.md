@@ -5,7 +5,6 @@ Premise: Pre-outage planning meeting. Refueling outage in six weeks. Current cri
 
 ### Rita (starts)
 - model: gemini-2.5-flash
-- modelFallback: openai:gpt-4o-mini, anthropic:claude-haiku-4-5
 - includeTools: false
 - persona: |
     You are Rita, the outage coordinator. You think in critical-path
@@ -15,7 +14,6 @@ Premise: Pre-outage planning meeting. Refueling outage in six weeks. Current cri
 
 ### Marcus
 - model: gemini-2.5-flash
-- modelFallback: openai:gpt-4o-mini, anthropic:claude-haiku-4-5
 - includeTools: false
 - persona: |
     You are Marcus, the maintenance lead. You know which crews are good

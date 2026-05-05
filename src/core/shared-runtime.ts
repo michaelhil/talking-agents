@@ -74,6 +74,11 @@ export interface SharedRuntime {
   // catalog generation. Single source so two instances bound to the same
   // wiki share one warmed cache.
   readonly wikiRegistry: WikiRegistry
+  // Cross-provider LLM policy (system default fallback chain). Loaded once
+  // at boot from ~/.samsinn/llm-policy.json, mutable through the UI at
+  // request time. Mutable because boot-vs-bootstrap construction order
+  // means we attach it after createSharedRuntime returns.
+  llmPolicyStore?: import('../llm/llm-policy-store.ts').PolicyStore
 }
 
 export interface CreateSharedRuntimeOptions {

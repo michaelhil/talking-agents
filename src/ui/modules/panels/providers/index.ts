@@ -41,6 +41,70 @@ const detachOllamaSettings = (): void => {
 // Shared max-concurrent blur handler. Both cloud + Ollama rows save on blur
 // when the value has changed from its original; logic is identical so it
 // lives here rather than being duplicated per-branch.
+// === System fallback chain ===
+// User-authored cross-provider chain. Every LLM call (agent eval, summary,
+// whisper, system tools) tries each entry on a fallbackable failure of its
+// primary. One config field, applies to every agent automatically.
+const renderFallbackSection = async (container: HTMLElement): Promise<void> => {
+  const wrap = document.createElement('div')
+  wrap.className = 'mb-4 px-3 py-3 rounded border border-border bg-surface-muted/40'
+  wrap.innerHTML = `
+    <div class="text-xs font-semibold text-text-strong mb-1">System fallback chain</div>
+    <div class="text-[11px] text-text-muted mb-2">
+      Comma-separated model refs tried when an agent's primary fails.
+      Example: <code>openai:gpt-4o-mini, anthropic:claude-haiku-4-5</code>
+    </div>
+    <div class="flex gap-2 items-center">
+      <input type="text" id="fallback-chain-input" class="input flex-1 text-xs"
+             placeholder="(no fallback configured)" autocomplete="off" />
+      <button type="button" id="fallback-chain-save" class="btn btn-sm">Save</button>
+    </div>
+    <div class="text-[10px] text-text-muted mt-1" id="fallback-chain-status"></div>
+  `
+  container.appendChild(wrap)
+
+  const input = wrap.querySelector<HTMLInputElement>('#fallback-chain-input')
+  const saveBtn = wrap.querySelector<HTMLButtonElement>('#fallback-chain-save')
+  const status = wrap.querySelector<HTMLDivElement>('#fallback-chain-status')
+  if (!input || !saveBtn || !status) return
+
+  // Load current chain
+  try {
+    const r = await fetch('/api/llm-policy/fallback')
+    if (r.ok) {
+      const data = await r.json() as { chain: string[] }
+      input.value = (data.chain ?? []).join(', ')
+    }
+  } catch { /* noop */ }
+
+  saveBtn.addEventListener('click', async () => {
+    const value = input.value.trim()
+    saveBtn.disabled = true
+    status.textContent = 'Saving…'
+    try {
+      const r = await fetch('/api/llm-policy/fallback', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain: value.length === 0 ? null : value }),
+      })
+      if (!r.ok) {
+        const body = await r.text()
+        status.textContent = `Save failed: ${body}`
+        showToast(document.body, 'Fallback chain save failed', { type: 'error', position: 'fixed' })
+      } else {
+        const data = await r.json() as { chain: string[] }
+        input.value = (data.chain ?? []).join(', ')
+        status.textContent = data.chain.length > 0 ? `Saved (${data.chain.length} models in chain)` : 'Cleared'
+        showToast(document.body, 'Fallback chain saved', { type: 'success', position: 'fixed' })
+      }
+    } catch (err) {
+      status.textContent = `Save failed: ${err instanceof Error ? err.message : String(err)}`
+    } finally {
+      saveBtn.disabled = false
+    }
+  })
+}
+
 const attachMaxConcurrentBlur = (row: HTMLElement, name: string): void => {
   const mc = row.querySelector<HTMLInputElement>(`#prov-mc-${name}`)
   if (!mc) return
@@ -90,6 +154,11 @@ export const renderProvidersPanel = (list: ProvidersResponse): void => {
       if (!ok) showToast(document.body, `Failed to reorder`, { type: 'error', position: 'fixed' })
     })
   }
+
+  // System fallback chain — cross-provider LLM policy. User-authored chain
+  // applied to every LLM call when its primary fails. Single source of
+  // resilience; agents inherit it automatically.
+  void renderFallbackSection(container)
 
   list.providers.forEach((entry, i) => {
     const row = renderRow({

@@ -44,6 +44,7 @@ import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
 import { loadAllPacks } from './packs/loader.ts'
 import { seedExampleScripts } from './core/scripts/script-store.ts'
+import { createPolicyStore } from './llm/llm-policy-store.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
 import { loadWikiStore } from './wiki/store.ts'
@@ -87,6 +88,19 @@ export const bootstrap = async (): Promise<void> => {
   // keeps the contract obvious.
   const { providerConfig, shared } = await buildProviderStack()
   const providerSetup = shared.providerSetup
+
+  // Load LLM policy (system default fallback chain). Persisted at
+  // ~/.samsinn/llm-policy.json; UI edits via Settings → Providers take
+  // effect at request time without restart. Bootstrapped from
+  // SAMSINN_DEFAULT_MODEL_FALLBACK env on first run if file is missing.
+  const envChainRaw = (process.env.SAMSINN_DEFAULT_MODEL_FALLBACK ?? '').trim()
+  const envChain = envChainRaw ? envChainRaw.split(',').map(s => s.trim()).filter(Boolean) : undefined
+  const { store: llmPolicyStore, warnings: policyWarnings } = await createPolicyStore({
+    path: sharedPaths.llmPolicy(),
+    ...(envChain && envChain.length > 0 ? { envChain } : {}),
+  })
+  for (const w of policyWarnings) console.warn(`[llm-policy] ${w}`)
+  shared.llmPolicyStore = llmPolicyStore
 
   const pkg = await Bun.file(`${import.meta.dir}/../package.json`).json() as { version: string }
   console.log(`Samsinn v${pkg.version}${headless ? ' (headless)' : ''}`)
@@ -132,9 +146,12 @@ export const bootstrap = async (): Promise<void> => {
   try {
     const examplesDir = resolve(process.cwd(), 'examples', 'scripts')
     const seedResult = await seedExampleScripts(examplesDir, sharedPaths.scripts())
-    if (seedResult.seeded.length > 0) {
-      console.log(`[scripts] seeded ${seedResult.seeded.length} example(s): ${seedResult.seeded.join(', ')}`)
-    }
+    const parts: string[] = []
+    if (seedResult.seeded.length > 0) parts.push(`seeded ${seedResult.seeded.length} (${seedResult.seeded.join(', ')})`)
+    if (seedResult.updated.length > 0) parts.push(`updated ${seedResult.updated.length} (${seedResult.updated.join(', ')})`)
+    if (seedResult.preserved.length > 0) parts.push(`preserved ${seedResult.preserved.length} user-edited`)
+    if (seedResult.forceReseeded) parts.push(`SAMSINN_RESEED_EXAMPLES applied`)
+    if (parts.length > 0) console.log(`[scripts] ${parts.join('; ')}`)
   } catch (err) {
     console.warn(`[scripts] example seeding failed: ${err instanceof Error ? err.message : err}`)
   }

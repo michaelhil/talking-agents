@@ -150,54 +150,215 @@ const scanScriptDir = async (baseDir: string): Promise<ReadonlyArray<Script>> =>
   return out
 }
 
-// === Seed-on-startup: copy bundled example scripts into the user's scripts
-// directory if no copy already exists. Idempotent — never overwrites a
-// user-edited file. Each example is parsed before copy so we never seed a
-// broken file. Called once per process from bootstrap. ===
+// === Seed-on-startup: hash-tracked smart seeder. ===
+//
+// State machine per bundled example:
+//
+//   File missing on disk
+//     → seed. Record bundled hash + timestamp in sidecar.
+//
+//   File present, current-on-disk hash == sidecar's lastBundledHash
+//     → user hasn't edited; bundled has advanced; safely overwrite.
+//       Update sidecar with new hash.
+//
+//   File present, hash mismatch
+//     → user edited; LEAVE ALONE. Log a one-line hint pointing at
+//       SAMSINN_RESEED_EXAMPLES so the operator can opt into update.
+//
+//   File present, no sidecar (first migration on existing install)
+//     → take a no-overwrite baseline: hash current file as if it were
+//       bundled, write to sidecar. From here on, future bundled updates
+//       flow naturally. Existing prod files are NOT touched on this boot.
+//
+// One-shot escape hatch:
+//
+//   SAMSINN_RESEED_EXAMPLES=<value>
+//
+// Stored in sidecar as `lastReseedTrigger`. When env value differs from
+// stored value, force-overwrite all bundled examples; record env value.
+// Subsequent boots with the same value → skip. To re-trigger after another
+// bundled update, bump the value (e.g. set to today's date or a version).
+// Forgotten env vars are safe — same value = no-op.
+// ============================================================================
+
+import { createHash } from 'node:crypto'
+
+const SEED_SIDECAR_NAME = '.seeded.json'
+const SEED_SIDECAR_VERSION = 1
+
+interface SeedSidecar {
+  readonly version: number
+  // Per-example record. Key is the script name (filename without .md).
+  readonly examples: Record<string, { lastBundledHash: string; seededAt: number }>
+  // Last value of SAMSINN_RESEED_EXAMPLES env that triggered a force overwrite.
+  readonly lastReseedTrigger?: string
+}
+
+const sha256 = (s: string): string => createHash('sha256').update(s, 'utf-8').digest('hex')
+
+const loadSidecar = async (path: string): Promise<SeedSidecar | null> => {
+  try {
+    const raw = await readFile(path, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<SeedSidecar>
+    if (parsed.version !== SEED_SIDECAR_VERSION) return null
+    if (!parsed.examples || typeof parsed.examples !== 'object') return null
+    return { version: SEED_SIDECAR_VERSION, examples: parsed.examples, ...(parsed.lastReseedTrigger ? { lastReseedTrigger: parsed.lastReseedTrigger } : {}) }
+  } catch {
+    return null
+  }
+}
+
+const saveSidecar = async (path: string, data: SeedSidecar): Promise<void> => {
+  await writeFile(path, JSON.stringify(data, null, 2), 'utf-8')
+}
+
+export interface SeedResult {
+  readonly seeded: ReadonlyArray<string>
+  readonly updated: ReadonlyArray<string>
+  readonly skipped: ReadonlyArray<string>      // files present, content identical to last seed (no-op)
+  readonly preserved: ReadonlyArray<string>    // user-edited; left alone
+  readonly forceReseeded: boolean              // SAMSINN_RESEED_EXAMPLES triggered
+}
+
 export const seedExampleScripts = async (
   examplesDir: string,
   scriptsDir: string,
-): Promise<{ readonly seeded: ReadonlyArray<string>; readonly skipped: ReadonlyArray<string> }> => {
+): Promise<SeedResult> => {
   let entries: string[]
   try {
     entries = await readdir(examplesDir)
   } catch {
-    return { seeded: [], skipped: [] }
+    return { seeded: [], updated: [], skipped: [], preserved: [], forceReseeded: false }
   }
 
   await mkdir(scriptsDir, { recursive: true })
+  const sidecarPath = join(scriptsDir, SEED_SIDECAR_NAME)
+  const existingSidecar = await loadSidecar(sidecarPath)
+  const reseedEnv = (process.env.SAMSINN_RESEED_EXAMPLES ?? '').trim() || undefined
+  const forceReseed = !!reseedEnv && reseedEnv !== existingSidecar?.lastReseedTrigger
+
   const seeded: string[] = []
+  const updated: string[] = []
   const skipped: string[] = []
+  const preserved: string[] = []
+
+  // Build the next sidecar incrementally so a partial run still leaves
+  // recorded state for the files we did process.
+  const nextExamples: Record<string, { lastBundledHash: string; seededAt: number }> =
+    { ...(existingSidecar?.examples ?? {}) }
 
   for (const entry of entries) {
     if (!entry.endsWith('.md')) continue
     const stem = entry.slice(0, -'.md'.length)
     if (!VALID_NAME.test(stem)) continue
-    const src = join(examplesDir, entry)
+    const srcPath = join(examplesDir, entry)
     const dstFlat = join(scriptsDir, entry)
     const dstDir = join(scriptsDir, stem, 'script.md')
 
-    // Already present in either layout — leave it alone.
-    let exists = false
-    try { await stat(dstFlat); exists = true } catch { /* not present */ }
-    if (!exists) { try { await stat(dstDir); exists = true } catch { /* not present */ } }
-    if (exists) { skipped.push(stem); continue }
-
-    // Validate the example before copying so we never seed a broken file.
+    let bundled: string
     try {
-      const raw = await readFile(src, 'utf-8')
-      parseScriptMd(stem, raw)
+      bundled = await readFile(srcPath, 'utf-8')
+      parseScriptMd(stem, bundled)
     } catch (err) {
       console.warn(`[scripts] example "${entry}": skipped — ${err instanceof Error ? err.message : err}`)
       continue
     }
+    const bundledHash = sha256(bundled)
 
-    try {
-      await copyFile(src, dstFlat)
-      seeded.push(stem)
-    } catch (err) {
-      console.warn(`[scripts] example "${entry}": copy failed — ${err instanceof Error ? err.message : err}`)
+    // Detect existing on-disk file in either layout.
+    let existingPath: string | null = null
+    let existingContent: string | null = null
+    for (const candidate of [dstFlat, dstDir]) {
+      try {
+        const raw = await readFile(candidate, 'utf-8')
+        existingPath = candidate
+        existingContent = raw
+        break
+      } catch { /* not present */ }
+    }
+
+    if (!existingPath) {
+      // Missing → seed.
+      try {
+        await copyFile(srcPath, dstFlat)
+        nextExamples[stem] = { lastBundledHash: bundledHash, seededAt: Date.now() }
+        seeded.push(stem)
+      } catch (err) {
+        console.warn(`[scripts] example "${entry}": seed failed — ${err instanceof Error ? err.message : err}`)
+      }
+      continue
+    }
+
+    const onDiskHash = sha256(existingContent ?? '')
+    const recorded = nextExamples[stem]
+
+    // No sidecar entry → first-migration baseline. Record current hash;
+    // do NOT overwrite even if bundled differs. Next bundled update flows
+    // naturally on subsequent boots.
+    if (!recorded && !forceReseed) {
+      nextExamples[stem] = { lastBundledHash: onDiskHash, seededAt: Date.now() }
+      preserved.push(stem)
+      continue
+    }
+
+    // Already up to date.
+    if (onDiskHash === bundledHash) {
+      // Ensure sidecar reflects current bundled hash even if we somehow
+      // ended up here with a stale entry.
+      if (!recorded || recorded.lastBundledHash !== bundledHash) {
+        nextExamples[stem] = { lastBundledHash: bundledHash, seededAt: recorded?.seededAt ?? Date.now() }
+      }
+      skipped.push(stem)
+      continue
+    }
+
+    // Force-reseed via env trumps user-edit detection.
+    if (forceReseed) {
+      try {
+        await writeFile(existingPath, bundled, 'utf-8')
+        nextExamples[stem] = { lastBundledHash: bundledHash, seededAt: Date.now() }
+        updated.push(stem)
+      } catch (err) {
+        console.warn(`[scripts] example "${entry}": force-reseed write failed — ${err instanceof Error ? err.message : err}`)
+      }
+      continue
+    }
+
+    // User hasn't touched it (matches recorded hash) → safely update.
+    if (recorded && onDiskHash === recorded.lastBundledHash) {
+      try {
+        await writeFile(existingPath, bundled, 'utf-8')
+        nextExamples[stem] = { lastBundledHash: bundledHash, seededAt: Date.now() }
+        updated.push(stem)
+      } catch (err) {
+        console.warn(`[scripts] example "${entry}": update write failed — ${err instanceof Error ? err.message : err}`)
+      }
+      continue
+    }
+
+    // Diverged from recorded → user edited. Leave alone.
+    preserved.push(stem)
+    if (recorded?.lastBundledHash !== bundledHash) {
+      console.log(
+        `[scripts] example "${stem}" has user edits — bundled version advanced ` +
+        `but on-disk file is preserved. To overwrite with the bundled version, ` +
+        `set SAMSINN_RESEED_EXAMPLES=<any-new-value> and restart.`,
+      )
     }
   }
-  return { seeded, skipped }
+
+  // Write sidecar reflecting the final state, including the trigger we
+  // applied (if any) so subsequent boots with the same value no-op.
+  const nextSidecar: SeedSidecar = {
+    version: SEED_SIDECAR_VERSION,
+    examples: nextExamples,
+    ...(reseedEnv ? { lastReseedTrigger: reseedEnv } : (existingSidecar?.lastReseedTrigger ? { lastReseedTrigger: existingSidecar.lastReseedTrigger } : {})),
+  }
+  try {
+    await saveSidecar(sidecarPath, nextSidecar)
+  } catch (err) {
+    console.warn(`[scripts] failed to write seed sidecar: ${err instanceof Error ? err.message : err}`)
+  }
+
+  return { seeded, updated, skipped, preserved, forceReseeded: forceReseed }
 }

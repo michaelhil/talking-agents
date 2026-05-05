@@ -27,6 +27,7 @@ import { createTeam } from './agents/team.ts'
 import { createMessageRouter } from './core/delivery.ts'
 import type { LLMGateway } from './llm/gateway.ts'
 import type { ProviderRouter } from './llm/router.ts'
+import { createLLMService, type LLMService } from './llm/llm-service.ts'
 import type { ProviderSetupResult } from './llm/providers-setup.ts'
 import type { ProviderConfig } from './llm/providers-config.ts'
 import type { ProviderKeys } from './llm/provider-keys.ts'
@@ -81,6 +82,15 @@ export interface System {
   readonly routeMessage: RouteMessage
   // Provider-neutral LLM access. All agents and callSystemLLM go through here.
   readonly llm: ProviderRouter
+  // Higher-level wrapper around `llm` that owns cross-cutting concerns:
+  // pre-call cooldown skip, fallback-chain walking (with system default
+  // policy), unified observability, and source tagging. New code SHOULD
+  // call llmService rather than llm directly so resilience is automatic.
+  readonly llmService: LLMService
+  // Cross-provider LLM policy (system default fallback chain). Mutable —
+  // UI reads/writes this; LLMService consults it at request time.
+  // Optional because tests / single-tenant headless paths may not load it.
+  readonly llmPolicyStore?: import('./llm/llm-policy-store.ts').PolicyStore
   // Direct Ollama gateway (present iff Ollama is a configured provider).
   // Used by the Ollama dashboard UI for ps/loadModel; not for routing.
   readonly ollama: LLMGateway | undefined
@@ -216,6 +226,18 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   })
   const { providerConfig, providerKeys, providerSetup } = shared
   const { router: llm, ollama, ollamaRaw, gateways, monitors } = providerSetup
+
+  // LLMService — single gateway for every LLM call. Owns cooldown skip,
+  // fallback-chain walk (with system default policy), unified [llm] log
+  // line, source tagging. See src/llm/llm-service.ts for the contract.
+  // System default chain comes from shared.llmPolicyStore (loaded by
+  // bootstrap from ~/.samsinn/llm-policy.json); read at request time so
+  // UI edits propagate without restart.
+  const llmService: LLMService = createLLMService({
+    router: llm,
+    getSystemChain: () => shared.llmPolicyStore?.getModelFallback(),
+  })
+
   const team = createTeam()
 
   const deliver: DeliverFn = (agentId, message) => {
@@ -332,7 +354,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       schedulerRef?.onConfigChanged(roomId)
     },
     onSummaryUpdated: summaryUpdated.proxy,
-    callSystemLLM: (options) => callLLM(llm, options),
+    callSystemLLM: (options) => callLLM(llmService, options),
   }
   const house = createHouse(houseCallbacks)
   const routeMessage = createMessageRouter({ house })
@@ -349,7 +371,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     const model = firstAi ? (firstAi as AIAgent).getModel?.() : undefined
     return model ?? 'llama3.2'
   }
-  const summaryEngine = createSummaryEngine({ llm, defaultModel: defaultSummaryModel })
+  const summaryEngine = createSummaryEngine({ llm: llmService, defaultModel: defaultSummaryModel })
   const summaryScheduler = createSummaryScheduler({
     engine: summaryEngine,
     getRoom: (id) => house.getRoom(id),
@@ -611,7 +633,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   }
 
   const boundSpawnAIAgent = (config: AIAgentConfig, options?: SpawnOptions) =>
-    spawnAIAgent(config, llm, house, team, routeMessage, toolRegistry, {
+    spawnAIAgent(config, llmService, house, team, routeMessage, toolRegistry, {
       ...options,
       getSkills: getSkillsForRoom,
       getWikisCatalog: buildWikisCatalogForAgent,
@@ -745,7 +767,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
 
   const system: System = {
     house, team, routeMessage,
-    llm, ollama, providerConfig, providerKeys, gateways, monitors,
+    llm, llmService, ollama, providerConfig, providerKeys, gateways, monitors,
+    ...(shared.llmPolicyStore ? { llmPolicyStore: shared.llmPolicyStore } : {}),
     refreshAvailableModels,
     toolRegistry, refreshAllAgentTools, skillStore, skillsDir,
     scriptStore, scriptsDir,
