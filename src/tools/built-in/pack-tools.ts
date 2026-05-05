@@ -310,6 +310,7 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
     if (!VALID_NS.test(namespace)) return { success: false, error: `Invalid pack name "${namespace}"` }
 
     const dirPath = join(deps.packsDir, namespace)
+    const prevPath = `${dirPath}.prev`
     try {
       const s = await stat(dirPath)
       if (!s.isDirectory()) return { success: false, error: `Pack "${namespace}" is not installed` }
@@ -317,8 +318,63 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
       return { success: false, error: `Pack "${namespace}" is not installed` }
     }
 
+    // Real rollback contract: copy current pack to <ns>.prev BEFORE any
+    // mutation. If anything fails (pull, manifest, loadPack), restore from
+    // .prev so the operator never loses a working install. install_pack
+    // already gets this for free (no prior state); update_pack used to
+    // rm -rf on partial failure, which destroyed the working version
+    // because of one bad tool in the new revision.
+    //
+    // Existing .prev sibling means a prior update crashed mid-rollback —
+    // refuse rather than clobber the recovery copy.
+    try {
+      const s = await stat(prevPath)
+      if (s) {
+        return {
+          success: false,
+          error: `Pack "${namespace}" has an orphan .prev sibling at ${prevPath} from a prior failed update. Inspect + remove it before retrying update_pack.`,
+        }
+      }
+    } catch { /* not present — proceed */ }
+
+    const cp = await $`cp -R ${dirPath} ${prevPath}`.quiet().nothrow()
+    if (cp.exitCode !== 0) {
+      // Original is untouched; just surface the failure.
+      try { await rm(prevPath, { recursive: true, force: true }) } catch { /* clean partial cp */ }
+      return { success: false, error: `Could not snapshot pack for rollback: ${formatShellError(cp, 'cp -R')}` }
+    }
+
+    // Helper: restore from .prev. Re-runs loadPack against the restored
+    // directory so tool + skill registries return to the prior state.
+    // Narrow window (sub-ms): between the unregister-by-pack call and
+    // the post-restore loadPack, an in-flight agent eval could observe
+    // the pack as empty. Acceptable — alternative is a per-pack mutex
+    // primitive that the rest of the registry doesn't have today.
+    const restoreFromPrev = async (): Promise<string | null> => {
+      deps.toolRegistry.unregisterByPack(namespace)
+      deps.skillStore.removeByPack(namespace)
+      try { await rm(dirPath, { recursive: true, force: true }) } catch { /* might be partial */ }
+      try {
+        await rename(prevPath, dirPath)
+      } catch (err) {
+        return `Restore failed during rename(.prev → pack): ${err instanceof Error ? err.message : String(err)}. Manual recovery: mv ${prevPath} ${dirPath}.`
+      }
+      const restoredManifest = await readManifest(dirPath)
+      const restored = await loadPack(
+        { namespace, dirPath, manifest: restoredManifest },
+        deps.toolRegistry,
+        deps.skillStore,
+      )
+      if (restored.errors.length > 0) {
+        return `Restore loadPack reported errors (pack on disk but registry partial): ${restored.errors.join('; ')}`
+      }
+      return null
+    }
+
     const pull = await $`git -C ${dirPath} pull --ff-only`.quiet().nothrow()
     if (pull.exitCode !== 0) {
+      // No registry mutation yet; just drop .prev and surface error.
+      try { await rm(prevPath, { recursive: true, force: true }) } catch { /* best-effort */ }
       return { success: false, error: `git pull failed: ${formatShellError(pull, 'git pull')}` }
     }
 
@@ -333,19 +389,21 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
       deps.skillStore,
     )
 
-    // Same transactional contract as install_pack: if any errors, roll back
-    // and report failure. After rollback the pack is in the "uninstalled"
-    // state on disk, so the user can decide whether to retry an install or
-    // pin to an older revision.
+    // Transactional contract: if any errors, restore from .prev so the
+    // operator's working install survives a bad upstream commit. activePacks
+    // is untouched (we never scrubbed) so rooms reactivate cleanly.
     if (result.errors.length > 0) {
-      deps.toolRegistry.unregisterByPack(namespace)
-      deps.skillStore.removeByPack(namespace)
-      try { await rm(dirPath, { recursive: true, force: true }) } catch { /* best-effort */ }
+      const restoreErr = await restoreFromPrev()
+      const restoreNote = restoreErr ? ` (rollback also failed: ${restoreErr})` : ' — rolled back to previous version.'
       return {
         success: false,
-        error: `Pack "${namespace}" failed to update cleanly — rolled back (pack is now uninstalled). ${result.errors.length} error(s):\n  • ${result.errors.join('\n  • ')}`,
+        error: `Pack "${namespace}" failed to update cleanly${restoreNote} ${result.errors.length} error(s):\n  • ${result.errors.join('\n  • ')}`,
       }
     }
+
+    // Success: drop the .prev snapshot.
+    try { await rm(prevPath, { recursive: true, force: true }) }
+    catch (err) { console.warn(`[packs] failed to clean .prev snapshot for "${namespace}":`, err) }
 
     try {
       await deps.refreshAllAgentTools()

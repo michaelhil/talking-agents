@@ -283,6 +283,67 @@ describe('update_pack', () => {
     expect(env.deps.toolRegistry.has('atc_a')).toBe(true)
     expect(env.deps.toolRegistry.has('atc_b')).toBe(true)
   })
+
+  it('rolls back to the previous version when the new revision has a broken tool', async () => {
+    const env = await makeDeps()
+    parent = env.parent
+    const repoDir = join(env.parent, 'atc-source')
+    await mkdir(join(repoDir, 'tools'), { recursive: true })
+    await writeFile(join(repoDir, 'tools', 'good.ts'), TOOL_SRC('good'))
+    await writeFile(join(repoDir, 'pack.json'), JSON.stringify({ name: 'atc' }))
+    await $`git -C ${repoDir} init -q`.quiet()
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t add .`.quiet()
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t commit -q -m init`.quiet()
+    await $`git -C ${repoDir} branch -M main`.quiet().nothrow()
+
+    const install = createInstallPackTool(env.deps)
+    await install.execute({ source: `file://${repoDir}`, name: 'atc' }, CTX)
+    expect(env.deps.toolRegistry.has('atc_good')).toBe(true)
+
+    // Push a broken commit upstream — syntax error makes the new tool
+    // unparseable, so loadPack returns errors after the pull.
+    await writeFile(join(repoDir, 'tools', 'bad.ts'), 'export default { this is not valid typescript')
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t add .`.quiet()
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t commit -q -m bad`.quiet()
+
+    const update = createUpdatePackTool(env.deps)
+    const result = await update.execute({ name: 'atc' }, CTX)
+
+    // Rollback contract:
+    expect(result.success).toBe(false)
+    expect(String(result.error)).toContain('rolled back')
+    // Pack still installed, original tool still present.
+    expect(env.deps.toolRegistry.has('atc_good')).toBe(true)
+    // .prev sibling cleaned.
+    const { stat } = await import('node:fs/promises')
+    let prevExists = false
+    try { await stat(join(env.deps.packsDir, 'atc.prev')); prevExists = true } catch { /* expected */ }
+    expect(prevExists).toBe(false)
+  })
+
+  it('refuses to run when an orphan .prev sibling already exists', async () => {
+    const env = await makeDeps()
+    parent = env.parent
+    const repoDir = join(env.parent, 'atc-source')
+    await mkdir(join(repoDir, 'tools'), { recursive: true })
+    await writeFile(join(repoDir, 'tools', 'a.ts'), TOOL_SRC('a'))
+    await writeFile(join(repoDir, 'pack.json'), JSON.stringify({ name: 'atc' }))
+    await $`git -C ${repoDir} init -q`.quiet()
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t add .`.quiet()
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t commit -q -m init`.quiet()
+    await $`git -C ${repoDir} branch -M main`.quiet().nothrow()
+
+    const install = createInstallPackTool(env.deps)
+    await install.execute({ source: `file://${repoDir}`, name: 'atc' }, CTX)
+
+    // Simulate orphan from a previous crashed update.
+    await mkdir(join(env.deps.packsDir, 'atc.prev'), { recursive: true })
+
+    const update = createUpdatePackTool(env.deps)
+    const result = await update.execute({ name: 'atc' }, CTX)
+    expect(result.success).toBe(false)
+    expect(String(result.error)).toContain('orphan .prev sibling')
+  })
 })
 
 describe('list_packs', () => {

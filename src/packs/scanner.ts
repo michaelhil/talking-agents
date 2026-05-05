@@ -23,6 +23,13 @@ export const scanPacks = async (rootDir: string): Promise<ReadonlyArray<Pack>> =
   const packs: Pack[] = []
 
   for (const entry of entries) {
+    // Orphan rollback snapshots from a crashed update_pack. Scanner skips
+    // them (they're not packs) but surfaces a warning so the operator can
+    // inspect + remove. update_pack also refuses to run when one exists.
+    if (entry.endsWith('.prev')) {
+      console.warn(`[packs] orphan rollback snapshot: ${join(rootDir, entry)} — a previous update_pack crashed before cleanup. Inspect and remove manually.`)
+      continue
+    }
     if (entry.startsWith('.') || entry.startsWith('_')) continue
     // 'local' is the synthetic system pack — its directory holds the
     // user's drop-in tools/skills/scripts/geodata, but it's surfaced via
