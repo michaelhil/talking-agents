@@ -312,6 +312,35 @@ export const createProviderRouter = (
   // record. Returns:
   //   'fallthrough' — error is fallbackable or local shed; try next candidate.
   //   'rethrow'     — permanent error (auth, bad_request, etc); propagate.
+  // Suppressor for repeated identical warnings. When an upstream is in a
+  // known-stable failure mode (Gemini 503 high-demand, Anthropic 400
+  // credit-out), every agent eval re-emits the same warn. First warn per
+  // (kind, provider, code) lands immediately; subsequent within the
+  // window are counted and replayed as a single summary line when either
+  // the window expires OR the provider/code recovers.
+  const WARN_SUPPRESS_MS = 30_000
+  type WarnKey = string  // `${kind}:${provider}:${code}`
+  const warnState = new Map<WarnKey, { firstAt: number; suppressedSince: number; suppressedCount: number; lastMessage: string }>()
+  const warnOnce = (kind: 'rethrow' | 'fallthrough' | 'shed' | 'unknown', name: string, code: string, line: string): void => {
+    const key: WarnKey = `${kind}:${name}:${code}`
+    const t = now()
+    const prev = warnState.get(key)
+    if (!prev || t - prev.firstAt > WARN_SUPPRESS_MS) {
+      // First in window — log fresh. If we're closing a previous window
+      // with suppressions, emit a one-line summary first.
+      if (prev && prev.suppressedCount > 0) {
+        console.warn(`[llm:${name}] (${prev.suppressedCount}× more) ${prev.lastMessage}`)
+      }
+      console.warn(line)
+      warnState.set(key, { firstAt: t, suppressedSince: t, suppressedCount: 0, lastMessage: line })
+      return
+    }
+    // Within suppression window — count it, remember the latest message
+    // (may carry slightly different retry_after etc.).
+    prev.suppressedCount++
+    prev.lastMessage = line
+  }
+
   const classifyProviderError = (
     err: unknown,
     name: string,
@@ -321,31 +350,29 @@ export const createProviderRouter = (
   ): 'fallthrough' | 'rethrow' => {
     if (isCloudProviderError(err)) {
       if (!isFallbackable(err)) {
-        // Permanent error (auth, bad_request) — logged once before throw so
-        // the journal records the upstream cause when the request bubbles
-        // up as a hard failure to the agent.
-        console.warn(`[llm:${name}] attempt failed (rethrow) code=${err.code} status=${err.status ?? '?'} model=${request.model}: ${err.message}`)
+        // Permanent error (auth, bad_request) — first occurrence per
+        // (provider, code) logs immediately, repeats are summarised every
+        // WARN_SUPPRESS_MS so a known-broken account doesn't fill the log.
+        warnOnce('rethrow', name, err.code, `[llm:${name}] attempt failed (rethrow) code=${err.code} status=${err.status ?? '?'} model=${request.model}: ${err.message}`)
         return 'rethrow'
       }
       monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
       const attempt = errorAttempt(err)
       attempts.push({ provider: name, ...attempt })
-      console.warn(`[llm:${name}] attempt failed (fallthrough) code=${err.code} status=${err.status ?? '?'} retry_after_ms=${err.retryAfterMs ?? 'none'} model=${request.model}: ${err.message}`)
+      warnOnce('fallthrough', name, err.code, `[llm:${name}] attempt failed (fallthrough) code=${err.code} status=${err.status ?? '?'} retry_after_ms=${err.retryAfterMs ?? 'none'} model=${request.model}: ${err.message}`)
       return 'fallthrough'
     }
     if (isGatewayError(err) && (err.code === 'queue_full' || err.code === 'circuit_open' || err.code === 'queue_timeout')) {
-      // Local shed — does NOT count against monitor health. Logged so the
-      // journal shows queue/circuit pressure even though the upstream
-      // provider isn't to blame.
+      // Local shed — does NOT count against monitor health.
       attempts.push({ provider: name, reason: err.code, code: err.code })
-      console.warn(`[llm:${name}] attempt failed (local shed) code=${err.code} model=${request.model}`)
+      warnOnce('shed', name, err.code, `[llm:${name}] attempt failed (local shed) code=${err.code} model=${request.model}`)
       return 'fallthrough'
     }
     // Unknown / network error — let monitor count it toward unhealthy streak.
     monitors[name]?.recordChatOutcome({ ok: false, error: err, model: request.model, agentId })
     const message = err instanceof Error ? err.message : String(err)
     attempts.push({ provider: name, reason: message, code: 'network' })
-    console.warn(`[llm:${name}] attempt failed (network/unknown) model=${request.model}: ${message}`)
+    warnOnce('unknown', name, 'network', `[llm:${name}] attempt failed (network/unknown) model=${request.model}: ${message}`)
     return 'fallthrough'
   }
 
