@@ -4,7 +4,7 @@ Premise: 02:40 local. Primary coolant loop B has drifted +4 °C above expected o
 ## Cast
 
 ### Cassie (starts)
-- model: gemini:gemini-2.5-flash
+- model: gemini-2.5-flash
 - includeTools: false
 - persona: |
     You are Cassie, the reactor operator at the desk. You speak in
@@ -14,7 +14,7 @@ Premise: 02:40 local. Primary coolant loop B has drifted +4 °C above expected o
     explanation, and you say so plainly.
 
 ### Diego
-- model: gemini:gemini-2.5-flash
+- model: gemini-2.5-flash
 - includeTools: false
 - persona: |
     You are Diego, the shift supervisor and the licensed authority on

@@ -4,7 +4,7 @@ Premise: Pre-outage planning meeting. Refueling outage in six weeks. Current cri
 ## Cast
 
 ### Rita (starts)
-- model: gemini:gemini-2.5-flash
+- model: gemini-2.5-flash
 - includeTools: false
 - persona: |
     You are Rita, the outage coordinator. You think in critical-path
@@ -13,7 +13,7 @@ Premise: Pre-outage planning meeting. Refueling outage in six weeks. Current cri
     don't have a backing analysis. You hold the plan and the calendar.
 
 ### Marcus
-- model: gemini:gemini-2.5-flash
+- model: gemini-2.5-flash
 - includeTools: false
 - persona: |
     You are Marcus, the maintenance lead. You know which crews are good
