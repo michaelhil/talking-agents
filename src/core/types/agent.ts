@@ -113,8 +113,6 @@ export interface AIAgent extends Agent {
   readonly updateMaxToolResultChars: (n: number | undefined) => void
   readonly getMaxToolIterations: () => number | undefined
   readonly updateMaxToolIterations: (n: number | undefined) => void
-  readonly getWikiBindings: () => ReadonlyArray<string>
-  readonly updateWikiBindings: (wikiIds: ReadonlyArray<string>) => void
   // Context preview — runs buildSystemSections for a specific room and
   // returns section-by-section text + token estimate plus budget resolution.
   // Used by the UI panel so every magnifier has ground truth.
@@ -229,7 +227,6 @@ export interface AIAgentConfig {
   readonly includeTools?: boolean               // master: send tool definitions to LLM (default: true)
   readonly promptsEnabled?: boolean             // master for all per-section prompt toggles (default: true)
   readonly contextEnabled?: boolean             // master for all context sub-section toggles (default: true)
-  readonly wikiBindings?: ReadonlyArray<string> // optional per-agent wiki override (effective set = room ∪ agent override)
   readonly triggers?: ReadonlyArray<Trigger>    // scheduled prompts; see src/core/triggers/types.ts
 }
 

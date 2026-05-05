@@ -52,7 +52,6 @@ export interface RoomState {
   readonly members: ReadonlyArray<string>
   readonly summaryConfig?: SummaryConfig
   readonly latestSummary?: string
-  readonly wikiBindings?: ReadonlyArray<string>
   // Pack namespaces activated in this room. Empty = no installed packs are
   // active here (agent tool/skill/script surface = core + local only).
   // Implicit-active packs ("core", "local") are NOT listed — they're always
@@ -112,11 +111,6 @@ export interface Room {
   // Current `room_summary` at top of stream, if any.
   readonly getCurrentCompressionMessage: () => Message | undefined
 
-  // Wiki bindings — wikis bound to this room. Effective bindings for an
-  // agent in this room = room.wikiBindings ∪ agent.wikiBindings.
-  readonly getWikiBindings: () => ReadonlyArray<string>
-  readonly setWikiBindings: (wikiIds: ReadonlyArray<string>) => void
-
   // Active packs — namespaces of installed packs activated in this room.
   // Default empty: agent sees core + local only (no bloat). Activation is
   // additive across the persistent surface; "core" and "local" are implicit
@@ -137,7 +131,6 @@ export interface RoomRestoreParams {
   readonly compressedIds?: ReadonlyArray<string>
   readonly summaryConfig?: SummaryConfig
   readonly latestSummary?: string
-  readonly wikiBindings?: ReadonlyArray<string>
   readonly activePacks?: ReadonlyArray<string>
 }
 

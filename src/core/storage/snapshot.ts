@@ -7,7 +7,12 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v18: current. Removes the artifact subsystem entirely (task_list, poll,
+// v19: current. Replaces room.wikiBindings + agent.wikiBindings with
+// room.activePacks (single per-room layer per the unify-around-packs
+// design). Wikis are now reached via active packs that bundle them; the
+// per-agent binding layer is gone (config.tools whitelist remains the
+// per-agent fine-grain). Snapshots from v18 are rejected at load.
+// v18: removed the artifact subsystem entirely (task_list, poll,
 // document, mermaid, map artifact types). Mermaid + map are now inline-only
 // via fenced code blocks in chat. The other types had no inline replacement
 // and are gone. Snapshots from v17 are rejected at load (clean break per
@@ -45,7 +50,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 18
+export const SNAPSHOT_VERSION = 19
 
 // --- Snapshot schema ---
 
@@ -59,7 +64,9 @@ export interface RoomSnapshot {
   readonly compressedIds?: ReadonlyArray<string>
   readonly summaryConfig?: SummaryConfig
   readonly latestSummary?: string
-  readonly wikiBindings?: ReadonlyArray<string>
+  // Pack namespaces activated in this room. Implicit-active packs ('core',
+  // 'local') are NOT stored — they're always included by the resolver.
+  readonly activePacks?: ReadonlyArray<string>
 }
 
 export interface AgentSnapshot {
@@ -78,7 +85,7 @@ export interface HumanAgentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '18'
+  readonly version: '19'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -130,7 +137,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
       compressedIds: room.getCompressedIds().size > 0 ? [...room.getCompressedIds()] : undefined,
       summaryConfig: room.summaryConfig,
       ...(state.latestSummary ? { latestSummary: state.latestSummary } : {}),
-      ...(room.getWikiBindings().length > 0 ? { wikiBindings: [...room.getWikiBindings()] } : {}),
+      ...(room.getActivePacks().length > 0 ? { activePacks: [...room.getActivePacks()] } : {}),
     })
   }
 
@@ -158,7 +165,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   }
 
   return {
-    version: '18',
+    version: '19',
     timestamp: Date.now(),
     rooms,
     agents,
@@ -272,7 +279,7 @@ export const restoreFromSnapshot = async (
       compressedIds: roomSnap.compressedIds,
       ...(roomSnap.summaryConfig ? { summaryConfig: roomSnap.summaryConfig } : {}),
       ...(roomSnap.latestSummary ? { latestSummary: roomSnap.latestSummary } : {}),
-      ...(roomSnap.wikiBindings ? { wikiBindings: roomSnap.wikiBindings } : {}),
+      ...(roomSnap.activePacks ? { activePacks: roomSnap.activePacks } : {}),
     })
     roomMap.set(room.profile.id, room)
   }

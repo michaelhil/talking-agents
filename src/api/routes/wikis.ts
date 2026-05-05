@@ -17,7 +17,6 @@
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 import { loadWikiStore, saveWikiStore, isValidWikiId, STORE_VERSION } from '../../wiki/store.ts'
-import { asAIAgent } from '../../agents/shared.ts'
 import type { WikiConfig } from '../../wiki/types.ts'
 import { getAvailableWikis, invalidateDiscoveryCache } from '../../wiki/discovery.ts'
 import { resolveActiveWikis } from '../../wiki/resolve-active.ts'
@@ -187,13 +186,6 @@ export const wikisRoutes: RouteEntry[] = [
       // discovered leaves the discovered entry active automatically because
       // mergeWithDiscovery still includes it.
       await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
-      // Also clear bindings from any room.
-      for (const profile of system.house.listAllRooms()) {
-        const room = system.house.getRoom(profile.id)
-        if (!room) continue
-        const before = room.getWikiBindings()
-        if (before.includes(id)) room.setWikiBindings(before.filter((b) => b !== id))
-      }
       try { broadcast({ type: 'wiki_changed', wikiId: id, action: 'deleted' }) } catch { /* ignore */ }
       return json({ ok: true })
     },
@@ -238,59 +230,8 @@ export const wikisRoutes: RouteEntry[] = [
     },
   },
 
-  // --- Room bindings: list ---
-  {
-    method: 'GET',
-    pattern: /^\/api\/rooms\/([^/]+)\/wikis$/,
-    handler: async (_req, match, { system }) => {
-      const room = system.house.getRoom(decodeURIComponent(match[1]!))
-      if (!room) return errorResponse('room not found', 404)
-      return json({ wikiIds: room.getWikiBindings() })
-    },
-  },
-
-  // --- Room bindings: replace ---
-  {
-    method: 'PUT',
-    pattern: /^\/api\/rooms\/([^/]+)\/wikis$/,
-    handler: async (req, match, { system, broadcast }) => {
-      const room = system.house.getRoom(decodeURIComponent(match[1]!))
-      if (!room) return errorResponse('room not found', 404)
-      const body = await parseBody(req) as { wikiIds?: ReadonlyArray<unknown> } | null
-      const ids = Array.isArray(body?.wikiIds)
-        ? (body!.wikiIds as unknown[]).filter((v): v is string => typeof v === 'string')
-        : []
-      // Validate against the current active set (reconciles in passing).
-      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
-      const activeIds = new Set(merged.filter((w) => w.enabled).map((w) => w.id))
-      const unknown = ids.filter((id) => !activeIds.has(id))
-      if (unknown.length > 0) return errorResponse(`unknown wikiIds: ${unknown.join(', ')}`, 400)
-      room.setWikiBindings(ids)
-      try { broadcast({ type: 'wiki_changed', roomId: room.profile.id, action: 'bound' }) } catch { /* ignore */ }
-      return json({ ok: true, wikiIds: room.getWikiBindings() })
-    },
-  },
-
-  // --- Agent bindings: replace ---
-  {
-    method: 'PUT',
-    pattern: /^\/api\/agents\/([^/]+)\/wikis$/,
-    handler: async (req, match, { system, broadcast }) => {
-      const agent = system.team.getAgent(decodeURIComponent(match[1]!))
-      const ai = agent ? asAIAgent(agent) : undefined
-      if (!ai) return errorResponse('AI agent not found', 404)
-      const body = await parseBody(req) as { wikiIds?: ReadonlyArray<unknown> } | null
-      const ids = Array.isArray(body?.wikiIds)
-        ? (body!.wikiIds as unknown[]).filter((v): v is string => typeof v === 'string')
-        : []
-      // Validate against the current active set (reconciles in passing).
-      const merged = await resolveActiveWikis(system.wikisStorePath, system.wikiRegistry)
-      const activeIds = new Set(merged.filter((w) => w.enabled).map((w) => w.id))
-      const unknown = ids.filter((id) => !activeIds.has(id))
-      if (unknown.length > 0) return errorResponse(`unknown wikiIds: ${unknown.join(', ')}`, 400)
-      ai.updateWikiBindings(ids)
-      try { broadcast({ type: 'wiki_changed', agentId: ai.id, action: 'bound' }) } catch { /* ignore */ }
-      return json({ ok: true, wikiIds: ids })
-    },
-  },
+  // Per-room and per-agent wiki binding endpoints removed in v19. Wikis are
+  // now reached via active packs (room.activePacks) — see Commit D for the
+  // pack-bundling of wiki content. Use POST /api/rooms/:id/packs to control
+  // which wikis an agent in that room can see.
 ]

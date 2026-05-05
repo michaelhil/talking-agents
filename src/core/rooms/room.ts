@@ -69,7 +69,6 @@ export const createRoom = (
   let paused = false
   let summaryConfig: SummaryConfig = DEFAULT_SUMMARY_CONFIG
   let latestSummary: string | undefined
-  let wikiBindings: ReadonlyArray<string> = []
   let activePacks: ReadonlyArray<string> = []
 
   // --- Eligible set: members minus user-muted ---
@@ -272,18 +271,8 @@ export const createRoom = (
       members: [...members],
       summaryConfig,
       ...(latestSummary ? { latestSummary } : {}),
-      ...(wikiBindings.length > 0 ? { wikiBindings: [...wikiBindings] } : {}),
       ...(activePacks.length > 0 ? { activePacks: [...activePacks] } : {}),
     }),
-
-    getWikiBindings: (): ReadonlyArray<string> => wikiBindings,
-    setWikiBindings: (ids: ReadonlyArray<string>): void => {
-      // Dedup + preserve order.
-      const seen = new Set<string>()
-      const out: string[] = []
-      for (const id of ids) { if (!seen.has(id)) { seen.add(id); out.push(id) } }
-      wikiBindings = out
-    },
 
     getActivePacks: (): ReadonlyArray<string> => activePacks,
     setActivePacks: (ns: ReadonlyArray<string>): void => {
@@ -352,7 +341,6 @@ export const createRoom = (
       }
       if (state.summaryConfig) summaryConfig = state.summaryConfig
       if (state.latestSummary !== undefined) latestSummary = state.latestSummary
-      if (state.wikiBindings) wikiBindings = [...state.wikiBindings]
       if (state.activePacks) activePacks = [...state.activePacks]
     },
   }

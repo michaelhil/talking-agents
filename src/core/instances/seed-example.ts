@@ -117,18 +117,12 @@ export const seedFreshInstance = async (system: System): Promise<void> => {
     await system.addAgentToRoom(ai.id, room.profile.id)
     await system.addAgentToRoom(human.id, room.profile.id)
 
-    // Bind every wiki the registry knows about so a brand-new visitor can ask
-    // questions answered from the wiki without first learning where wiki
-    // bindings live in the UI. Power users can unbind via the room settings.
-    // If discovery hasn't surfaced any wikis yet (no SAMSINN_WIKI_SOURCES,
-    // empty registry), this is a clean no-op.
-    const wikiList = system.wikiRegistry.list()
-    const wikiIds = wikiList.map(w => w.id)
-    if (wikiIds.length > 0) room.setWikiBindings(wikiIds)
-
+    // Wiki bindings removed in v19 — wikis are now reached through pack
+    // activation. The seeded room starts with no packs activated; the
+    // operator opts in via the active-packs panel.
     room.post({
       senderId: 'system',
-      content: buildWelcomeMessage(wikiList.map(w => w.displayName)),
+      content: buildWelcomeMessage([]),
       type: 'system',
     })
   } catch (err) {

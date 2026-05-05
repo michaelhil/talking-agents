@@ -76,9 +76,6 @@ export interface AIAgentOptions {
   // whose messages it has already observed.
   readonly getRoomMembers?: (roomId: string) => ReadonlyArray<import('../core/types/messaging.ts').AgentProfile>
   readonly getSkills?: (roomName: string) => string
-  // Returns the per-room wikis catalog text (index.md + scope.md per bound
-  // wiki, deduped across room and per-agent bindings). '' when nothing is bound.
-  readonly getWikisCatalog?: (roomId: string, agentId: string) => string
   readonly getScriptContext?: (roomId: string, agentName: string) =>
     | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
     | undefined
@@ -125,7 +122,6 @@ export const createAIAgent = (
   let resolveToolDefinitions = options?.resolveToolDefinitions
   let currentTools: ReadonlyArray<string> | undefined = config.tools
   let currentTags: ReadonlyArray<string> = config.tags ?? []
-  let currentWikiBindings: ReadonlyArray<string> = config.wikiBindings ?? []
   let currentTriggers: ReadonlyArray<import('../core/triggers/types.ts').Trigger> = config.triggers ?? []
   // Context & Prompts toggles — resolve defaults to preserve current behavior
   const includePromptsState: Required<IncludePrompts> = {
@@ -167,7 +163,6 @@ export const createAIAgent = (
   const getCompressedIds = options?.getCompressedIds
   const getRoomMembers = options?.getRoomMembers
   const getSkills = options?.getSkills
-  const getWikisCatalogOpt = options?.getWikisCatalog
   const getScriptContext = options?.getScriptContext
   const onEvalEvent = options?.onEvalEvent
   const resolveEffective = options?.resolveEffectiveModel
@@ -199,7 +194,6 @@ export const createAIAgent = (
     historyLimit,
     resolveName,
     getSkills,
-    getWikisCatalog: getWikisCatalogOpt ? (roomId: string) => getWikisCatalogOpt(roomId, agentId) : undefined,
     getScriptContext,
     includePrompts: includePromptsState,
     includeContext: includeContextState,
@@ -542,13 +536,6 @@ export const createAIAgent = (
     updateMaxToolIterations: (n: number | undefined) => {
       maxToolIterationsCfg = (typeof n === 'number' && n > 0) ? n : 5
     },
-    getWikiBindings: () => currentWikiBindings,
-    updateWikiBindings: (ids: ReadonlyArray<string>) => {
-      const seen = new Set<string>()
-      const out: string[] = []
-      for (const id of ids) { if (!seen.has(id)) { seen.add(id); out.push(id) } }
-      currentWikiBindings = out
-    },
     getContextPreview: (roomId: string) => {
       const deps = contextDeps()
       const sections = buildSystemSections(deps, roomId)
@@ -588,7 +575,6 @@ export const createAIAgent = (
       contextEnabled,
       maxToolResultChars: maxToolResultCharsCfg,
       maxToolIterations: maxToolIterationsCfg,
-      ...(currentWikiBindings.length > 0 ? { wikiBindings: [...currentWikiBindings] } : {}),
       ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
     }),
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },

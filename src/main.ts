@@ -32,7 +32,6 @@ import type { ProviderSetupResult } from './llm/providers-setup.ts'
 import type { ProviderConfig } from './llm/providers-config.ts'
 import type { ProviderKeys } from './llm/provider-keys.ts'
 import { createSharedRuntime, type SharedRuntime } from './core/shared-runtime.ts'
-import { buildWikisCatalog } from './wiki/catalog.ts'
 import type { LimitMetrics } from './core/limit-metrics.ts'
 import type { ProviderGateway } from './llm/provider-gateway.ts'
 import { createOverlayToolRegistry } from './core/tool-registry.ts'
@@ -588,18 +587,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // findMissingCast defensive abort never fires).
   roomDeleted.add((roomId) => { void scriptRunner.stop(roomId) })
 
-  const buildWikisCatalogForAgent = (roomId: string, agentId: string): string => {
-    const room = house.getRoom(roomId)
-    if (!room) return ''
-    const agent = team.getAgent(agentId)
-    const ai = agent ? asAIAgent(agent) : undefined
-    const agentBindings = ai?.getWikiBindings() ?? []
-    const ids = [...new Set([...room.getWikiBindings(), ...agentBindings])]
-    if (ids.length === 0) return ''
-    // Local import avoids a cycle: catalog imports registry, which we already have.
-    return buildWikisCatalog(shared.wikiRegistry, ids).text
-  }
-
   // --- Effective-model cache (Phase 4: derive-on-read) ---
   // Cache of currently-available models from llm.models(), refreshed in the
   // background. Used by every agent's per-call effective-model resolver so the
@@ -644,7 +631,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     spawnAIAgent(config, llmService, house, team, routeMessage, toolRegistry, {
       ...options,
       getSkills: getSkillsForRoom,
-      getWikisCatalog: buildWikisCatalogForAgent,
       getScriptContext: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
       getAllowedToolsForRoom,
       // Pack-aware tool surface filter — the LLM only sees tools owned by
