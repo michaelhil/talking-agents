@@ -98,9 +98,11 @@ const LLM_RETRY_DELAY_MS = 1000
 export interface LLMCallMetrics {
   readonly promptTokens?: number
   readonly completionTokens?: number
-  // Anthropic-only: tokens written to / read from prompt cache. Absent on
-  // every other provider. Surfaced through the posted message so cache
+  // Prompt-cache hit metrics surfaced through the posted message so cache
   // efficacy is observable in the JSONL log without dashboard inspection.
+  // `cacheCreation` is Anthropic-specific (explicit cache_control writes).
+  // `cacheRead` is cross-provider — also populated for Gemini implicit
+  // cache hits via `prompt_tokens_details.cached_tokens`.
   readonly cacheCreation?: number
   readonly cacheRead?: number
   readonly contextMax?: number
@@ -164,7 +166,7 @@ export const streamWithRetry = async (
         content = content.replace(THINK_BLOCK_RE, '').trim()
         const durationMs = Math.round(performance.now() - startMs)
         const toolCallsCount = toolCalls?.length ?? 0
-        console.log(`[llm] provider=${metrics.provider ?? '?'} model=${request.model} path=stream chunks_emit=${chunksEmit} content_len=${content.length} tools=${toolCallsCount} completion_tokens=${metrics.completionTokens ?? '?'} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${durationMs}`)
+        console.log(`[llm] provider=${metrics.provider ?? '?'} model=${request.model} path=stream chunks_emit=${chunksEmit} content_len=${content.length} tools=${toolCallsCount} prompt_tokens=${metrics.promptTokens ?? '?'} completion_tokens=${metrics.completionTokens ?? '?'} cache_read=${metrics.cacheRead ?? '?'} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${durationMs}`)
         return { content, toolCalls, durationMs, metrics }
       }
 
@@ -174,7 +176,7 @@ export const streamWithRetry = async (
         chunksEmit++
         onEvent({ kind: 'chunk', delta: response.content })
       }
-      console.log(`[llm] provider=${response.provider ?? '?'} model=${request.model} path=chat chunks_emit=${chunksEmit} content_len=${response.content.length} tools=${response.toolCalls?.length ?? 0} completion_tokens=${response.tokensUsed.completion ?? '?'} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${response.generationMs}`)
+      console.log(`[llm] provider=${response.provider ?? '?'} model=${request.model} path=chat chunks_emit=${chunksEmit} content_len=${response.content.length} tools=${response.toolCalls?.length ?? 0} prompt_tokens=${response.tokensUsed.prompt ?? '?'} completion_tokens=${response.tokensUsed.completion ?? '?'} cache_read=${response.tokensUsed.cacheRead ?? '?'} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${response.generationMs}`)
       return {
         content: response.content,
         toolCalls: response.toolCalls,

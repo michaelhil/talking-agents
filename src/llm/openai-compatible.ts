@@ -89,6 +89,12 @@ interface OAIChatResponse {
     // Anthropic-specific. Passed through when present.
     cache_creation_input_tokens?: number
     cache_read_input_tokens?: number
+    // OpenAI-standard cache hit count (Gemini's OAI-compat shim emits this
+    // for implicit prompt caching on Gemini 2.5 family). When set on a
+    // response, the listed token count was billed at the cached rate.
+    prompt_tokens_details?: {
+      cached_tokens?: number
+    }
   }
 }
 
@@ -113,6 +119,9 @@ interface OAIStreamChunk {
     completion_tokens?: number
     cache_creation_input_tokens?: number
     cache_read_input_tokens?: number
+    prompt_tokens_details?: {
+      cached_tokens?: number
+    }
   }
 }
 
@@ -390,7 +399,12 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
 
     const generationMs = Math.round(performance.now() - startMs)
     const cacheCreation = data.usage?.cache_creation_input_tokens
+    // cacheRead is filled by Anthropic's `cache_read_input_tokens` OR the
+    // OpenAI-standard `prompt_tokens_details.cached_tokens` (Gemini emits
+    // this for implicit caching on the 2.5 family). Take whichever is
+    // present so a single `cacheRead` field stays the cross-provider truth.
     const cacheRead = data.usage?.cache_read_input_tokens
+      ?? data.usage?.prompt_tokens_details?.cached_tokens
     return {
       content,
       generationMs,
@@ -545,11 +559,13 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
             // Cerebras follow the same convention). The frame carries an
             // empty choices array + a `usage` field.
             if (parsed.usage && (parsed.usage.prompt_tokens !== undefined || parsed.usage.completion_tokens !== undefined)) {
+              const cacheReadCount = parsed.usage.cache_read_input_tokens
+                ?? parsed.usage.prompt_tokens_details?.cached_tokens
               usageTokens = {
                 prompt: parsed.usage.prompt_tokens ?? 0,
                 completion: parsed.usage.completion_tokens ?? 0,
                 ...(parsed.usage.cache_creation_input_tokens !== undefined ? { cacheCreation: parsed.usage.cache_creation_input_tokens } : {}),
-                ...(parsed.usage.cache_read_input_tokens !== undefined ? { cacheRead: parsed.usage.cache_read_input_tokens } : {}),
+                ...(cacheReadCount !== undefined ? { cacheRead: cacheReadCount } : {}),
               }
             }
 

@@ -99,8 +99,11 @@ export interface ChatResponse {
   readonly tokensUsed: {
     readonly prompt: number
     readonly completion: number
-    // Anthropic-only: tokens written to / read from the prompt cache. Absent
-    // when the provider doesn't expose cache metrics or no cache was used.
+    // Tokens written to / read from the prompt cache. `cacheCreation` is
+    // Anthropic-specific (explicit `cache_control` markers). `cacheRead` is
+    // cross-provider — Anthropic's `cache_read_input_tokens` AND Gemini's
+    // implicit `prompt_tokens_details.cached_tokens` both land here. Absent
+    // when no cache was used or the provider doesn't expose the metric.
     readonly cacheCreation?: number
     readonly cacheRead?: number
   }
