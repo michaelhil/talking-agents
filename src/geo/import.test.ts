@@ -5,31 +5,20 @@ import { join } from 'node:path'
 import { applyImport } from './import.ts'
 import { getCategory } from './categories.ts'
 import { listCategory } from './store.ts'
-import { __resetDiscoveredCacheState } from './discovered-cache.ts'
-import { invalidateDiscoveryCache } from './discovery.ts'
 
 let prevHome: string | undefined
-let prevGeoSources: string | undefined
 let testDir: string
 
 beforeEach(() => {
   prevHome = process.env.SAMSINN_HOME
-  prevGeoSources = process.env.SAMSINN_GEO_SOURCES
   testDir = mkdtempSync(join(tmpdir(), 'samsinn-import-test-'))
   process.env.SAMSINN_HOME = testDir
-  process.env.SAMSINN_GEO_SOURCES = '__test-isolated-no-geo-org__'
-  __resetDiscoveredCacheState()
-  invalidateDiscoveryCache()
 })
 
 afterEach(() => {
   if (prevHome === undefined) delete process.env.SAMSINN_HOME
   else process.env.SAMSINN_HOME = prevHome
-  if (prevGeoSources === undefined) delete process.env.SAMSINN_GEO_SOURCES
-  else process.env.SAMSINN_GEO_SOURCES = prevGeoSources
   rmSync(testDir, { recursive: true, force: true })
-  __resetDiscoveredCacheState()
-  invalidateDiscoveryCache()
 })
 
 const f = (id: string, lat = 60, lng = 5) => ({ id, name: id, lat, lng })

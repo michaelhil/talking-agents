@@ -19,7 +19,7 @@
 import type { MarkerIcon } from '../ui/modules/map/schema.ts'
 export { MARKER_ICONS, isMarkerIcon, type MarkerIcon } from '../ui/modules/map/schema.ts'
 
-export type GeoSource = 'local' | 'overpass' | 'nominatim' | 'discovered' | 'pack'
+export type GeoSource = 'local' | 'overpass' | 'nominatim' | 'pack'
 
 // Open category type. Validation is registry-driven at runtime — see
 // src/geo/categories.ts.

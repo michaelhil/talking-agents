@@ -22,21 +22,10 @@ interface CategoryRow {
   readonly verified: number
   readonly unverified: number
   readonly local: number
-  readonly discovered: number
+  readonly pack: number
 }
 
 interface OverviewResp { readonly categories: ReadonlyArray<CategoryRow> }
-
-interface DiscoverySourceRow {
-  readonly source: string          // owner/repo
-  readonly featureCount: number
-  readonly error: string | null
-}
-
-interface DiscoveryStatusResp {
-  readonly fetchedAt: number       // 0 if never fetched
-  readonly sources: ReadonlyArray<DiscoverySourceRow>
-}
 
 interface GeoFeature {
   readonly type: 'Feature'
@@ -57,40 +46,6 @@ interface GeoFeature {
 
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c))
-
-const fetchDiscoverySources = async (): Promise<DiscoveryStatusResp> => {
-  try {
-    const res = await fetch('/api/geodata/sources')
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    return await res.json() as DiscoveryStatusResp
-  } catch {
-    return { fetchedAt: 0, sources: [] }
-  }
-}
-
-const renderDiscoveredSourcesSection = (status: DiscoveryStatusResp): string => {
-  // Don't render the section at all if discovery hasn't been configured /
-  // fetched and no sources are present. Avoids clutter on dev installs that
-  // don't use it.
-  if (status.fetchedAt === 0 && status.sources.length === 0) return ''
-  if (status.fetchedAt === 0) {
-    return '<div class="px-6 py-3 text-xs text-text-muted border-b border-border">Discovered sources: warming up…</div>'
-  }
-  if (status.sources.length === 0) {
-    return '<div class="px-6 py-3 text-xs text-text-muted border-b border-border">Discovered sources: none configured. Set <code class="font-mono">SAMSINN_GEO_SOURCES</code> to a GitHub org or repo to enable.</div>'
-  }
-  const rows = status.sources.map((s) => {
-    if (s.error) {
-      return `<li class="text-amber-500">${escapeHtml(s.source)} — failed: ${escapeHtml(s.error)}</li>`
-    }
-    return `<li><span class="font-mono">${escapeHtml(s.source)}</span> — ${s.featureCount} features</li>`
-  }).join('')
-  const ts = new Date(status.fetchedAt).toLocaleTimeString()
-  return `<div class="px-6 py-3 text-xs border-b border-border">
-    <div class="text-text-muted mb-1">Discovered sources <span class="text-[10px] ml-2">last fetched ${ts}</span></div>
-    <ul class="ml-4 list-disc">${rows}</ul>
-  </div>`
-}
 
 const fetchOverview = async (): Promise<OverviewResp> => {
   const res = await fetch('/api/geodata')
@@ -150,16 +105,8 @@ const renderOverview = async (container: HTMLElement): Promise<void> => {
     return
   }
 
-  // Fetch discovery status alongside; render it as a header section so the
-  // user can see which org repos contributed features and whether discovery
-  // had a failure.
-  const status = await fetchDiscoverySources()
-
   if (resp.categories.length === 0) {
-    const sections: string[] = []
-    const headerSection = renderDiscoveredSourcesSection(status)
-    if (headerSection) sections.push(headerSection)
-    container.innerHTML = sections.join('')
+    container.innerHTML = ''
     const empty = document.createElement('div')
     container.appendChild(empty)
     renderEmptyState(empty, () => { void renderOverview(container) })
@@ -167,9 +114,7 @@ const renderOverview = async (container: HTMLElement): Promise<void> => {
   }
 
   const sections: string[] = []
-  const headerSection = renderDiscoveredSourcesSection(status)
-  if (headerSection) sections.push(headerSection)
-  sections.push('<table class="w-full text-xs"><thead><tr class="text-left text-text-muted border-b border-border"><th class="px-6 py-2">Category</th><th class="px-3 py-2">Icon</th><th class="px-3 py-2 text-right">Total</th><th class="px-3 py-2 text-right">Local</th><th class="px-3 py-2 text-right">Discovered</th><th class="px-3 py-2 text-right">Verified</th><th class="px-3 py-2 text-right"></th></tr></thead><tbody>')
+  sections.push('<table class="w-full text-xs"><thead><tr class="text-left text-text-muted border-b border-border"><th class="px-6 py-2">Category</th><th class="px-3 py-2">Icon</th><th class="px-3 py-2 text-right">Total</th><th class="px-3 py-2 text-right">Local</th><th class="px-3 py-2 text-right">Pack</th><th class="px-3 py-2 text-right">Verified</th><th class="px-3 py-2 text-right"></th></tr></thead><tbody>')
   for (const row of resp.categories) {
     const overpassTag = row.osmQuery ? '<span class="ml-2 text-[10px] text-text-muted">[osm]</span>' : ''
     sections.push(`
@@ -178,7 +123,7 @@ const renderOverview = async (container: HTMLElement): Promise<void> => {
         <td class="px-3 py-2 text-text-muted text-[11px]">${escapeHtml(row.icon)}</td>
         <td class="px-3 py-2 text-right">${row.total}</td>
         <td class="px-3 py-2 text-right">${row.local}</td>
-        <td class="px-3 py-2 text-right">${row.discovered}</td>
+        <td class="px-3 py-2 text-right">${row.pack}</td>
         <td class="px-3 py-2 text-right">${row.verified}</td>
         <td class="px-3 py-2 text-right whitespace-nowrap">
           <button data-cat="${escapeHtml(row.id)}" class="cat-list-btn text-blue-400 hover:underline">view</button>

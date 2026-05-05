@@ -57,10 +57,6 @@ export const sharedPaths = {
   tools: (): string => join(localPack(), 'tools'),
   knowledge: (): string => join(samsinnHome(), 'knowledge'),
   geodata: (): string => join(localPack(), 'geodata'),
-  // The bundled-geodata snapshot cache is NOT user data — it stays at
-  // <home>/geodata/.bundled/ regardless of where user geodata lives.
-  // Rebuilds on demand if missing.
-  geodataBundleCache: (): string => join(samsinnHome(), 'geodata', '.bundled'),
   // Legacy global memory dir. Moves to per-instance in Phase I; keep for
   // now so single-tenant agents keep their notes.log/facts.json.
   memoryLegacy: (): string => join(samsinnHome(), 'memory'),

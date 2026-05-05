@@ -46,8 +46,6 @@ describe('sharedPaths', () => {
     expect(sharedPaths.scripts()).toBe('/tmp/x/packs/local/scripts')
     expect(sharedPaths.tools()).toBe('/tmp/x/packs/local/tools')
     expect(sharedPaths.geodata()).toBe('/tmp/x/packs/local/geodata')
-    // The bundled-geodata cache stays at the OLD path — it's not user data.
-    expect(sharedPaths.geodataBundleCache()).toBe('/tmp/x/geodata/.bundled')
     expect(sharedPaths.knowledge()).toBe('/tmp/x/knowledge')
     expect(sharedPaths.adminLog()).toBe('/tmp/x/logs/admin.jsonl')
     expect(sharedPaths.instancesRoot()).toBe('/tmp/x/instances')

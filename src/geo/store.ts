@@ -17,7 +17,6 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { sharedPaths } from '../core/paths.ts'
 import { canonical } from './canonical.ts'
-import { getDiscoveredFeatures } from './discovered-cache.ts'
 import { getPackFeatures, getAllPackFeatures } from './pack-source.ts'
 import { extractCategoryMetaFromFeatures } from './projection.ts'
 import type { CategoryMeta, GeoCategory, GeoFeature, GeoFeatureCollection, GeoSource } from './types.ts'
@@ -100,24 +99,23 @@ const buildIndex = (features: ReadonlyArray<GeoFeature>): GeoIndex => {
 }
 
 // ============================================================================
-// Merge — local + pack + discovered. Collision wins by precedence:
-//   discovered > pack > local
-// (discovered/curated wins over pack-bundled, both win over local user-paste).
-// Each layer keeps its `properties.source` so callers can attribute. The
-// `pack` field is preserved so the room-aware filter can gate by activation.
+// Merge — local + pack. Collision wins by precedence: pack > local.
+// Pack-bundled features are author-curated; user paste-imports yield to
+// them. Each layer keeps its `properties.source` so callers can attribute.
+// The `pack` field is preserved so the room-aware filter can gate by
+// activation. (The historical 'discovered' layer was removed in commit Q
+// when samsinn-geodata GitHub discovery was retired.)
 // ============================================================================
 
 const mergeFeatures = (
   local: ReadonlyArray<GeoFeature>,
   pack: ReadonlyArray<GeoFeature>,
-  discovered: ReadonlyArray<GeoFeature>,
 ): ReadonlyArray<GeoFeature> => {
   const byKey = new Map<string, GeoFeature>()
-  // Insertion order = precedence: later layers overwrite earlier ones on
-  // (category, canonical name) collision. local → pack → discovered.
+  // Insertion order = precedence: pack overwrites local on (category,
+  // canonical name) collision.
   for (const f of local) byKey.set(`${f.properties.category}:${canonical(f.properties.name)}`, f)
   for (const f of pack) byKey.set(`${f.properties.category}:${canonical(f.properties.name)}`, f)
-  for (const f of discovered) byKey.set(`${f.properties.category}:${canonical(f.properties.name)}`, f)
   return [...byKey.values()]
 }
 
@@ -125,8 +123,8 @@ const mergeFeatures = (
 // Public API — feature reads
 // ============================================================================
 
-// All features (local + pack + discovered, merged) in a category. Does NOT
-// filter by room.activePacks — that gate lives in the room-aware variant
+// All features (local + pack, merged) in a category. Does NOT filter by
+// room.activePacks — that gate lives in the room-aware variant
 // `listCategoryForRoom`. The unfiltered form is still useful for admin
 // surfaces (categoryStats, removeCategory, etc.) that want the global view.
 export const listCategory = async (category: GeoCategory): Promise<ReadonlyArray<GeoFeature>> => {
@@ -135,18 +133,17 @@ export const listCategory = async (category: GeoCategory): Promise<ReadonlyArray
     const fc = await readFile_()
     local = fc.features.filter((f) => f.properties.category === category)
   } catch {
-    // Missing or corrupt file — fall through to discovered-only.
+    // Missing or corrupt file — fall through to pack-only.
   }
   const pack = getPackFeatures(category)
-  const discovered = await getDiscoveredFeatures(category)
-  return mergeFeatures(local, pack, discovered)
+  return mergeFeatures(local, pack)
 }
 
 // Room-aware variant: filters pack-sourced features by `activePacks`.
-// Non-pack features (local / discovered) are always included since they
-// don't have a pack origin to gate on. Use this from the agent surface
-// (geo_lookup, etc.) so an agent in a room with `aviation` deactivated
-// doesn't see aviation's airports.
+// Local features (user paste-imports) are always included since they have
+// no pack origin to gate on. Use this from the agent surface (geo_lookup,
+// etc.) so an agent in a room with `aviation` deactivated doesn't see
+// aviation's airports.
 export const listCategoryForRoom = async (
   category: GeoCategory,
   activePacks: ReadonlySet<string>,
@@ -174,27 +171,19 @@ export const listAllFeatures = async (): Promise<ReadonlyArray<GeoFeature>> => {
   } catch {
     // ignore
   }
-  // Discovered features for categories the local file doesn't know about
-  // still need to be visible. Fetch all known category ids from local +
-  // discovered registry projection and merge each category individually.
-  // To avoid a circular import, we project from the in-memory cache state
-  // via getAllDiscoveredFeatures.
-  const { getAllDiscoveredFeatures } = await import('./discovered-cache.ts')
-  const discovered = await getAllDiscoveredFeatures()
   const pack = getAllPackFeatures()
   // Merge per-category to keep collision semantics consistent.
-  const byCategory = new Map<string, { local: GeoFeature[]; pack: GeoFeature[]; discovered: GeoFeature[] }>()
+  const byCategory = new Map<string, { local: GeoFeature[]; pack: GeoFeature[] }>()
   const slot = (cat: string) => {
     let s = byCategory.get(cat)
-    if (!s) { s = { local: [], pack: [], discovered: [] }; byCategory.set(cat, s) }
+    if (!s) { s = { local: [], pack: [] }; byCategory.set(cat, s) }
     return s
   }
-  for (const f of local)      slot(f.properties.category).local.push(f)
-  for (const f of pack)       slot(f.properties.category).pack.push(f)
-  for (const f of discovered) slot(f.properties.category).discovered.push(f)
+  for (const f of local) slot(f.properties.category).local.push(f)
+  for (const f of pack)  slot(f.properties.category).pack.push(f)
   const out: GeoFeature[] = []
-  for (const { local: l, pack: p, discovered: d } of byCategory.values()) {
-    out.push(...mergeFeatures(l, p, d))
+  for (const { local: l, pack: p } of byCategory.values()) {
+    out.push(...mergeFeatures(l, p))
   }
   return out
 }
@@ -232,24 +221,25 @@ export const getCategory = async (id: string): Promise<CategoryMeta | null> => {
   return map.get(id) ?? null
 }
 
-// Counts surface for the UI panel + geo_list_categories tool. Includes
-// local + discovered breakdown.
+// Counts surface for the UI panel + geo_list_categories tool. Breaks down
+// by source: local (user paste-imports) and pack (pack-bundled). The
+// historical 'discovered' field was removed in commit Q.
 export const categoryStats = async (category: GeoCategory): Promise<{
   total: number
   verified: number
   unverified: number
   local: number
-  discovered: number
+  pack: number
 }> => {
   const merged = await listCategory(category)
-  let verified = 0, unverified = 0, local = 0, discovered = 0
+  let verified = 0, unverified = 0, local = 0, pack = 0
   for (const f of merged) {
     if (f.properties.verified) verified++
     else unverified++
-    if (f.properties.source === 'discovered') discovered++
+    if (f.properties.source === 'pack') pack++
     else if (f.properties.source === 'local') local++
   }
-  return { total: merged.length, verified, unverified, local, discovered }
+  return { total: merged.length, verified, unverified, local, pack }
 }
 
 // ============================================================================

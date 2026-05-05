@@ -3,12 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { categoryStats, listCategory, lookupInCategory, removeCategory, removeFeature, upsertFeature } from './store.ts'
-import { __resetDiscoveredCacheState } from './discovered-cache.ts'
-import { invalidateDiscoveryCache } from './discovery.ts'
 import type { GeoFeature } from './types.ts'
 
 let prevHome: string | undefined
-let prevGeoSources: string | undefined
 let testDir: string
 
 const makeFeature = (overrides: Partial<GeoFeature['properties']> & {
@@ -32,23 +29,14 @@ const makeFeature = (overrides: Partial<GeoFeature['properties']> & {
 
 beforeEach(() => {
   prevHome = process.env.SAMSINN_HOME
-  prevGeoSources = process.env.SAMSINN_GEO_SOURCES
   testDir = mkdtempSync(join(tmpdir(), 'samsinn-geo-test-'))
   process.env.SAMSINN_HOME = testDir
-  // Isolate from real GitHub discovery — point at a guaranteed-empty owner.
-  process.env.SAMSINN_GEO_SOURCES = '__test-isolated-no-geo-org__'
-  __resetDiscoveredCacheState()
-  invalidateDiscoveryCache()
 })
 
 afterEach(() => {
   if (prevHome === undefined) delete process.env.SAMSINN_HOME
   else process.env.SAMSINN_HOME = prevHome
-  if (prevGeoSources === undefined) delete process.env.SAMSINN_GEO_SOURCES
-  else process.env.SAMSINN_GEO_SOURCES = prevGeoSources
   rmSync(testDir, { recursive: true, force: true })
-  __resetDiscoveredCacheState()
-  invalidateDiscoveryCache()
 })
 
 describe('store — basic CRUD', () => {
@@ -211,10 +199,10 @@ describe('store — stats', () => {
     expect(stats.total).toBe(0)
   })
 
-  test('local + discovered counts are split out', async () => {
+  test('local + pack counts are split out', async () => {
     await upsertFeature(makeFeature({ name: 'Bergen', lat: 60.39, lng: 5.32, verified: true }))
     const stats = await categoryStats('city')
     expect(stats.local).toBe(1)
-    expect(stats.discovered).toBe(0)
+    expect(stats.pack).toBe(0)
   })
 })

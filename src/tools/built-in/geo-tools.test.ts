@@ -4,12 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createGeoAddTool, createGeoListCategoriesTool, createGeoListFeaturesTool, createGeoLookupTool, createGeoRemoveTool } from './geo-tools.ts'
 import { upsertFeature } from '../../geo/store.ts'
-import { __resetDiscoveredCacheState } from '../../geo/discovered-cache.ts'
-import { invalidateDiscoveryCache } from '../../geo/discovery.ts'
 import type { GeoFeature, MarkerIcon } from '../../geo/types.ts'
 
 let prevHome: string | undefined
-let prevGeoSources: string | undefined
 let testDir: string
 
 const fakeContext = { callerId: 'agent-x', callerName: 'Agent X' }
@@ -51,22 +48,14 @@ const makeFeature = (name: string, lat: number, lng: number, verified: boolean, 
 
 beforeEach(() => {
   prevHome = process.env.SAMSINN_HOME
-  prevGeoSources = process.env.SAMSINN_GEO_SOURCES
   testDir = mkdtempSync(join(tmpdir(), 'samsinn-geo-tools-test-'))
   process.env.SAMSINN_HOME = testDir
-  process.env.SAMSINN_GEO_SOURCES = '__test-isolated-no-geo-org__'
-  __resetDiscoveredCacheState()
-  invalidateDiscoveryCache()
 })
 
 afterEach(() => {
   if (prevHome === undefined) delete process.env.SAMSINN_HOME
   else process.env.SAMSINN_HOME = prevHome
-  if (prevGeoSources === undefined) delete process.env.SAMSINN_GEO_SOURCES
-  else process.env.SAMSINN_GEO_SOURCES = prevGeoSources
   rmSync(testDir, { recursive: true, force: true })
-  __resetDiscoveredCacheState()
-  invalidateDiscoveryCache()
 })
 
 describe('geo_lookup', () => {

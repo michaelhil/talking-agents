@@ -4,12 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveLocation, type SourceFn } from './resolver.ts'
 import { listCategory, upsertFeature } from './store.ts'
-import { __resetDiscoveredCacheState } from './discovered-cache.ts'
-import { invalidateDiscoveryCache } from './discovery.ts'
 import type { GeoFeature, GeoSource } from './types.ts'
 
 let prevHome: string | undefined
-let prevGeoSources: string | undefined
 let testDir: string
 
 const f = (name: string, lat: number, lng: number, source: GeoSource = 'local'): GeoFeature => ({
@@ -26,26 +23,14 @@ const f = (name: string, lat: number, lng: number, source: GeoSource = 'local'):
 
 beforeEach(() => {
   prevHome = process.env.SAMSINN_HOME
-  prevGeoSources = process.env.SAMSINN_GEO_SOURCES
   testDir = mkdtempSync(join(tmpdir(), 'samsinn-geo-resolver-test-'))
   process.env.SAMSINN_HOME = testDir
-  // Isolate from real GitHub discovery — same pattern as other geo tests.
-  // Without this, the merged-load path inside store.listCategory hits the
-  // live samsinn-geodata org via discovered-cache, causing flaky failures
-  // when CI runs in parallel and the cache state leaks between test files.
-  process.env.SAMSINN_GEO_SOURCES = '__test-isolated-no-geo-org__'
-  __resetDiscoveredCacheState()
-  invalidateDiscoveryCache()
 })
 
 afterEach(() => {
   if (prevHome === undefined) delete process.env.SAMSINN_HOME
   else process.env.SAMSINN_HOME = prevHome
-  if (prevGeoSources === undefined) delete process.env.SAMSINN_GEO_SOURCES
-  else process.env.SAMSINN_GEO_SOURCES = prevGeoSources
   rmSync(testDir, { recursive: true, force: true })
-  __resetDiscoveredCacheState()
-  invalidateDiscoveryCache()
 })
 
 describe('resolver — strict-match short-circuit', () => {

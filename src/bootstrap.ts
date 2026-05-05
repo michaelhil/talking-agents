@@ -258,13 +258,10 @@ export const bootstrap = async (): Promise<void> => {
   // and samsinn never fetches them — they're external links surfaced in
   // the pack panel. Operators view + edit on GitHub Pages directly.
 
-  // Geodata: kick off discovery + cache warm-up in the background. Mirrors
-  // the wiki pattern — fire-and-forget so a slow GitHub doesn't block boot.
-  // The cache TTL handles refresh; no separate timer needed. Loads of
-  // listCategories / categoryStats / loadCategory transparently merge in
-  // discovered data once the cache is populated.
-  const { warmDiscoveredCache } = await import('./geo/discovered-cache.ts')
-  warmDiscoveredCache()
+  // Geodata: pack-bundled categories load via refreshPackGeodata above.
+  // The historical samsinn-geodata GitHub discovery + warm cache were
+  // retired in commit Q — packs are now the only distribution mechanism
+  // for non-user geodata.
 
   if (networkToolsEnabled) {
     shared.sharedToolRegistry.registerAll(createWebTools({
