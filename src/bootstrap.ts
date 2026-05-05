@@ -43,7 +43,6 @@ import { resolve } from 'node:path'
 import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
 import { loadAllPacks } from './packs/loader.ts'
-import { seedExampleScripts } from './core/scripts/script-store.ts'
 import { createPolicyStore } from './llm/llm-policy-store.ts'
 import { asAIAgent } from './agents/shared.ts'
 import { warmProviderModels } from './llm/providers-setup.ts'
@@ -139,22 +138,24 @@ export const bootstrap = async (): Promise<void> => {
   await loadSkills(sharedPaths.skills(), shared.sharedSkillStore, shared.sharedToolRegistry)
   await loadAllPacks(sharedPaths.packs(), shared.sharedToolRegistry, shared.sharedSkillStore)
 
-  // Seed bundled example scripts (oil-and-gas + nuclear demos + quarterly
-  // planning) into $SAMSINN_HOME/scripts/ if missing. Idempotent — never
-  // overwrites a user-edited script. Each instance's per-instance
-  // ScriptStore.reload() picks them up at instance creation.
+  // Bundled example scripts are loaded read-only from examples/scripts/ via
+  // ScriptStore's extraSourceDirs (wired in main.ts). Nothing is copied into
+  // $SAMSINN_HOME/scripts/ — that directory holds user-authored scripts only.
+  // Name collisions across the two directories throw at boot so stale
+  // hand-copied bundled examples are surfaced loudly.
+  //
+  // One-shot migration: drop the old seeder's sidecar if present. Existing
+  // user copies of bundled examples in $SAMSINN_HOME/scripts/ stay; if they
+  // collide with the bundled name they'll cause boot to refuse and the
+  // operator removes the stale copy.
   try {
-    const examplesDir = resolve(process.cwd(), 'examples', 'scripts')
-    const seedResult = await seedExampleScripts(examplesDir, sharedPaths.scripts())
-    const parts: string[] = []
-    if (seedResult.seeded.length > 0) parts.push(`seeded ${seedResult.seeded.length} (${seedResult.seeded.join(', ')})`)
-    if (seedResult.updated.length > 0) parts.push(`updated ${seedResult.updated.length} (${seedResult.updated.join(', ')})`)
-    if (seedResult.preserved.length > 0) parts.push(`preserved ${seedResult.preserved.length} user-edited`)
-    if (seedResult.forceReseeded) parts.push(`SAMSINN_RESEED_EXAMPLES applied`)
-    if (parts.length > 0) console.log(`[scripts] ${parts.join('; ')}`)
-  } catch (err) {
-    console.warn(`[scripts] example seeding failed: ${err instanceof Error ? err.message : err}`)
-  }
+    const sidecar = resolve(sharedPaths.scripts(), '.seeded.json')
+    if (existsSync(sidecar)) {
+      const { rm } = await import('node:fs/promises')
+      await rm(sidecar, { force: true })
+      console.log(`[scripts] removed stale seeder sidecar at ${sidecar}`)
+    }
+  } catch { /* best-effort; harmless if it fails */ }
 
   // === Process-wide built-in tools (no per-instance state) ===
   // Anything that doesn't bind to a per-instance House registers ONCE here.

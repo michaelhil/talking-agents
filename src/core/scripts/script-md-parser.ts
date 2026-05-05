@@ -43,7 +43,7 @@ export const VALID_CAST_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/
 export const RESERVED_CAST_NAMES = new Set(['Stage', 'Director'])
 
 const CAST_BULLET_KEYS = new Set([
-  'model', 'modelFallback', 'tools', 'persona', 'includePrompts', 'includeContext', 'includeTools',
+  'model', 'tools', 'persona', 'includePrompts', 'includeContext', 'includeTools',
 ])
 
 // Accept em-dash, en-dash, double-hyphen, or single-hyphen as a role separator.
@@ -182,7 +182,6 @@ const parseCastMember = (
   let persona = ''
   let tools: ReadonlyArray<string> | undefined
   let includeTools: boolean | undefined
-  let modelFallback: ReadonlyArray<string> | undefined
 
   while (i < lines.length) {
     const ln = lines[i] ?? ''
@@ -199,9 +198,6 @@ const parseCastMember = (
     }
     if (key === 'model') {
       model = rest.trim()
-      i++
-    } else if (key === 'modelFallback') {
-      modelFallback = parseModelRefList(rest, i + 1)
       i++
     } else if (key === 'tools') {
       tools = parseToolList(rest, i + 1)
@@ -248,7 +244,6 @@ const parseCastMember = (
   if (starts) out.starts = true
   if (tools) out.tools = tools
   if (includeTools !== undefined) out.includeTools = includeTools
-  if (modelFallback && modelFallback.length > 0) out.modelFallback = modelFallback
   return out
 }
 
@@ -262,26 +257,6 @@ const parseToolList = (raw: string, line: number): ReadonlyArray<string> => {
   for (const p of parts) {
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(p)) {
       fail(line, `tool name "${p}" invalid`)
-    }
-  }
-  return parts
-}
-
-// Parse a comma-separated list of model refs. Looser than parseToolList:
-// model IDs contain `-`, `:` (provider prefix), `/` (OpenRouter slugs), `.`
-// (e.g. `qwen2.5:14b`). Anything non-empty after trim is accepted.
-// `[a, b, c]` bracket form is supported too, mirroring tools syntax.
-const parseModelRefList = (raw: string, line: number): ReadonlyArray<string> => {
-  const trimmed = raw.trim()
-  if (trimmed === '') return []
-  const bracket = /^\[(.*)\]$/.exec(trimmed)
-  const body = bracket ? bracket[1]! : trimmed
-  const parts = body.split(',').map(s => s.trim()).filter(s => s.length > 0)
-  for (const p of parts) {
-    // Permissive — reject only obviously broken values (whitespace, control
-    // chars). Validity against the live router is checked at call time.
-    if (/[\s\x00-\x1f]/.test(p)) {
-      fail(line, `model ref "${p}" contains whitespace or control characters`)
     }
   }
   return parts

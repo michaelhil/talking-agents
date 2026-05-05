@@ -6,38 +6,13 @@
 // responding. All tool calling uses the model's native structured format.
 // ============================================================================
 
-import type { AgentResponse, AgentResponseErrorCode, AIAgentConfig } from '../core/types/agent.ts'
+import type { AgentResponse, AIAgentConfig } from '../core/types/agent.ts'
 import type { ChatRequest, LLMCallOptions, LLMProvider } from '../core/types/llm.ts'
 import type { EvalEvent } from '../core/types/agent-eval.ts'
 import type { NativeToolCall, ToolCall, ToolDefinition, ToolExecutor, ToolResult } from '../core/types/tool.ts'
 import type { ToolTraceEntry } from '../core/types/messaging.ts'
 import type { ContextResult, FlushInfo } from './context-builder.ts'
-import { isCloudProviderError, isGatewayError, isOllamaError, isPermanent } from '../llm/errors.ts'
-
-// === Error classification ===
-// Classify a thrown LLM-layer error into a structured AgentResponse error.
-// Cloud auth/bad_request → no_api_key/model_unavailable so the UI can offer
-// "Change model". Rate limits and provider-down are recoverable via fallback
-// or retry. Ollama 4xx is treated as model_unavailable (model name typo,
-// model not pulled). Anything else falls through to 'unknown'.
-const classifyLLMError = (err: unknown): { code: AgentResponseErrorCode; message: string; providerHint?: string } => {
-  if (isCloudProviderError(err)) {
-    if (err.code === 'auth') return { code: 'no_api_key', message: err.message, providerHint: err.provider }
-    if (err.code === 'bad_request') return { code: 'model_unavailable', message: err.message, providerHint: err.provider }
-    if (err.code === 'rate_limit' || err.code === 'quota') return { code: 'rate_limited', message: err.message, providerHint: err.provider }
-    if (err.code === 'provider_down') return { code: 'provider_down', message: err.message, providerHint: err.provider }
-  }
-  if (isOllamaError(err) && isPermanent(err)) {
-    return { code: 'model_unavailable', message: err.message, providerHint: 'ollama' }
-  }
-  if (isGatewayError(err)) {
-    return { code: 'provider_down', message: err.message }
-  }
-  if (err instanceof Error && /fetch|network|ECONN|ETIMEDOUT/i.test(err.message)) {
-    return { code: 'network', message: err.message }
-  }
-  return { code: 'unknown', message: err instanceof Error ? err.message : String(err) }
-}
+import { classifyLLMError } from './error-classify.ts'
 
 // === Decision — what the agent wants to do after evaluation ===
 
@@ -89,20 +64,16 @@ export interface EvalResult {
   readonly flushInfo: FlushInfo
 }
 
-// === Streaming LLM call with retry ===
-
-const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/g
-const LLM_RETRIES = 2
-const LLM_RETRY_DELAY_MS = 1000
+// === LLM call shape ===
+// LLMService applies cooldown skip, chain walk, network retry, content
+// strip, and observability. The agent layer just streams the result. No
+// per-agent retry policy.
 
 export interface LLMCallMetrics {
   readonly promptTokens?: number
   readonly completionTokens?: number
   // Prompt-cache hit metrics surfaced through the posted message so cache
   // efficacy is observable in the JSONL log without dashboard inspection.
-  // `cacheCreation` is Anthropic-specific (explicit cache_control writes).
-  // `cacheRead` is cross-provider — also populated for Gemini implicit
-  // cache hits via `prompt_tokens_details.cached_tokens`.
   readonly cacheCreation?: number
   readonly cacheRead?: number
   readonly contextMax?: number
@@ -110,101 +81,58 @@ export interface LLMCallMetrics {
   readonly model?: string
 }
 
-// Exposed for unit testing — streamWithRetry encapsulates the LLM stream-or-
-// chat call plus per-attempt retry/backoff. Not part of the agent-loop public
-// contract; agents should call evaluate() / callLLM() / streamLLM().
-export const streamWithRetry = async (
+// One LLM call: either streams chunks to onEvent or falls back to a
+// non-streaming chat(). Caller-visible result is identical either way.
+const callLLMOnce = async (
   provider: LLMProvider,
-  _config: AIAgentConfig,
   request: ChatRequest,
   onEvent?: (e: EvalEvent) => void,
   signal?: AbortSignal,
 ): Promise<{ content: string; toolCalls?: ReadonlyArray<NativeToolCall>; durationMs: number; metrics: LLMCallMetrics }> => {
-  for (let attempt = 0; attempt <= LLM_RETRIES; attempt++) {
-    try {
-      const startMs = performance.now()
+  const startMs = performance.now()
 
-      // Per-call observability. One structured line tells us provider, model,
-      // chunks emitted to onEvent, content length, whether onEvent was wired,
-      // path taken (stream vs chat-fallback), and total time. Pairs with
-      // [llm-bcast] in wire-system-events.ts: if chunks_emit > 0 here but
-      // bcast count is 0, the eval→broadcaster wiring is broken (lateBinding
-      // silent-skip class). If chunks_emit == 0 with non-zero content_len,
-      // onEvent was undefined when the chunk fired (a1: spawn options didn't
-      // pass through onEvalEvent).
-      let chunksEmit = 0
-
-      if (provider.stream) {
-        let content = ''
-        let toolCalls: ReadonlyArray<NativeToolCall> | undefined
-        let metrics: LLMCallMetrics = {}
-        for await (const chunk of provider.stream(request, signal)) {
-          if (chunk.thinking) {
-            onEvent?.({ kind: 'thinking', delta: chunk.thinking })
-          }
-          if (chunk.delta) {
-            content += chunk.delta
-            if (onEvent) {
-              chunksEmit++
-              onEvent({ kind: 'chunk', delta: chunk.delta })
-            }
-          }
-          if (chunk.done) {
-            if (chunk.toolCalls?.length) toolCalls = chunk.toolCalls
-            metrics = {
-              promptTokens: chunk.tokensUsed?.prompt,
-              completionTokens: chunk.tokensUsed?.completion,
-              ...(chunk.tokensUsed?.cacheCreation !== undefined ? { cacheCreation: chunk.tokensUsed.cacheCreation } : {}),
-              ...(chunk.tokensUsed?.cacheRead !== undefined ? { cacheRead: chunk.tokensUsed.cacheRead } : {}),
-              contextMax: chunk.contextMax,
-              provider: chunk.provider,
-              model: request.model,
-            }
-          }
-        }
-        // Strip think blocks and trim
-        content = content.replace(THINK_BLOCK_RE, '').trim()
-        const durationMs = Math.round(performance.now() - startMs)
-        const toolCallsCount = toolCalls?.length ?? 0
-        console.log(`[llm] provider=${metrics.provider ?? '?'} model=${request.model} path=stream chunks_emit=${chunksEmit} content_len=${content.length} tools=${toolCallsCount} prompt_tokens=${metrics.promptTokens ?? '?'} completion_tokens=${metrics.completionTokens ?? '?'} cache_read=${metrics.cacheRead ?? '?'} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${durationMs}`)
-        return { content, toolCalls, durationMs, metrics }
+  if (provider.stream) {
+    let content = ''
+    let toolCalls: ReadonlyArray<NativeToolCall> | undefined
+    let metrics: LLMCallMetrics = {}
+    for await (const chunk of provider.stream(request, signal)) {
+      if (chunk.thinking) onEvent?.({ kind: 'thinking', delta: chunk.thinking })
+      if (chunk.delta) {
+        content += chunk.delta
+        onEvent?.({ kind: 'chunk', delta: chunk.delta })
       }
-
-      // Fallback: provider doesn't support streaming — use chat()
-      const response = await provider.chat(request)
-      if (onEvent) {
-        chunksEmit++
-        onEvent({ kind: 'chunk', delta: response.content })
-      }
-      console.log(`[llm] provider=${response.provider ?? '?'} model=${request.model} path=chat chunks_emit=${chunksEmit} content_len=${response.content.length} tools=${response.toolCalls?.length ?? 0} prompt_tokens=${response.tokensUsed.prompt ?? '?'} completion_tokens=${response.tokensUsed.completion ?? '?'} cache_read=${response.tokensUsed.cacheRead ?? '?'} onevent_set=${!!onEvent} retries=${attempt} duration_ms=${response.generationMs}`)
-      return {
-        content: response.content,
-        toolCalls: response.toolCalls,
-        durationMs: response.generationMs,
-        metrics: {
-          promptTokens: response.tokensUsed.prompt,
-          completionTokens: response.tokensUsed.completion,
-          ...(response.tokensUsed.cacheCreation !== undefined ? { cacheCreation: response.tokensUsed.cacheCreation } : {}),
-          ...(response.tokensUsed.cacheRead !== undefined ? { cacheRead: response.tokensUsed.cacheRead } : {}),
-          contextMax: response.contextMax,
-          provider: response.provider,
+      if (chunk.done) {
+        if (chunk.toolCalls?.length) toolCalls = chunk.toolCalls
+        metrics = {
+          promptTokens: chunk.tokensUsed?.prompt,
+          completionTokens: chunk.tokensUsed?.completion,
+          ...(chunk.tokensUsed?.cacheCreation !== undefined ? { cacheCreation: chunk.tokensUsed.cacheCreation } : {}),
+          ...(chunk.tokensUsed?.cacheRead !== undefined ? { cacheRead: chunk.tokensUsed.cacheRead } : {}),
+          contextMax: chunk.contextMax,
+          provider: chunk.provider,
           model: request.model,
-        },
-      }
-    } catch (err) {
-      if (signal?.aborted) throw err  // Don't retry if cancelled
-      // Don't retry permanent errors (model not found, bad config)
-      if (isOllamaError(err) && isPermanent(err)) throw err
-      const errMsg = err instanceof Error ? err.message : String(err)
-      if (attempt < LLM_RETRIES) {
-        onEvent?.({ kind: 'warning', message: `LLM call failed (attempt ${attempt + 1}/${LLM_RETRIES + 1}), retrying: ${errMsg}` })
-        await new Promise(r => setTimeout(r, LLM_RETRY_DELAY_MS))
-      } else {
-        throw err
+        }
       }
     }
+    return { content: content.trim(), toolCalls, durationMs: Math.round(performance.now() - startMs), metrics }
   }
-  throw new Error('Unreachable')
+
+  const response = await provider.chat(request)
+  onEvent?.({ kind: 'chunk', delta: response.content })
+  return {
+    content: response.content,
+    toolCalls: response.toolCalls,
+    durationMs: response.generationMs,
+    metrics: {
+      promptTokens: response.tokensUsed.prompt,
+      completionTokens: response.tokensUsed.completion,
+      ...(response.tokensUsed.cacheCreation !== undefined ? { cacheCreation: response.tokensUsed.cacheCreation } : {}),
+      ...(response.tokensUsed.cacheRead !== undefined ? { cacheRead: response.tokensUsed.cacheRead } : {}),
+      contextMax: response.contextMax,
+      provider: response.provider,
+      model: request.model,
+    },
+  }
 }
 
 // === Main evaluation loop ===
@@ -274,7 +202,7 @@ export const evaluate = async (
         ...(contextResult.systemBlocks ? { systemBlocks: contextResult.systemBlocks } : {}),
       }
 
-      const streamResult = await streamWithRetry(llmProvider, config, request, onEvent, signal)
+      const streamResult = await callLLMOnce(llmProvider, request, onEvent, signal)
       totalGenerationMs += streamResult.durationMs
       lastMetrics = streamResult.metrics
 

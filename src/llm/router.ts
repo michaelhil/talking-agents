@@ -319,11 +319,19 @@ export const createProviderRouter = (
   // window are counted and replayed as a single summary line when either
   // the window expires OR the provider/code recovers.
   const WARN_SUPPRESS_MS = 30_000
+  const WARN_TTL_MS = 5 * WARN_SUPPRESS_MS
   type WarnKey = string  // `${kind}:${provider}:${code}`
   const warnState = new Map<WarnKey, { firstAt: number; suppressedSince: number; suppressedCount: number; lastMessage: string }>()
   const warnOnce = (kind: 'rethrow' | 'fallthrough' | 'shed' | 'unknown', name: string, code: string, line: string): void => {
     const key: WarnKey = `${kind}:${name}:${code}`
     const t = now()
+    // TTL prune: drop entries past 5× the suppression window. Keeps the
+    // Map bounded against long-tail (provider, code) churn without LRU
+    // bookkeeping — windows already self-reset on first-occurrence so
+    // active entries refresh themselves.
+    for (const [k, v] of warnState) {
+      if (t - v.firstAt > WARN_TTL_MS) warnState.delete(k)
+    }
     const prev = warnState.get(key)
     if (!prev || t - prev.firstAt > WARN_SUPPRESS_MS) {
       // First in window — log fresh. If we're closing a previous window

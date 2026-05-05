@@ -1,75 +1,75 @@
 // ============================================================================
-// LLMService — single gateway for every LLM call in the codebase.
+// LLMService — single gateway every LLM call goes through.
 //
-// Wraps the ProviderRouter with three cross-cutting concerns that every
-// consumer (agents, summary engine, whisper, standalone callLLM) needs but
-// historically reimplemented or skipped:
+// Wraps the ProviderRouter with the cross-cutting policy that every consumer
+// (agents, summary, whisper, callSystemLLM) needs:
 //
 //   1. Pre-call cooldown skip — consult the live monitor snapshot. If the
 //      primary's provider is in `backoff` with retryAt > now+1s, route to
-//      the first chain element instead of the doomed primary. Eliminates
-//      the "wait 28s for Gemini to time out" UX symptom.
+//      the first chain element instead of the doomed primary.
 //
-//   2. Walk-on-fallbackable — single source of truth for FALLBACKABLE_CODES.
-//      On a transient/account-state error, advance to the next chain
-//      element. Stops on success or non-fallbackable error.
+//   2. Walk-on-fallbackable — single source of truth for the agent-level
+//      fallbackable codes. On a transient/account-state error, advance to
+//      the next chain element.
 //
-//   3. Structured observability — every call emits the canonical [llm] log
-//      line with source tag (agent/summary/whisper/tool/system), provider,
-//      model, prompt/completion tokens, cache_read, duration, attempts.
+//   3. One network-only retry per chain element on bare network errors
+//      (ECONNRESET / ETIMEDOUT / EPIPE / generic "fetch failed"). Classified
+//      provider errors (auth, rate_limit, quota, etc.) advance immediately.
 //
-// Design choice: chain walk inside the service applies to single-shot calls
-// (callChat / one-shot callStream). For agent eval which runs a multi-round
-// tool loop, the agent layer owns chain semantics — service is invoked
-// per-round but with `fallbackChain: []` so the service does NOT walk; the
-// agent walks the chain across full evaluate() calls. This avoids
-// mid-tool-loop provider switches that could confuse the new model with
-// the prior provider's tool-call protocol.
+//   4. Stream-content normalisation — strips <think>...</think> blocks so
+//      consumers never see internal reasoning leakage.
+//
+//   5. Structured observability — one `[llm]` log line per call with source,
+//      provider, model, tokens, cache_read, duration.
+//
+//   6. Chain-switch signalling — fires opts.onChainSwitch each time the
+//      service advances to a new chain element. Reuses the existing
+//      model_fallback event shape at the agent layer.
+//
+// Surface: a single entry point, `bound(opts)`, returns a standard
+// LLMProvider with source/agentId/onChainSwitch baked in. There is NO bare
+// chat/stream/models on LLMService — every call must go through `bound()`,
+// which forces every site to declare its source.
 //
 // Chain resolution priority:
-//   per-call override   — caller-supplied (code-only API)
-//   per-agent override  — opts.agentChain (back-compat path; not surfaced in UI)
-//   system default      — opts.systemChain (read from llm-policy at request time)
+//   per-call override   — opts.fallbackChain (rare, code-only)
+//   system default      — getSystemChain() at request time (live policy)
 //
-// First non-empty wins. Empty array = no chain walk.
+// Per-call override wins; empty array means "primary only — do not walk".
 // ============================================================================
 
-import type { ChatRequest, ChatResponse, StreamChunk } from '../core/types/llm.ts'
+import type { ChatRequest, ChatResponse, LLMProvider, StreamChunk } from '../core/types/llm.ts'
 import type { ProviderRouter, ProviderAttemptRecord, RouterCallOptions } from './router.ts'
 import type { MonitorState } from './provider-monitor.ts'
 import { parsePrefixedModel } from './models/parse-prefix.ts'
+import { isAgentFallbackable as classifyIsAgentFallbackable } from '../agents/error-classify.ts'
 
-// === Source tagging — kept open for new consumers without changing the type ===
+// === Source tagging — every call site declares its identity ===
 
-export type LLMSource = 'agent' | 'summary' | 'whisper' | 'tool' | 'system'
+export type LLMSource = 'agent' | 'summary' | 'whisper' | 'system'
 
 // === Codes that warrant advancing to the next chain element ===
-
-// Single source of truth — duplicates in agents/model-fallback.ts will be
-// removed when ai-agent.ts migrates onto this service. Includes
-// `model_unavailable` because cross-provider chains hit different account
-// state (Anthropic credit-out, OpenAI plan-restricted model, etc.) which
-// the next provider may not share.
-const FALLBACKABLE_AGENT_CODES: ReadonlySet<string> = new Set([
+// Single source of truth. Includes `model_unavailable` because cross-provider
+// chains hit different account state (Anthropic credit-out, OpenAI plan-
+// restricted model) which the next provider may not share.
+export const FALLBACKABLE_AGENT_CODES: ReadonlySet<string> = new Set([
   'rate_limited', 'provider_down', 'network', 'model_unavailable',
 ])
 
-// === Call options ===
+// === Bind options ===
 
-export interface LLMServiceCallOptions {
-  // Per-call override. When set (even to []), bypasses agentChain/systemChain.
-  // Empty array means "do not walk any chain" — primary only.
-  readonly fallbackChain?: ReadonlyArray<string>
-  // Agent's persisted modelFallback (back-compat path). Used when fallbackChain is undefined.
-  readonly agentChain?: ReadonlyArray<string>
-  // System default chain (from llm-policy.json). Used when neither of the above is set.
-  readonly systemChain?: ReadonlyArray<string>
-  readonly source?: LLMSource
-  readonly signal?: AbortSignal
+export interface LLMServiceBindOptions {
+  readonly source: LLMSource
   readonly agentId?: string | null
+  // Fired once per chain advance. Reused by the agent layer to emit the
+  // existing `model_fallback` EvalEvent kind.
+  readonly onChainSwitch?: (preferred: string, effective: string, reason: string) => void
+  // Per-call-site override. Empty array disables chain walk entirely;
+  // undefined falls through to the system default chain.
+  readonly fallbackChain?: ReadonlyArray<string>
 }
 
-// === Outcome shapes ===
+// === Failure shape attached to thrown errors ===
 
 export interface LLMServiceFailure {
   readonly attempts: ReadonlyArray<ProviderAttemptRecord>
@@ -81,34 +81,27 @@ export interface LLMServiceFailure {
 
 // === Service ===
 
-// LLMService is LLMProvider-compatible at the bare surface (chat/stream/models)
-// AND exposes richer callChat/callStream for callers that want explicit
-// fallback chain / source tagging / agentId observability.
-//
-// Agents use callChat/callStream with `fallbackChain: []` to disable the
-// service's chain walk (they own their own per-evaluate chain walk).
-// Single-shot consumers (summary, whisper, callLLM) use the bare surface
-// or pass an explicit chain via callChat/callStream.
 export interface LLMService {
-  readonly chat: (request: ChatRequest) => Promise<ChatResponse>
-  readonly stream: (request: ChatRequest, signal?: AbortSignal) => AsyncIterable<StreamChunk>
-  readonly models: () => Promise<string[]>
-  readonly callChat: (request: ChatRequest, opts?: LLMServiceCallOptions) => Promise<ChatResponse>
-  readonly callStream: (request: ChatRequest, opts?: LLMServiceCallOptions) => AsyncIterable<StreamChunk>
+  // Returns a standard LLMProvider with the supplied options baked in. All
+  // resilience (cooldown skip, chain walk, network retry, content strip,
+  // observability) is automatic on the returned provider's chat/stream.
+  readonly bound: (opts: LLMServiceBindOptions) => LLMProvider
 }
 
 // === Implementation ===
 
 const COOLDOWN_SKIP_GUARD_MS = 1_000
+const NETWORK_RETRY_BACKOFF_MS = 250
 
-const resolveEffectiveChain = (
-  opts: LLMServiceCallOptions | undefined,
-  defaultSystemChain: ReadonlyArray<string> | undefined,
-): ReadonlyArray<string> => {
-  if (opts?.fallbackChain !== undefined) return opts.fallbackChain
-  if (opts?.agentChain && opts.agentChain.length > 0) return opts.agentChain
-  if (opts?.systemChain && opts.systemChain.length > 0) return opts.systemChain
-  return defaultSystemChain ?? []
+const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/g
+
+// Bare network errors that warrant one in-place retry on the same chain
+// element before advancing. Classified provider errors (CloudProviderError,
+// GatewayError) carry their own code and skip this path.
+const isBareNetworkError = (err: unknown): boolean => {
+  if (err instanceof Error && (err as { kind?: string }).kind) return false  // structured error
+  if (!(err instanceof Error)) return false
+  return /ECONNRESET|ETIMEDOUT|EPIPE|ECONNREFUSED|fetch failed|network/i.test(err.message)
 }
 
 // Strip the primary from the chain and dedup. Empty input returns empty.
@@ -125,8 +118,6 @@ const dedupChain = (primary: string, chain: ReadonlyArray<string>): ReadonlyArra
 }
 
 // Decide whether to skip the primary based on monitor state.
-// Returns true when the primary's provider is currently in backoff with
-// significant time remaining — caller should route directly to the chain.
 const shouldSkipPrimary = (
   primaryProvider: string | null,
   monitorSnapshot: Record<string, MonitorState | null>,
@@ -174,30 +165,10 @@ const buildRemediation = (
   return `Open the Providers panel and check provider status.`
 }
 
-const isAgentFallbackable = (err: unknown): boolean => {
-  // The router has already classified provider-level errors (auth, bad_request)
-  // as rethrowable. By the time we see a structured CloudProviderError here,
-  // it's either router-rethrown (permanent — bad_request like Anthropic
-  // credit-out) or all-providers-failed (provider_down). Both are agent-level
-  // fallbackable when there's a chain to walk.
-  const errObj = err as { code?: string }
-  if (typeof errObj?.code !== 'string') return true  // unknown → walk anyway
-  // Mirror the agent's classifyLLMError mapping:
-  //   bad_request → model_unavailable (fallbackable)
-  //   auth        → no_api_key (NOT fallbackable — config issue)
-  //   rate_limit  → rate_limited (fallbackable)
-  //   quota       → rate_limited (fallbackable)
-  //   provider_down → provider_down (fallbackable)
-  if (errObj.code === 'auth' || errObj.code === 'no_api_key') return false
-  // bad_request, rate_limit, quota, provider_down all map to fallbackable
-  // agent codes per FALLBACKABLE_AGENT_CODES.
-  return true
-}
-
 export interface LLMServiceDeps {
   readonly router: ProviderRouter
   // Read at request time so UI edits to the system chain take effect
-  // without restart. Returns the system default chain or undefined.
+  // without restart.
   readonly getSystemChain?: () => ReadonlyArray<string> | undefined
   readonly now?: () => number
 }
@@ -208,28 +179,24 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
   const getSystemChain = deps.getSystemChain ?? (() => undefined)
 
   // Reorder candidates: if primary is doomed by monitor state and chain is
-  // non-empty, skip primary. Returns the ordered list of models to try.
+  // non-empty, demote primary to last so we still try it if the chain
+  // exhausts and the backoff ends mid-flight.
   const buildAttemptOrder = (request: ChatRequest, chain: ReadonlyArray<string>): ReadonlyArray<string> => {
     const { provider: primaryProvider } = parsePrefixedModel(request.model)
     const monitor = router.getMonitorSnapshot()
     const skip = shouldSkipPrimary(primaryProvider, monitor, now())
-    if (skip && chain.length > 0) {
-      // Primary is in backoff; chain is non-empty. Demote primary to last
-      // (so we still try it eventually if the chain exhausts and the
-      // backoff ends in the meantime).
-      return [...chain, request.model]
-    }
+    if (skip && chain.length > 0) return [...chain, request.model]
     return [request.model, ...chain]
   }
 
   const logLine = (
-    source: LLMSource | undefined,
+    source: LLMSource,
     path: 'chat' | 'stream',
     request: ChatRequest,
     response: { provider?: string; promptTokens?: number; completionTokens?: number; cacheRead?: number; durationMs: number; chunksEmit?: number; toolCalls?: number; contentLen?: number },
   ): void => {
     console.log(
-      `[llm] source=${source ?? '?'} path=${path} provider=${response.provider ?? '?'} ` +
+      `[llm] source=${source} path=${path} provider=${response.provider ?? '?'} ` +
       `model=${request.model} content_len=${response.contentLen ?? '?'} tools=${response.toolCalls ?? 0} ` +
       `prompt_tokens=${response.promptTokens ?? '?'} completion_tokens=${response.completionTokens ?? '?'} ` +
       `cache_read=${response.cacheRead ?? '?'} chunks_emit=${response.chunksEmit ?? '?'} ` +
@@ -237,54 +204,23 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
     )
   }
 
-  const callChat = async (request: ChatRequest, opts?: LLMServiceCallOptions): Promise<ChatResponse> => {
-    const chain = dedupChain(request.model, resolveEffectiveChain(opts, getSystemChain()))
-    const order = buildAttemptOrder(request, chain)
-    const allAttempts: ProviderAttemptRecord[] = []
-    let lastError: unknown
-    let firstFallbackableError: { code: string; reason: string } | null = null
+  const resolveChain = (override: ReadonlyArray<string> | undefined): ReadonlyArray<string> => {
+    if (override !== undefined) return override
+    return getSystemChain() ?? []
+  }
 
-    for (const model of order) {
-      const attemptRequest = { ...request, model }
-      const startMs = performance.now()
-      try {
-        const routerOpts: RouterCallOptions = {
-          ...(opts?.agentId !== undefined ? { agentId: opts.agentId } : {}),
-        }
-        const response = await router.chat(attemptRequest, routerOpts)
-        const durationMs = Math.round(performance.now() - startMs)
-        logLine(opts?.source, 'chat', attemptRequest, {
-          provider: response.provider,
-          promptTokens: response.tokensUsed.prompt,
-          completionTokens: response.tokensUsed.completion,
-          cacheRead: response.tokensUsed.cacheRead,
-          durationMs,
-          contentLen: response.content.length,
-          toolCalls: response.toolCalls?.length ?? 0,
-        })
-        return response
-      } catch (err) {
-        lastError = err
-        const errObj = err as { code?: string; message?: string }
-        if (typeof errObj.code === 'string' && firstFallbackableError === null) {
-          firstFallbackableError = { code: errObj.code, reason: errObj.message ?? '' }
-        }
-        // Carry through any structured attempts attached to the error
-        // (router may attach for all_failed cases).
-        const errAttempts = (err as { attempts?: ProviderAttemptRecord[] }).attempts
-        if (Array.isArray(errAttempts)) allAttempts.push(...errAttempts)
-        if (!isAgentFallbackable(err)) break
-        // Chain element exhausted; continue to next.
-      }
-    }
-    // Exhausted — synthesize a structured error that carries attempts +
-    // remediation. Existing callers expect throws; we throw an Error with
-    // those fields attached for the agent layer to surface.
+  const finalizeFailure = (
+    attempts: ReadonlyArray<ProviderAttemptRecord>,
+    firstFallbackable: { code: string; reason: string } | null,
+    hasChain: boolean,
+    modelRef: string,
+    lastError: unknown,
+  ): never => {
     const failure: LLMServiceFailure = {
-      attempts: allAttempts,
-      primaryCode: firstFallbackableError?.code ?? 'unknown',
-      primaryReason: firstFallbackableError?.reason ?? '',
-      remediation: buildRemediation(allAttempts, chain.length > 0, request.model),
+      attempts,
+      primaryCode: firstFallbackable?.code ?? 'unknown',
+      primaryReason: firstFallbackable?.reason ?? '',
+      remediation: buildRemediation(attempts, hasChain, modelRef),
     }
     const message = lastError instanceof Error ? lastError.message : String(lastError)
     const out = new Error(message)
@@ -295,99 +231,156 @@ export const createLLMService = (deps: LLMServiceDeps): LLMService => {
     throw out
   }
 
-  const callStream = async function* (request: ChatRequest, opts?: LLMServiceCallOptions): AsyncIterable<StreamChunk> {
-    const chain = dedupChain(request.model, resolveEffectiveChain(opts, getSystemChain()))
+  const callChat = async (request: ChatRequest, opts: LLMServiceBindOptions): Promise<ChatResponse> => {
+    const chain = dedupChain(request.model, resolveChain(opts.fallbackChain))
     const order = buildAttemptOrder(request, chain)
     const allAttempts: ProviderAttemptRecord[] = []
     let lastError: unknown
-    let firstFallbackableError: { code: string; reason: string } | null = null
+    let firstFallbackable: { code: string; reason: string } | null = null
 
-    for (let i = 0; i < order.length; i++) {
-      const model = order[i]!
+    for (let idx = 0; idx < order.length; idx++) {
+      const model = order[idx]!
+      if (idx > 0) opts.onChainSwitch?.(request.model, model, 'preferred_unavailable')
       const attemptRequest = { ...request, model }
-      const startMs = performance.now()
-      const routerOpts: RouterCallOptions = {
-        ...(opts?.agentId !== undefined ? { agentId: opts.agentId } : {}),
-      }
-      let chunkCount = 0
-      let contentLen = 0
-      let toolCallCount = 0
-      let promptTokens: number | undefined
-      let completionTokens: number | undefined
-      let cacheRead: number | undefined
-      let providerName: string | undefined
-      let firstChunkSeen = false
-      try {
-        const signal = opts?.signal
-        const stream = router.stream(attemptRequest, signal, routerOpts)
-        for await (const chunk of stream) {
-          firstChunkSeen = true
-          chunkCount++
-          if (chunk.delta) contentLen += chunk.delta.length
-          if (chunk.done) {
-            toolCallCount = chunk.toolCalls?.length ?? 0
-            promptTokens = chunk.tokensUsed?.prompt
-            completionTokens = chunk.tokensUsed?.completion
-            cacheRead = chunk.tokensUsed?.cacheRead
-            providerName = chunk.provider
+
+      // Up to 2 tries per chain element (1 retry on bare network error only).
+      for (let tryNo = 0; tryNo < 2; tryNo++) {
+        const startMs = performance.now()
+        try {
+          const routerOpts: RouterCallOptions = {
+            ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
           }
-          yield chunk
+          const response = await router.chat(attemptRequest, routerOpts)
+          const durationMs = Math.round(performance.now() - startMs)
+          logLine(opts.source, 'chat', attemptRequest, {
+            provider: response.provider,
+            promptTokens: response.tokensUsed.prompt,
+            completionTokens: response.tokensUsed.completion,
+            cacheRead: response.tokensUsed.cacheRead,
+            durationMs,
+            contentLen: response.content.length,
+            toolCalls: response.toolCalls?.length ?? 0,
+          })
+          return { ...response, content: response.content.replace(THINK_BLOCK_RE, '') }
+        } catch (err) {
+          lastError = err
+          const errObj = err as { code?: string; message?: string }
+          if (typeof errObj.code === 'string' && firstFallbackable === null) {
+            firstFallbackable = { code: errObj.code, reason: errObj.message ?? '' }
+          }
+          const errAttempts = (err as { attempts?: ProviderAttemptRecord[] }).attempts
+          if (Array.isArray(errAttempts)) allAttempts.push(...errAttempts)
+
+          if (tryNo === 0 && isBareNetworkError(err)) {
+            await new Promise(r => setTimeout(r, NETWORK_RETRY_BACKOFF_MS))
+            continue   // retry same chain element
+          }
+          break  // advance to next chain element (or finalize)
         }
-        const durationMs = Math.round(performance.now() - startMs)
-        logLine(opts?.source, 'stream', attemptRequest, {
-          provider: providerName,
-          promptTokens,
-          completionTokens,
-          cacheRead,
-          durationMs,
-          chunksEmit: chunkCount,
-          toolCalls: toolCallCount,
-          contentLen,
-        })
-        return
-      } catch (err) {
-        lastError = err
-        const errObj = err as { code?: string; message?: string }
-        if (typeof errObj.code === 'string' && firstFallbackableError === null) {
-          firstFallbackableError = { code: errObj.code, reason: errObj.message ?? '' }
-        }
-        const errAttempts = (err as { attempts?: ProviderAttemptRecord[] }).attempts
-        if (Array.isArray(errAttempts)) allAttempts.push(...errAttempts)
-        // If we already started yielding chunks, we can't switch streams
-        // mid-flight (mid-stream failover is intentionally NOT done — see
-        // router.ts comment). Propagate the error.
-        if (firstChunkSeen) throw err
-        if (!isAgentFallbackable(err)) break
-        // Try next chain element.
       }
+      if (!classifyIsAgentFallbackable(lastError)) break
     }
-    const failure: LLMServiceFailure = {
-      attempts: allAttempts,
-      primaryCode: firstFallbackableError?.code ?? 'unknown',
-      primaryReason: firstFallbackableError?.reason ?? '',
-      remediation: buildRemediation(allAttempts, chain.length > 0, request.model),
-    }
-    const message = lastError instanceof Error ? lastError.message : String(lastError)
-    const out = new Error(message)
-    Object.assign(out, failure)
-    if (lastError && typeof lastError === 'object' && 'code' in lastError) {
-      Object.assign(out, { code: (lastError as { code?: string }).code })
-    }
-    throw out
+    return finalizeFailure(allAttempts, firstFallbackable, chain.length > 0, request.model, lastError)
   }
 
-  // LLMProvider-compatible bare surface. These delegate to callChat/callStream
-  // with no per-call override, so the service's standard treatment (cooldown
-  // skip, system-default chain walk, observability) applies automatically.
-  // Existing callers that take an LLMProvider keep working; the resilience
-  // is invisible.
-  const chat = (request: ChatRequest): Promise<ChatResponse> => callChat(request)
-  const stream = (request: ChatRequest, signal?: AbortSignal): AsyncIterable<StreamChunk> =>
-    callStream(request, signal !== undefined ? { signal } : undefined)
-  const models = (): Promise<string[]> => router.models()
+  const callStream = async function* (
+    request: ChatRequest,
+    signal: AbortSignal | undefined,
+    opts: LLMServiceBindOptions,
+  ): AsyncIterable<StreamChunk> {
+    const chain = dedupChain(request.model, resolveChain(opts.fallbackChain))
+    const order = buildAttemptOrder(request, chain)
+    const allAttempts: ProviderAttemptRecord[] = []
+    let lastError: unknown
+    let firstFallbackable: { code: string; reason: string } | null = null
 
-  return { chat, stream, models, callChat, callStream }
+    for (let idx = 0; idx < order.length; idx++) {
+      const model = order[idx]!
+      if (idx > 0) opts.onChainSwitch?.(request.model, model, 'preferred_unavailable')
+      const attemptRequest = { ...request, model }
+
+      for (let tryNo = 0; tryNo < 2; tryNo++) {
+        const startMs = performance.now()
+        const routerOpts: RouterCallOptions = {
+          ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
+        }
+        let chunkCount = 0, contentLen = 0, toolCallCount = 0
+        let promptTokens: number | undefined, completionTokens: number | undefined, cacheRead: number | undefined
+        let providerName: string | undefined
+        let firstChunkSeen = false
+        let pendingThinkBuf = ''     // only flushed AFTER strip; tiny since blocks are bounded
+
+        try {
+          const stream = router.stream(attemptRequest, signal, routerOpts)
+          for await (const chunk of stream) {
+            firstChunkSeen = true
+            if (chunk.delta) {
+              pendingThinkBuf += chunk.delta
+              // Emit only once a complete <think> block has either landed
+              // (strip+emit remainder) or we're confident no more is incoming.
+              // Pragmatic compromise: keep the buffer to ≤4 KB and emit
+              // anything beyond that, stripped of any complete think blocks.
+              if (pendingThinkBuf.length > 4096 || !pendingThinkBuf.includes('<think>')) {
+                const cleaned = pendingThinkBuf.replace(THINK_BLOCK_RE, '')
+                if (cleaned) {
+                  contentLen += cleaned.length
+                  chunkCount++
+                  yield { ...chunk, delta: cleaned }
+                }
+                pendingThinkBuf = ''
+              }
+            } else {
+              if (chunk.done) {
+                // Flush remaining buffer with strip, then emit done.
+                const cleaned = pendingThinkBuf.replace(THINK_BLOCK_RE, '')
+                if (cleaned) {
+                  contentLen += cleaned.length
+                  chunkCount++
+                  yield { delta: cleaned, done: false }
+                }
+                pendingThinkBuf = ''
+                toolCallCount = chunk.toolCalls?.length ?? 0
+                promptTokens = chunk.tokensUsed?.prompt
+                completionTokens = chunk.tokensUsed?.completion
+                cacheRead = chunk.tokensUsed?.cacheRead
+                providerName = chunk.provider
+              }
+              yield chunk
+            }
+          }
+          const durationMs = Math.round(performance.now() - startMs)
+          logLine(opts.source, 'stream', attemptRequest, {
+            provider: providerName, promptTokens, completionTokens, cacheRead,
+            durationMs, chunksEmit: chunkCount, toolCalls: toolCallCount, contentLen,
+          })
+          return
+        } catch (err) {
+          lastError = err
+          const errObj = err as { code?: string; message?: string }
+          if (typeof errObj.code === 'string' && firstFallbackable === null) {
+            firstFallbackable = { code: errObj.code, reason: errObj.message ?? '' }
+          }
+          const errAttempts = (err as { attempts?: ProviderAttemptRecord[] }).attempts
+          if (Array.isArray(errAttempts)) allAttempts.push(...errAttempts)
+          // Mid-stream failure: cannot recover — caller already received chunks.
+          if (firstChunkSeen) throw err
+          if (tryNo === 0 && isBareNetworkError(err)) {
+            await new Promise(r => setTimeout(r, NETWORK_RETRY_BACKOFF_MS))
+            continue
+          }
+          break
+        }
+      }
+      if (!classifyIsAgentFallbackable(lastError)) break
+    }
+    return finalizeFailure(allAttempts, firstFallbackable, chain.length > 0, request.model, lastError)
+  }
+
+  return {
+    bound: (opts) => ({
+      chat: (req) => callChat(req, opts),
+      stream: (req, signal) => callStream(req, signal, opts),
+      models: () => router.models(),
+    }),
+  }
 }
-
-// Re-exports for other modules migrating off the old fallback location.
-export { FALLBACKABLE_AGENT_CODES }

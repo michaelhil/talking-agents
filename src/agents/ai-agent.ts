@@ -19,7 +19,6 @@
 // ============================================================================
 
 import type { AIAgent, AIAgentConfig, IncludeContext, IncludePrompts, PromptSection, ContextSection } from '../core/types/agent.ts'
-import { resolveFallbackChain, FALLBACKABLE_CODES } from './model-fallback.ts'
 import type { AgentHistory, Message } from '../core/types/messaging.ts'
 import type { EvalEvent } from '../core/types/agent-eval.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
@@ -113,10 +112,6 @@ export const createAIAgent = (
 
   let currentPersona: string = config.persona
   let currentModel: string = config.model
-  let currentModelFallback: ReadonlyArray<string> | undefined =
-    config.modelFallback === undefined ? undefined :
-    typeof config.modelFallback === 'string' ? [config.modelFallback] :
-    [...config.modelFallback]
   let currentTemperature: number | undefined = config.temperature
   let currentThinking: boolean = config.thinking ?? false
   let historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
@@ -176,11 +171,6 @@ export const createAIAgent = (
   // its preferred model again, so a subsequent outage re-emits the notice.
   let lastFallbackTarget: string | null = null
 
-  // Per-agent model-fallback resolution + fallbackable error codes live in
-  // model-fallback.ts so they can be unit-tested without spinning up the
-  // full agent factory.
-  // (resolveFallbackChain / FALLBACKABLE_CODES imported at top of file)
-
   // Active abort controller for stream cancellation
   let activeAbortController: AbortController | null = null
 
@@ -221,13 +211,12 @@ export const createAIAgent = (
   // triggering N separate evals. Major reduction in LLM calls for broadcast rooms.
   const EVAL_COOLDOWN_MS = 500
 
-  // Shared eval-with-fallback path used by both the receive-driven run() and
-  // the trigger-driven fireTriggerExecute. Encapsulates: build evalConfig
-  // from current settings, run evaluate(), and on a fallbackable error retry
-  // ONCE with the configured fallback model. Without this helper, both
-  // callers had ~30 LOC of identical fallback-retry — a bug-fix surface
-  // that two paths could drift on.
-  const evaluateWithFallback = async (
+  // Per-evaluate run. The fallback chain walk (across providers/models) is
+  // owned by LLMService — it sees the live system policy chain and walks on
+  // fallbackable errors mid-stream. Agents do NOT carry their own per-agent
+  // chain. The only resilience knob the agent layer adds is the effective-
+  // model resolver (current model availability check) below.
+  const runEvaluate = async (
     contextResult: ContextResult,
     effectiveModel: string,
     triggerRoomId: string,
@@ -255,38 +244,10 @@ export const createAIAgent = (
       ...(evalEventCb ? { onEvent: evalEventCb } : {}),
       signal,
     }
-
-    const first = await evaluate(
+    return evaluate(
       contextResult, evalConfig, llmProvider, evalToolExec,
       maxToolIterationsCfg, triggerRoomId, evalOpts,
     )
-    if (first.decision.response.action !== 'error') return first
-    if (!FALLBACKABLE_CODES.has(first.decision.response.code)) return first
-
-    // Walk the fallback chain. Each element is a fresh evaluate() call.
-    // Stop on the first success OR on any non-fallbackable error (auth,
-    // bad_request, etc.) — we don't want to keep burning calls on a config
-    // problem. Chain length is the user-owned retry budget.
-    const chain = resolveFallbackChain(effectiveModel, currentModelFallback)
-    let last = first
-    for (const candidate of chain) {
-      if (onEvalEvent) {
-        onEvalEvent(config.name, {
-          kind: 'model_fallback',
-          preferred: effectiveModel,
-          effective: candidate,
-          reason: 'preferred_unavailable',
-        })
-      }
-      const next = await evaluate(
-        contextResult, { ...evalConfig, model: candidate }, llmProvider, evalToolExec,
-        maxToolIterationsCfg, triggerRoomId, evalOpts,
-      )
-      if (next.decision.response.action !== 'error') return next
-      if (!FALLBACKABLE_CODES.has(next.decision.response.code)) return next
-      last = next
-    }
-    return last
   }
 
   const tryEvaluate = (triggerRoomId: string): void => {
@@ -349,7 +310,7 @@ export const createAIAgent = (
     const run = async (): Promise<void> => {
       let wasRespond = false
       try {
-        const { decision, flushInfo } = await evaluateWithFallback(
+        const { decision, flushInfo } = await runEvaluate(
           contextResult, effectiveModel, triggerRoomId, abortController.signal, inReplyTo,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
@@ -527,10 +488,6 @@ export const createAIAgent = (
     getPersona: () => currentPersona,
     updateModel: (model: string) => { currentModel = model },
     getModel: () => currentModel,
-    updateModelFallback: (chain: ReadonlyArray<string> | undefined) => {
-      currentModelFallback = chain && chain.length > 0 ? [...chain] : undefined
-    },
-    getModelFallback: () => currentModelFallback,
     getTemperature: () => currentTemperature,
     updateTemperature: (t: number | undefined) => { currentTemperature = t },
     getHistoryLimit: () => historyLimit,
@@ -615,9 +572,6 @@ export const createAIAgent = (
       maxToolIterations: maxToolIterationsCfg,
       ...(currentWikiBindings.length > 0 ? { wikiBindings: [...currentWikiBindings] } : {}),
       ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
-      ...(currentModelFallback && currentModelFallback.length > 0
-        ? { modelFallback: [...currentModelFallback] }
-        : {}),
     }),
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },
     refreshTools: (support) => {
@@ -745,7 +699,7 @@ export const createAIAgent = (
           flushInfo: { ids: new Set<string>(), triggerRoomId: roomId },
         }
 
-        const { decision } = await evaluateWithFallback(
+        const { decision } = await runEvaluate(
           contextResult, effectiveModel, roomId, abortController.signal,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled

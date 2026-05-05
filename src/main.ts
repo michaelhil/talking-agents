@@ -354,7 +354,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       schedulerRef?.onConfigChanged(roomId)
     },
     onSummaryUpdated: summaryUpdated.proxy,
-    callSystemLLM: (options) => callLLM(llmService, options),
+    callSystemLLM: (options) => callLLM(llmService.bound({ source: 'system' }), options),
   }
   const house = createHouse(houseCallbacks)
   const routeMessage = createMessageRouter({ house })
@@ -371,7 +371,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     const model = firstAi ? (firstAi as AIAgent).getModel?.() : undefined
     return model ?? 'llama3.2'
   }
-  const summaryEngine = createSummaryEngine({ llm: llmService, defaultModel: defaultSummaryModel })
+  const summaryEngine = createSummaryEngine({ llm: llmService.bound({ source: 'summary' }), defaultModel: defaultSummaryModel })
   const summaryScheduler = createSummaryScheduler({
     engine: summaryEngine,
     getRoom: (id) => house.getRoom(id),
@@ -519,7 +519,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const scriptsDir = sharedPaths.scripts()
   const packsDir = sharedPaths.packs()
   const skillStore = shared.sharedSkillStore
-  const scriptStore = createScriptStore(scriptsDir)
+  const bundledExamplesDir = `${process.cwd()}/examples/scripts`
+  const scriptStore = createScriptStore({ baseDir: scriptsDir, extraSourceDirs: [bundledExamplesDir] })
   // Fire-and-forget initial load — store is empty until this completes,
   // matching the skills loader pattern (which runs from bootstrap.ts).
   void scriptStore.reload().catch(err => console.error('[scripts] reload failed:', err))

@@ -12,6 +12,10 @@
 //
 // Read at request time (not boot) so UI edits take effect without restart.
 // Atomic write (tmp → rename) so a crash mid-save can't leave a torn file.
+//
+// Deferred consolidation: this file currently holds a single field
+// (modelFallback). Trigger to fold into providers-store.ts: a second
+// cross-provider policy field arrives, OR by 2026-08-01, whichever first.
 // ============================================================================
 
 import { readFile, writeFile, rename, chmod, mkdir } from 'node:fs/promises'

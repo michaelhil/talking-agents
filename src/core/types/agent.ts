@@ -84,8 +84,6 @@ export interface AIAgent extends Agent {
   readonly getPersona: () => string
   readonly updateModel: (model: string) => void
   readonly getModel: () => string
-  readonly updateModelFallback: (chain: ReadonlyArray<string> | undefined) => void
-  readonly getModelFallback: () => ReadonlyArray<string> | undefined
   readonly cancelGeneration: () => void
   readonly getTemperature: () => number | undefined
   readonly updateTemperature?: (t: number | undefined) => void
@@ -229,21 +227,6 @@ export interface AIAgentConfig {
   readonly contextEnabled?: boolean             // master for all context sub-section toggles (default: true)
   readonly wikiBindings?: ReadonlyArray<string> // optional per-agent wiki override (effective set = room ∪ agent override)
   readonly triggers?: ReadonlyArray<Trigger>    // scheduled prompts; see src/core/triggers/types.ts
-  // Optional fallback chain. When the primary call fails with a
-  // fallbackable upstream error (rate_limit / quota / provider_down — i.e.
-  // the upstream is having transient trouble, not a config issue), the eval
-  // loop retries with each chain element in order until one succeeds or all
-  // are exhausted. Provider-prefixed strings work the same as `model`. A
-  // bare string is accepted as a chain of length 1.
-  //
-  // Chain length is the retry budget — the user owns it. A 5-element chain
-  // means up to 5 sequential LLM calls per failed turn; that's a real-time
-  // cost, not a free safety net.
-  //
-  // No system-wide defaults, no tier-based equivalences, no implicit
-  // mappings. The author of the agent (or script) chooses substitutes
-  // explicitly.
-  readonly modelFallback?: string | ReadonlyArray<string>
 }
 
 // === Agent Response (parsed from LLM plain text output) ===

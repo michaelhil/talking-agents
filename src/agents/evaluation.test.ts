@@ -5,9 +5,9 @@
 // (red error chip + "Change model" affordance) instead of hiding them behind
 // a gray "[pass]".
 //
-// Direct unit tests for streamWithRetry / evaluate() tool-loop / streamLLM /
-// callLLM live in the additional describe blocks below — they exercise the
-// evaluate.ts public surface without going through createAIAgent.
+// Direct unit tests for evaluate() / streamLLM / callLLM live in the
+// additional describe blocks below — they exercise evaluate.ts's public
+// surface without going through createAIAgent.
 
 import { describe, expect, test } from 'bun:test'
 import type { ChatRequest, ChatResponse, LLMProvider, StreamChunk } from '../core/types/llm.ts'
@@ -18,7 +18,7 @@ import type { Decision } from './ai-agent.ts'
 import type { AIAgentConfig } from '../core/types/agent.ts'
 import type { Message } from '../core/types/messaging.ts'
 import type { ContextResult } from './context-builder.ts'
-import { evaluate, callLLM, streamLLM, streamWithRetry } from './evaluation.ts'
+import { evaluate, callLLM, streamLLM } from './evaluation.ts'
 
 const makeConfig = (over: Partial<AIAgentConfig> = {}): AIAgentConfig => ({
   name: 'Tester',
@@ -260,28 +260,6 @@ const makeStaticProvider = (opts: StaticProviderOptions = {}): LLMProvider => {
   return { chat, models: async () => ['test-model'] }
 }
 
-interface FlakyState { attempts: number }
-const makeFlakyProvider = (
-  failures: number,
-  errorFactory: () => Error,
-  successContent = 'ok',
-): { provider: LLMProvider; state: FlakyState } => {
-  const state: FlakyState = { attempts: 0 }
-  const provider: LLMProvider = {
-    chat: async (): Promise<ChatResponse> => {
-      state.attempts++
-      if (state.attempts <= failures) throw errorFactory()
-      return {
-        content: successContent,
-        generationMs: 1,
-        tokensUsed: { prompt: 1, completion: 1 },
-      }
-    },
-    models: async () => ['test-model'],
-  }
-  return { provider, state }
-}
-
 const makeScriptedProvider = (
   scripts: ReadonlyArray<{ content?: string; toolCalls?: ChatResponse['toolCalls'] }>,
 ): { provider: LLMProvider; calls: ChatRequest[] } => {
@@ -315,54 +293,6 @@ const passToolDef: ToolDefinition = {
 const baseConfig: AIAgentConfig = {
   name: 'TestBot', model: 'test-model', persona: 'tester', historyLimit: 10,
 }
-
-// ---------------------------------------------------------------------------
-// streamWithRetry — direct retry/backoff tests. LLM_RETRY_DELAY_MS is a
-// private 1000ms const; each retry test tolerates ~1–2s wall time.
-// ---------------------------------------------------------------------------
-
-describe('streamWithRetry', () => {
-  const baseRequest: ChatRequest = { model: 'test-model', messages: [] }
-
-  test('retries once on transient error then succeeds', async () => {
-    const { provider, state } = makeFlakyProvider(
-      1, () => createOllamaError(500, 'transient blip'), 'recovered',
-    )
-    const result = await streamWithRetry(provider, baseConfig, baseRequest)
-    expect(result.content).toBe('recovered')
-    expect(state.attempts).toBe(2)
-  }, 5000)
-
-  test('exhausts retries and throws after LLM_RETRIES+1 attempts', async () => {
-    const { provider, state } = makeFlakyProvider(
-      99, () => createOllamaError(500, 'always failing'), 'never',
-    )
-    await expect(streamWithRetry(provider, baseConfig, baseRequest))
-      .rejects.toThrow('always failing')
-    // LLM_RETRIES = 2 → up to 3 attempts.
-    expect(state.attempts).toBe(3)
-  }, 8000)
-
-  test('does not retry permanent ollama errors', async () => {
-    const { provider, state } = makeFlakyProvider(
-      99, () => createOllamaError(404, 'model not found'), 'never',
-    )
-    await expect(streamWithRetry(provider, baseConfig, baseRequest))
-      .rejects.toThrow('model not found')
-    expect(state.attempts).toBe(1)
-  })
-
-  test('does not retry when AbortSignal is aborted', async () => {
-    const { provider, state } = makeFlakyProvider(
-      99, () => createOllamaError(500, 'transient'), 'never',
-    )
-    const ctrl = new AbortController()
-    ctrl.abort()
-    await expect(streamWithRetry(provider, baseConfig, baseRequest, undefined, ctrl.signal))
-      .rejects.toThrow('transient')
-    expect(state.attempts).toBe(1)
-  })
-})
 
 // ---------------------------------------------------------------------------
 // evaluate() — tool loop, exhaustion, truncation. The pass-tool short-circuit

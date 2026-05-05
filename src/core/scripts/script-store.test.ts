@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseScriptMd } from './script-md-parser.ts'
@@ -169,7 +169,7 @@ describe('ScriptStore.upsert size cap', () => {
   test('rejects source larger than MAX_SCRIPT_SOURCE_BYTES', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
     try {
-      const store = createScriptStore(dir)
+      const store = createScriptStore({ baseDir: dir })
       await store.reload()
       const oversized = '# SCRIPT: x\n' + 'x'.repeat(MAX_SCRIPT_SOURCE_BYTES + 100)
       await expect(store.upsert('big', oversized)).rejects.toThrow(/too large/)
@@ -178,10 +178,39 @@ describe('ScriptStore.upsert size cap', () => {
     }
   })
 
+  test('refuses to start when same name appears in baseDir and an extra source dir', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
+    const extraDir = await mkdtemp(join(tmpdir(), 'samsinn-extra-'))
+    try {
+      await writeFile(join(baseDir, 'quarterly-planning.md'), VALID, 'utf-8')
+      await writeFile(join(extraDir, 'quarterly-planning.md'), VALID, 'utf-8')
+      const store = createScriptStore({ baseDir, extraSourceDirs: [extraDir] })
+      await expect(store.reload()).rejects.toThrow(/name collision for "quarterly-planning"/)
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+      await rm(extraDir, { recursive: true, force: true })
+    }
+  })
+
+  test('merges baseDir + extraSourceDirs without conflict', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
+    const extraDir = await mkdtemp(join(tmpdir(), 'samsinn-extra-'))
+    try {
+      await writeFile(join(baseDir, 'user-script.md'), VALID, 'utf-8')
+      await writeFile(join(extraDir, 'bundled-script.md'), VALID, 'utf-8')
+      const store = createScriptStore({ baseDir, extraSourceDirs: [extraDir] })
+      const names = await store.reload()
+      expect([...names].sort()).toEqual(['bundled-script', 'user-script'])
+    } finally {
+      await rm(baseDir, { recursive: true, force: true })
+      await rm(extraDir, { recursive: true, force: true })
+    }
+  })
+
   test('accepts source at exactly the cap (when otherwise valid)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
     try {
-      const store = createScriptStore(dir)
+      const store = createScriptStore({ baseDir: dir })
       await store.reload()
       // Pad VALID with whitespace until exactly at the cap.
       const padding = ' '.repeat(MAX_SCRIPT_SOURCE_BYTES - VALID.length)

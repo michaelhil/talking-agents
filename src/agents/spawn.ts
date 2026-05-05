@@ -10,6 +10,7 @@
 import type { Agent, AIAgent, AIAgentConfig, RouteMessage, Team } from '../core/types/agent.ts'
 import type { House, Room } from '../core/types/room.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
+import type { LLMService } from '../llm/llm-service.ts'
 import type { MessageTarget } from '../core/types/messaging.ts'
 import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult } from '../core/types/tool.ts'
 import { createAIAgent } from './ai-agent.ts'
@@ -193,13 +194,27 @@ export interface SpawnOptions {
 
 export const spawnAIAgent = async (
   config: AIAgentConfig,
-  llmProvider: LLMProvider,
+  llmService: LLMService,
   house: House,
   team: Team,
   routeMessage: RouteMessage,
   toolRegistry?: ToolRegistry,
   spawnOptions?: SpawnOptions,
 ): Promise<AIAgent> => {
+  // Bind once per agent: source='agent', agentId baked in, chain-switch
+  // events surface via onEvalEvent as the existing model_fallback kind.
+  // agentId is fixed up-front so the bound provider can carry it before
+  // createAIAgent is called (resolveAgentTools needs the provider too).
+  const agentId = spawnOptions?.overrideId ?? crypto.randomUUID()
+  const onChainSwitch = spawnOptions?.onEvalEvent
+    ? (preferred: string, effective: string, reason: string) =>
+        spawnOptions.onEvalEvent!(config.name, { kind: 'model_fallback', preferred, effective, reason })
+    : undefined
+  const llmProvider: LLMProvider = llmService.bound({
+    source: 'agent',
+    agentId,
+    ...(onChainSwitch ? { onChainSwitch } : {}),
+  })
   // Validate name before any expensive work — prevents orphaned agent creation on collision
   if (team.getAgent(config.name)) {
     throw new Error(`Agent name "${config.name}" is already taken`)
@@ -288,7 +303,7 @@ export const spawnAIAgent = async (
     getScriptContext: spawnOptions?.getScriptContext,
     onEvalEvent: spawnOptions?.onEvalEvent,
     ...(spawnOptions?.resolveEffectiveModel ? { resolveEffectiveModel: spawnOptions.resolveEffectiveModel } : {}),
-  }, spawnOptions?.overrideId)
+  }, agentId)
 
   // Fill agentRef so the lazy ToolContext in resolveAgentTools resolves correctly
   agentRef.id = agent.id

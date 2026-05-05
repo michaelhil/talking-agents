@@ -11,8 +11,16 @@ import { createOllamaProvider } from '../llm/ollama.ts'
 import { createToolRegistry } from '../core/tool-registry.ts'
 import { createGetTimeTool } from '../tools/built-in/index.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
+import type { LLMService } from '../llm/llm-service.ts'
 import type { Message } from '../core/types/messaging.ts'
 import { DEFAULTS, SYSTEM_SENDER_ID } from '../core/types/constants.ts'
+
+// Minimal test adapter: wrap an LLMProvider as an LLMService so spawnAIAgent
+// can drive an in-memory mock without standing up the full router/policy
+// stack. Production code goes through createLLMService / .bound() — this
+// helper bypasses chain walk + cooldown skip + retry, which the integration
+// tests don't exercise (those have their own focused tests).
+const asService = (p: LLMProvider): LLMService => ({ bound: () => p })
 
 const FAST_MODEL = 'llama3.2:latest'
 
@@ -581,7 +589,7 @@ describe('Integration — spawnAIAgent full wiring', () => {
     const provider = makeRespondProvider('Spawned response!')
     const agent = await spawnAIAgent(
       { name: 'Spawned', model: 'mock', persona: 'Respond.' },
-      provider, house, team, routeMessage,
+      asService(provider), house, team, routeMessage,
     )
 
     // Manually add agent to room (no auto-join)
@@ -608,7 +616,7 @@ describe('Integration — spawnAIAgent full wiring', () => {
     const provider = makePassProvider()
     const agent = await spawnAIAgent(
       { name: 'Joiner', model: 'mock', persona: 'Test.' },
-      provider, house, team, routeMessage,
+      asService(provider), house, team, routeMessage,
     )
 
     // Agent should NOT be a member yet
@@ -658,7 +666,7 @@ describe('Integration — spawnAIAgent full wiring', () => {
 
     const agent = await spawnAIAgent(
       { name: 'ToolBot', model: 'mock', persona: 'Use tools.', tools: ['get_time'] },
-      provider, house, team, routeMessage, toolRegistry,
+      asService(provider), house, team, routeMessage, toolRegistry,
     )
     await addAgentToRoom(agent.id, agent.name, intro.profile.id, undefined, team, routeMessage, house)
 
@@ -828,7 +836,7 @@ describe('Integration — AI Agent with real Ollama', () => {
         model: FAST_MODEL,
         persona: 'You are a data analyst. Be concise.',
       },
-      ollamaProvider, house, team, routeMessage,
+      asService(ollamaProvider), house, team, routeMessage,
     )
 
     expect(team.getAgent(agent.id)).toBe(agent)
@@ -862,7 +870,7 @@ describe('Integration — AI Agent with real Ollama', () => {
         model: FAST_MODEL,
         persona: 'You are a friendly assistant. Always respond to questions concisely. Never pass. Always target the room you are in.',
       },
-      ollamaProvider, house, team, routeMessage,
+      asService(ollamaProvider), house, team, routeMessage,
     )
     await addAgentToRoom(aiAgent.id, aiAgent.name, intro.profile.id, undefined, team, routeMessage, house)
 
