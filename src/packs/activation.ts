@@ -19,9 +19,14 @@ export interface RoomActivation {
 }
 
 // Effective active packs for a room — the implicit pair followed by whatever
-// the user has activated. Order matters for deterministic resolution when
-// multiple packs export the same name (e.g. two packs both ship `airports`
-// geodata categories — earlier in the list wins).
+// the user has activated.
+//
+// NOTE: this list is an ALLOWLIST for tool/skill/script visibility per room.
+// It does NOT govern resolution order for collisions. Pack-bundled geodata
+// category metadata (see src/geo/pack-source.ts:reload) is built once at
+// boot across ALL installed packs in filesystem-scan order — first-feature-
+// wins per category id, regardless of which packs are active in a given
+// room. Pack authors must namespace their category ids to avoid collisions.
 export const effectiveActivePacks = (room: RoomActivation): ReadonlyArray<string> => {
   const explicit = room.getActivePacks()
   if (explicit.length === 0) return IMPLICIT_ACTIVE

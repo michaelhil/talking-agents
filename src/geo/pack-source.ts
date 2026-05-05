@@ -121,8 +121,10 @@ const parsePackFile = (
         source: 'pack',
         pack: packNamespace,
         // Pack-bundled features are curated by the pack author. Treat as
-        // verified: discovered features default to false (unverified
-        // crowd source); pack features get author-vouched true.
+        // verified by default: discovered features default to false
+        // (crowd-sourced, unvetted); pack features get author-vouched true.
+        // Load-bearing — store.lookup at src/geo/store.ts:202 hides
+        // unverified features unless `includeUnverified` is passed.
         verified: cleanedProps.verified ?? true,
       },
     })
