@@ -30,6 +30,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { $ } from 'bun'
+import { formatShellError } from './redact.ts'
 
 const SENTINEL_FILENAME = '.local-pack-migrated'
 const BACKUP_PREFIX = '.backup-pre-local-pack-'
@@ -99,7 +100,7 @@ const buildBackup = async (home: string, dirs: ReadonlyArray<string>): Promise<s
   if (realDirs.length === 0) return backupPath
   const result = await $`tar -czf ${backupPath} -C ${home} ${realDirs}`.quiet().nothrow()
   if (result.exitCode !== 0) {
-    throw new Error(`tar backup failed (exit ${result.exitCode}): ${result.stderr.toString().trim()}`)
+    throw new Error(`tar backup failed (exit ${result.exitCode}): ${formatShellError(result, 'tar')}`)
   }
   return backupPath
 }
@@ -121,11 +122,11 @@ const moveEntries = async (m: DirMigration): Promise<number> => {
       if (code === 'EXDEV') {
         const cp = await $`cp -R ${from} ${to}`.quiet().nothrow()
         if (cp.exitCode !== 0) {
-          throw new Error(`cross-fs copy failed for ${from}: ${cp.stderr.toString().trim()}`)
+          throw new Error(`cross-fs copy failed for ${from}: ${formatShellError(cp, 'cp -R')}`)
         }
         const rm = await $`rm -rf ${from}`.quiet().nothrow()
         if (rm.exitCode !== 0) {
-          throw new Error(`source cleanup failed for ${from}: ${rm.stderr.toString().trim()}`)
+          throw new Error(`source cleanup failed for ${from}: ${formatShellError(rm, 'rm -rf')}`)
         }
       } else {
         throw err

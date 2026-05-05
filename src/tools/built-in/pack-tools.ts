@@ -34,6 +34,7 @@ import { loadPack } from '../../packs/loader.ts'
 import { readManifest, resolveInstallNamespace, stripPackPrefix } from '../../packs/manifest.ts'
 import { scanPacks } from '../../packs/scanner.ts'
 import { getAvailablePacks } from '../../packs/registry.ts'
+import { formatShellError } from '../../core/redact.ts'
 import { stat, mkdtemp, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { $ } from 'bun'
@@ -204,8 +205,7 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
     const clone = await $`git clone --depth 1 ${resolved.url} ${tempDir}`.quiet().nothrow()
     if (clone.exitCode !== 0) {
       await cleanup()
-      const stderr = clone.stderr.toString().trim()
-      return { success: false, error: `git clone failed: ${stderr || 'unknown error'}` }
+      return { success: false, error: `git clone failed: ${formatShellError(clone, 'git clone')}` }
     }
 
     // Resolve the canonical namespace from the manifest. Override always
@@ -319,8 +319,7 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
 
     const pull = await $`git -C ${dirPath} pull --ff-only`.quiet().nothrow()
     if (pull.exitCode !== 0) {
-      const stderr = pull.stderr.toString().trim()
-      return { success: false, error: `git pull failed: ${stderr || 'unknown error'}` }
+      return { success: false, error: `git pull failed: ${formatShellError(pull, 'git pull')}` }
     }
 
     // Unregister the pack's current artifacts, then re-load from disk.
@@ -444,7 +443,7 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
     if (rm.exitCode !== 0) {
       return {
         success: false,
-        error: `Unregistered from runtime + scrubbed ${scrubbed.length} room(s), but failed to delete directory: ${rm.stderr.toString().trim()}`,
+        error: `Unregistered from runtime + scrubbed ${scrubbed.length} room(s), but failed to delete directory: ${formatShellError(rm, 'rm -rf')}`,
       }
     }
 
