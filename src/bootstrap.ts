@@ -424,6 +424,7 @@ export const bootstrap = async (): Promise<void> => {
       packNamespace: string,
     ): { roomId: string; activePacks: ReadonlyArray<string> }[] => {
       const out: { roomId: string; activePacks: ReadonlyArray<string> }[] = []
+      const dirtyInstances = new Set<string>()
       for (const meta of registry.list()) {
         const sys = registry.tryGetLive(meta.id)
         if (!sys) continue
@@ -435,6 +436,7 @@ export const bootstrap = async (): Promise<void> => {
           const after = before.filter(p => p !== packNamespace)
           room.setActivePacks(after)
           out.push({ roomId: profile.id, activePacks: after })
+          dirtyInstances.add(meta.id)
           // Per-room WS event so any open packs panel re-renders. Best-
           // effort — broadcast layer may not be wired in tests / MCP-only.
           try {
@@ -443,6 +445,19 @@ export const bootstrap = async (): Promise<void> => {
             })
           } catch { /* ignore */ }
         }
+      }
+      // M5: force-flush every affected instance's auto-saver. The default
+      // 5s debounce window is long enough that a server crash within it
+      // would lose the scrub mutation, and the next boot's snapshot would
+      // restore the deleted pack into room.activePacks. Fire-and-forget
+      // is fine — the in-memory state is already authoritative for the
+      // uninstall response; the flush is just durability.
+      for (const id of dirtyInstances) {
+        const saver = registry.autoSaverFor(id)
+        if (!saver) continue
+        saver.flush().catch(err => {
+          console.error(`[packs] post-scrub snapshot flush failed for ${id}:`, err)
+        })
       }
       return out
     }
