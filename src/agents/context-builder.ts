@@ -115,7 +115,9 @@ export interface BuildContextDeps {
   readonly housePrompt?: string
   readonly responseFormat?: string
   readonly history: AgentHistory
-  readonly getSkills?: (roomName: string) => string
+  // Per-room skills section. Implementation looks up the room by id and
+  // filters by skill scope ∩ room.activePacks (∪ implicit core/local).
+  readonly getSkills?: (roomId: string) => string
   // Returns the per-room wikis catalog text (index.md + scope.md per bound
   // wiki), or '' when nothing is bound. Section gated by IncludePrompts.wikis.
   readonly getWikisCatalog?: (roomId: string) => string
@@ -259,7 +261,7 @@ export const buildSystemSections = (
     optional: true,
   })
 
-  const skillsText = deps.getSkills ? deps.getSkills(roomCtx?.profile.name ?? '') : ''
+  const skillsText = deps.getSkills ? deps.getSkills(triggerRoomId) : ''
   out.push({
     key: 'skills',
     label: 'SKILLS',

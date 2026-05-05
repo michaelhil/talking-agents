@@ -524,10 +524,18 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // matching the skills loader pattern (which runs from bootstrap.ts).
   void scriptStore.reload().catch(err => console.error('[scripts] reload failed:', err))
 
-  const getSkillsForRoom = (roomName: string): string => {
-    const skills = skillStore.forScope(roomName)
-    if (skills.length === 0) return ''
-    return skills.map(s => `[${s.name}] ${s.description}\n${s.body}`).join('\n\n---\n\n')
+  // Per-room skills section. Filters by both the skill's declared `scope`
+  // (room-name match) and the room's active packs — a pack-bundled skill is
+  // visible only when its owning pack is active in this room. Standalone
+  // skills (no pack field) are treated as 'local' and are always visible.
+  const getSkillsForRoom = (roomId: string): string => {
+    const room = house.getRoom(roomId)
+    if (!room) return ''
+    const active = new Set(['core', 'local', ...room.getActivePacks()])
+    const inScope = skillStore.forScope(room.profile.name)
+    const visible = inScope.filter(s => active.has(s.pack ?? 'local'))
+    if (visible.length === 0) return ''
+    return visible.map(s => `[${s.name}] ${s.description}\n${s.body}`).join('\n\n---\n\n')
   }
 
   // Per-room allowed-tools whitelist. Resolves from skillStore at every
@@ -541,7 +549,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const getAllowedToolsForRoom = (roomId: string): ReadonlySet<string> | null => {
     const room = house.getRoom(roomId)
     if (!room) return null
+    // Same activation gate as getSkillsForRoom — a pack-bundled skill's
+    // allowed-tools list shouldn't constrain rooms where its pack is inactive.
+    const active = new Set(['core', 'local', ...room.getActivePacks()])
     const skills = skillStore.forScope(room.profile.name)
+      .filter(s => active.has(s.pack ?? 'local'))
     const declaring = skills.filter(s => s.allowedToolNames.length > 0)
     if (declaring.length === 0) return null
     return new Set(declaring.flatMap(s => [...s.allowedToolNames]))
