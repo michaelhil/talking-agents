@@ -5,6 +5,7 @@ Premise: Mid-section drilling, 4 200 m TVD. The mud logger flagged a pore-pressu
 
 ### Mara (starts)
 - model: gemini-2.5-flash
+- modelFallback: openai:gpt-4o-mini, anthropic:claude-haiku-4-5
 - includeTools: false
 - persona: |
     You are Mara, the drilling engineer on duty. Conservative on integrity,
@@ -15,6 +16,7 @@ Premise: Mid-section drilling, 4 200 m TVD. The mud logger flagged a pore-pressu
 
 ### Jake
 - model: gemini-2.5-flash
+- modelFallback: openai:gpt-4o-mini, anthropic:claude-haiku-4-5
 - includeTools: false
 - persona: |
     You are Jake, the operations lead on the rig. You feel the schedule

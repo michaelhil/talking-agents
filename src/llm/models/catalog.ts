@@ -38,8 +38,8 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     // Flash first: Pro's capacity has been chronically tight (frequent 503
     // "high demand" responses) and Flash is comparable for short replies.
     // Pro stays available — agents that explicitly want Pro pick it via
-    // the inspector, and the eval loop falls back to Flash on transient
-    // Pro failures (see ai-agent.ts IMPLICIT_FALLBACKS).
+    // the inspector. Cross-provider rescue requires an explicit
+    // `modelFallback` chain on the agent (no implicit equivalence map).
     { id: 'gemini-2.5-flash',      label: 'Flash (default — fast, ample capacity)' },
     { id: 'gemini-2.5-pro',        label: 'Pro (best reasoning, capacity-flaky)' },
     { id: 'gemini-2.5-flash-lite', label: 'Flash-Lite (cheapest, weaker reasoning)' },

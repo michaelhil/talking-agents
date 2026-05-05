@@ -17,6 +17,11 @@ export interface CastMember {
   readonly name: string                                 // unique within script; used as agent name
   readonly persona: string                              // multiline; rendered as one block in the doc
   readonly model: string
+  // Optional fallback chain forwarded to the spawned agent's config.
+  // On a fallbackable upstream error (rate_limit / quota / provider_down),
+  // the eval loop walks each entry until one succeeds. Authored explicitly
+  // per cast member in the .md — no implicit equivalence map.
+  readonly modelFallback?: ReadonlyArray<string>
   readonly starts?: boolean                             // exactly one cast member is true
   readonly tools?: ReadonlyArray<string>                // optional tool list (always includes nothing extra by default)
   readonly includePrompts?: IncludePrompts              // forwarded to the spawned agent's config

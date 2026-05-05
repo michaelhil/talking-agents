@@ -19,7 +19,7 @@
 // ============================================================================
 
 import type { AIAgent, AIAgentConfig, IncludeContext, IncludePrompts, PromptSection, ContextSection } from '../core/types/agent.ts'
-import { resolveModelFallback, FALLBACKABLE_CODES } from './model-fallback.ts'
+import { resolveFallbackChain, FALLBACKABLE_CODES } from './model-fallback.ts'
 import type { AgentHistory, Message } from '../core/types/messaging.ts'
 import type { EvalEvent } from '../core/types/agent-eval.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
@@ -113,6 +113,10 @@ export const createAIAgent = (
 
   let currentPersona: string = config.persona
   let currentModel: string = config.model
+  let currentModelFallback: ReadonlyArray<string> | undefined =
+    config.modelFallback === undefined ? undefined :
+    typeof config.modelFallback === 'string' ? [config.modelFallback] :
+    [...config.modelFallback]
   let currentTemperature: number | undefined = config.temperature
   let currentThinking: boolean = config.thinking ?? false
   let historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
@@ -175,7 +179,7 @@ export const createAIAgent = (
   // Per-agent model-fallback resolution + fallbackable error codes live in
   // model-fallback.ts so they can be unit-tested without spinning up the
   // full agent factory.
-  // (resolveModelFallback / FALLBACKABLE_CODES imported at top of file)
+  // (resolveFallbackChain / FALLBACKABLE_CODES imported at top of file)
 
   // Active abort controller for stream cancellation
   let activeAbortController: AbortController | null = null
@@ -259,21 +263,30 @@ export const createAIAgent = (
     if (first.decision.response.action !== 'error') return first
     if (!FALLBACKABLE_CODES.has(first.decision.response.code)) return first
 
-    const fallback = resolveModelFallback(effectiveModel, config.modelFallback)
-    if (!fallback) return first
-
-    if (onEvalEvent) {
-      onEvalEvent(config.name, {
-        kind: 'model_fallback',
-        preferred: effectiveModel,
-        effective: fallback,
-        reason: 'preferred_unavailable',
-      })
+    // Walk the fallback chain. Each element is a fresh evaluate() call.
+    // Stop on the first success OR on any non-fallbackable error (auth,
+    // bad_request, etc.) — we don't want to keep burning calls on a config
+    // problem. Chain length is the user-owned retry budget.
+    const chain = resolveFallbackChain(effectiveModel, currentModelFallback)
+    let last = first
+    for (const candidate of chain) {
+      if (onEvalEvent) {
+        onEvalEvent(config.name, {
+          kind: 'model_fallback',
+          preferred: effectiveModel,
+          effective: candidate,
+          reason: 'preferred_unavailable',
+        })
+      }
+      const next = await evaluate(
+        contextResult, { ...evalConfig, model: candidate }, llmProvider, evalToolExec,
+        maxToolIterationsCfg, triggerRoomId, evalOpts,
+      )
+      if (next.decision.response.action !== 'error') return next
+      if (!FALLBACKABLE_CODES.has(next.decision.response.code)) return next
+      last = next
     }
-    return evaluate(
-      contextResult, { ...evalConfig, model: fallback }, llmProvider, evalToolExec,
-      maxToolIterationsCfg, triggerRoomId, evalOpts,
-    )
+    return last
   }
 
   const tryEvaluate = (triggerRoomId: string): void => {
@@ -514,6 +527,10 @@ export const createAIAgent = (
     getPersona: () => currentPersona,
     updateModel: (model: string) => { currentModel = model },
     getModel: () => currentModel,
+    updateModelFallback: (chain: ReadonlyArray<string> | undefined) => {
+      currentModelFallback = chain && chain.length > 0 ? [...chain] : undefined
+    },
+    getModelFallback: () => currentModelFallback,
     getTemperature: () => currentTemperature,
     updateTemperature: (t: number | undefined) => { currentTemperature = t },
     getHistoryLimit: () => historyLimit,
@@ -598,6 +615,9 @@ export const createAIAgent = (
       maxToolIterations: maxToolIterationsCfg,
       ...(currentWikiBindings.length > 0 ? { wikiBindings: [...currentWikiBindings] } : {}),
       ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
+      ...(currentModelFallback && currentModelFallback.length > 0
+        ? { modelFallback: [...currentModelFallback] }
+        : {}),
     }),
     cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },
     refreshTools: (support) => {

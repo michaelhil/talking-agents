@@ -105,6 +105,9 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
       persona: member.persona,
     }
     if (member.tools) (config as { tools?: ReadonlyArray<string> }).tools = member.tools
+    if (member.modelFallback && member.modelFallback.length > 0) {
+      config.modelFallback = member.modelFallback
+    }
     return config
   }
 

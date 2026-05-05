@@ -94,6 +94,7 @@ export const agentRoutes: RouteEntry[] = [
       if (aiAgent) {
         detail.persona = aiAgent.getPersona()
         detail.model = aiAgent.getModel()
+        detail.modelFallback = aiAgent.getModelFallback()
         detail.temperature = aiAgent.getTemperature()
         detail.historyLimit = aiAgent.getHistoryLimit()
         detail.thinking = aiAgent.getThinking()
@@ -224,6 +225,16 @@ export const agentRoutes: RouteEntry[] = [
             console.warn(`[agents] Model "${requestedModel}" not currently available — agent will use fallback when invoked.`)
           }
           aiAgent.updateModel(requestedModel)
+        }
+        if (body.modelFallback !== undefined) {
+          // Accepts: array | comma-separated string | null/empty (clears chain).
+          const raw = body.modelFallback
+          let chain: ReadonlyArray<string> | undefined
+          if (raw === null || raw === '') chain = undefined
+          else if (Array.isArray(raw)) chain = (raw as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0)
+          else if (typeof raw === 'string') chain = raw.split(',').map(s => s.trim()).filter(s => s.length > 0)
+          else chain = undefined
+          aiAgent.updateModelFallback(chain && chain.length > 0 ? chain : undefined)
         }
         if (body.temperature !== undefined) aiAgent.updateTemperature?.(body.temperature as number | undefined)
         if (body.historyLimit !== undefined) aiAgent.updateHistoryLimit?.(body.historyLimit as number)

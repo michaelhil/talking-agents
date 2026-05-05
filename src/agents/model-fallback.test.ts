@@ -1,45 +1,67 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveModelFallback, FALLBACKABLE_CODES } from './model-fallback.ts'
+import { resolveFallbackChain, FALLBACKABLE_CODES } from './model-fallback.ts'
 
-describe('resolveModelFallback', () => {
-  test('explicit fallback wins over implicit', () => {
-    expect(resolveModelFallback('gemini:gemini-2.5-pro', 'cerebras:qwen-3-235b'))
-      .toBe('cerebras:qwen-3-235b')
+describe('resolveFallbackChain', () => {
+  test('returns empty when no fallback configured', () => {
+    expect(resolveFallbackChain('gemini:gemini-2.5-flash')).toEqual([])
+    expect(resolveFallbackChain('gemini:gemini-2.5-flash', undefined)).toEqual([])
   })
 
-  test('implicit Pro→Flash when no explicit', () => {
-    expect(resolveModelFallback('gemini:gemini-2.5-pro'))
-      .toBe('gemini:gemini-2.5-flash')
+  test('string form normalises to length-1 chain', () => {
+    expect(resolveFallbackChain('gemini:gemini-2.5-flash', 'anthropic:claude-haiku-4-5'))
+      .toEqual(['anthropic:claude-haiku-4-5'])
   })
 
-  test('null when explicit equals primary (avoid retrying same model)', () => {
-    expect(resolveModelFallback('gemini:gemini-2.5-pro', 'gemini:gemini-2.5-pro'))
-      .toBeNull()
+  test('array form passes through in order', () => {
+    expect(resolveFallbackChain('gemini:gemini-2.5-flash',
+      ['anthropic:claude-haiku-4-5', 'openai:gpt-4o-mini']))
+      .toEqual(['anthropic:claude-haiku-4-5', 'openai:gpt-4o-mini'])
   })
 
-  test('null for models with no explicit and no implicit mapping', () => {
-    expect(resolveModelFallback('gemini:gemini-2.5-flash')).toBeNull()
-    expect(resolveModelFallback('anthropic:claude-sonnet-4-6')).toBeNull()
-    expect(resolveModelFallback('cerebras:qwen-3-235b')).toBeNull()
+  test('drops the primary model from the chain (no point retrying it)', () => {
+    expect(resolveFallbackChain('anthropic:claude-haiku-4-5',
+      ['anthropic:claude-haiku-4-5', 'openai:gpt-4o-mini']))
+      .toEqual(['openai:gpt-4o-mini'])
   })
 
-  test('explicit empty string treated as no explicit (use implicit if any)', () => {
-    expect(resolveModelFallback('gemini:gemini-2.5-pro', ''))
-      .toBe('gemini:gemini-2.5-flash')
+  test('drops duplicate fallbacks (first occurrence wins)', () => {
+    expect(resolveFallbackChain('gemini:gemini-2.5-flash',
+      ['anthropic:claude-haiku-4-5', 'openai:gpt-4o-mini', 'anthropic:claude-haiku-4-5']))
+      .toEqual(['anthropic:claude-haiku-4-5', 'openai:gpt-4o-mini'])
+  })
+
+  test('drops empty strings', () => {
+    expect(resolveFallbackChain('gemini:gemini-2.5-flash',
+      ['', 'anthropic:claude-haiku-4-5', '   ']))
+      .toEqual(['anthropic:claude-haiku-4-5'])
+  })
+
+  test('empty string fallback returns empty chain', () => {
+    expect(resolveFallbackChain('gemini:gemini-2.5-flash', '')).toEqual([])
+  })
+
+  test('chain that is entirely the primary returns empty', () => {
+    expect(resolveFallbackChain('anthropic:claude-haiku-4-5',
+      ['anthropic:claude-haiku-4-5']))
+      .toEqual([])
   })
 })
 
 describe('FALLBACKABLE_CODES', () => {
-  test('includes the three transient upstream codes', () => {
+  test('includes upstream + per-provider account-state codes', () => {
+    // Transient upstream:
     expect(FALLBACKABLE_CODES.has('rate_limited')).toBe(true)
     expect(FALLBACKABLE_CODES.has('provider_down')).toBe(true)
     expect(FALLBACKABLE_CODES.has('network')).toBe(true)
+    // Per-provider state (credit-out, account-gated model, quota): the
+    // next chain element is on a different provider with different
+    // account state, so retry there has a chance.
+    expect(FALLBACKABLE_CODES.has('model_unavailable')).toBe(true)
   })
-  test('excludes config-level errors', () => {
+  test('excludes auth (router pre-filters keyless providers)', () => {
     expect(FALLBACKABLE_CODES.has('no_api_key')).toBe(false)
-    expect(FALLBACKABLE_CODES.has('model_unavailable')).toBe(false)
   })
-  test('excludes agent-side errors', () => {
+  test('excludes agent-side errors that would repeat on any provider', () => {
     expect(FALLBACKABLE_CODES.has('tool_loop_exceeded')).toBe(false)
     expect(FALLBACKABLE_CODES.has('empty_response')).toBe(false)
     expect(FALLBACKABLE_CODES.has('tools_unavailable')).toBe(false)
