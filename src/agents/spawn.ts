@@ -206,9 +206,19 @@ export const spawnAIAgent = async (
   // agentId is fixed up-front so the bound provider can carry it before
   // createAIAgent is called (resolveAgentTools needs the provider too).
   const agentId = spawnOptions?.overrideId ?? crypto.randomUUID()
+  // Per-agent one-shot dedup: emit model_fallback only when the effective
+  // target CHANGES (or after recovery — preferred served successfully). A
+  // primary stuck in backoff would otherwise emit a notice on every eval.
+  // The per-(agentId, provider) WS dedup window is 5s; this layer is
+  // additionally per-target so a long outage produces ONE notice, not one
+  // per call.
+  let lastFallbackTarget: string | null = null
   const onChainSwitch = spawnOptions?.onEvalEvent
-    ? (preferred: string, effective: string, reason: string) =>
+    ? (preferred: string, effective: string, reason: string) => {
+        if (lastFallbackTarget === effective) return
+        lastFallbackTarget = effective
         spawnOptions.onEvalEvent!(config.name, { kind: 'model_fallback', preferred, effective, reason })
+      }
     : undefined
   const llmProvider: LLMProvider = llmService.bound({
     source: 'agent',

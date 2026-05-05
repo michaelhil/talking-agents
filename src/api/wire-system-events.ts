@@ -169,17 +169,15 @@ export const wireSystemEvents = (
     })
   })
 
-  system.setOnProviderAllFailed((agentId, model, attempts, summary) => {
-    broadcast({
-      type: 'provider_all_failed',
-      agentId,
-      agentName: agentNameFor(agentId) ?? null,
-      model, attempts,
-      primaryCode: summary.primaryCode,
-      primaryReason: summary.primaryReason,
-      remediation: summary.remediation,
-    })
-  })
+  // provider_all_failed is intentionally NOT broadcast to the UI. It fires
+  // for every router-level model exhaustion — including the common case
+  // where LLMService rescues the call by walking the system fallback chain.
+  // Broadcasting it produced false-alarm warnings on every successful
+  // fallback. The user-visible signals are now:
+  //   • model_fallback EvalEvent — soft rescue ("falling back from X to Y")
+  //   • agent error message in chat — hard failure (chain exhausted)
+  // The setter is left in place so observability sinks (logging) can still
+  // subscribe; only the WS broadcast is removed.
 
   system.setOnProviderStreamFailed((agentId, model, provider, reason) => {
     broadcast({

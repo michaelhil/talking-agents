@@ -497,50 +497,6 @@ const handlers: Handlers = {
     showToast(document.body, `${who}now using ${label}`, { type: 'success', position: 'fixed' })
   },
 
-  provider_all_failed(msg) {
-    const now = Date.now()
-    $lastProviderEvent.set({ ...msg, at: now })
-    if (msg.agentId) {
-      const pending = $pendingModelChanges.get()[msg.agentId]
-      if (pending && pending.model === msg.model) {
-        const { [msg.agentId]: _removed, ...rest } = $pendingModelChanges.get()
-        $pendingModelChanges.set(rest)
-      }
-    }
-    // Dedup identical (agent, model, primaryCode) failures within 5s. Without
-    // this an agent that retries fast on a flaky upstream stacks the toast
-    // queue with the same message.
-    // Push the failure into the agent's warnings so the thinking indicator
-    // carries the reason inline rather than evaporating with the toast.
-    // This is the bridge between "send fired" and "result vanished" — the
-    // user can see what happened even after the toast fades.
-    if (msg.agentId) {
-      const existing = $agentWarnings.get()[msg.agentId] ?? []
-      // Two-tier note: headline (primary + remediation) + per-attempt
-      // detail. The detail tier preserves what each upstream actually
-      // said — HTTP status, retry-after, body snippet — so the user can
-      // tell "gemini 503 capacity, anthropic no key" at a glance instead
-      // of just "all providers failed".
-      const headline = msg.remediation
-        ? `${msg.primaryReason || 'all providers failed'} — ${msg.remediation}`
-        : (msg.primaryReason || 'all providers failed')
-      const attemptLines = msg.attempts && msg.attempts.length > 0
-        ? msg.attempts.map(a => `  · ${a.provider}: ${a.reason}`).join('\n')
-        : ''
-      const note = attemptLines ? `${headline}\n${attemptLines}` : headline
-      $agentWarnings.setKey(msg.agentId, [...existing, note])
-    }
-    if (!shouldEmitAllFailed(msg.agentId, msg.model, msg.primaryCode, now)) return
-    const who = msg.agentName ? `${msg.agentName}: ` : ''
-    // Two-line toast: what (primary reason) + what to do (remediation).
-    // Falls back gracefully on older payloads without the new fields.
-    const reason = msg.primaryReason || msg.attempts.map(a => a.provider).join(', ') || 'no eligible providers'
-    const text = msg.remediation
-      ? `${who}${msg.model}: ${reason} — ${msg.remediation}`
-      : `${who}${msg.model}: ${reason}`
-    showToast(document.body, text, { type: 'error', position: 'fixed' })
-  },
-
   provider_stream_failed(msg) {
     const now = Date.now()
     $lastProviderEvent.set({ ...msg, at: now })
