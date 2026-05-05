@@ -141,21 +141,33 @@ export const bootstrap = async (): Promise<void> => {
   // Bundled example scripts are loaded read-only from examples/scripts/ via
   // ScriptStore's extraSourceDirs (wired in main.ts). Nothing is copied into
   // $SAMSINN_HOME/scripts/ — that directory holds user-authored scripts only.
-  // Name collisions across the two directories throw at boot so stale
-  // hand-copied bundled examples are surfaced loudly.
   //
-  // One-shot migration: drop the old seeder's sidecar if present. Existing
-  // user copies of bundled examples in $SAMSINN_HOME/scripts/ stay; if they
-  // collide with the bundled name they'll cause boot to refuse and the
-  // operator removes the stale copy.
+  // One-shot migration for installs that ran the OLD seeder (which copied
+  // bundled examples into $SAMSINN_HOME/scripts/). For each bundled example,
+  // if the user-dir copy is byte-identical to the bundled one, delete it (it
+  // was a seed, not an edit). If contents differ, leave it alone — the user
+  // edited it; the ScriptStore's collision detection will throw at boot with
+  // both paths and the user can rename or delete the stale one. Sidecar from
+  // the old seeder is removed unconditionally.
   try {
-    const sidecar = resolve(sharedPaths.scripts(), '.seeded.json')
-    if (existsSync(sidecar)) {
-      const { rm } = await import('node:fs/promises')
-      await rm(sidecar, { force: true })
-      console.log(`[scripts] removed stale seeder sidecar at ${sidecar}`)
+    const { rm, readFile, readdir } = await import('node:fs/promises')
+    const userScriptsDir = sharedPaths.scripts()
+    const bundledDir = resolve(process.cwd(), 'examples', 'scripts')
+    const sidecar = resolve(userScriptsDir, '.seeded.json')
+    if (existsSync(sidecar)) await rm(sidecar, { force: true })
+    let bundledNames: string[] = []
+    try { bundledNames = (await readdir(bundledDir)).filter(n => n.endsWith('.md')) } catch { /* no bundled */ }
+    let removed = 0
+    for (const name of bundledNames) {
+      const userPath = resolve(userScriptsDir, name)
+      if (!existsSync(userPath)) continue
+      try {
+        const [a, b] = await Promise.all([readFile(userPath, 'utf-8'), readFile(resolve(bundledDir, name), 'utf-8')])
+        if (a === b) { await rm(userPath, { force: true }); removed++ }
+      } catch { /* read failure → leave alone */ }
     }
-  } catch { /* best-effort; harmless if it fails */ }
+    if (removed > 0) console.log(`[scripts] migration: removed ${removed} stale seeded copies (byte-identical to bundled)`)
+  } catch { /* best-effort */ }
 
   // === Process-wide built-in tools (no per-instance state) ===
   // Anything that doesn't bind to a per-instance House registers ONCE here.
