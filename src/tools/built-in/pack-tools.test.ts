@@ -181,6 +181,48 @@ describe('uninstall_pack', () => {
     const result = await uninstall.execute({ name: 'nope' }, CTX)
     expect(result.success).toBe(false)
   })
+
+  it('scrubs pack from rooms.activePacks atomically before tearing down registry', async () => {
+    const env = await makeDeps()
+    parent = env.parent
+    const url = await buildRepo(env.parent, 'atc')
+
+    // Track scrubbed rooms via the wired callback. Mirrors what
+    // bootstrap.ts plumbs as crossInstanceScrubActivePacks.
+    const fakeRooms = new Map<string, string[]>([
+      ['room-a', ['atc', 'cafes']],
+      ['room-b', ['atc']],
+      ['room-c', ['cafes']],            // doesn't have atc — should NOT appear in scrub list
+    ])
+    const scrubbed: { roomId: string; activePacks: ReadonlyArray<string> }[] = []
+    const depsWithScrub: PackToolsDeps = {
+      ...env.deps,
+      scrubActivePacks: (ns: string) => {
+        for (const [roomId, packs] of fakeRooms) {
+          if (!packs.includes(ns)) continue
+          const next = packs.filter(p => p !== ns)
+          fakeRooms.set(roomId, next)
+          scrubbed.push({ roomId, activePacks: next })
+        }
+        return scrubbed
+      },
+    }
+
+    const install = createInstallPackTool(depsWithScrub)
+    const uninstall = createUninstallPackTool(depsWithScrub)
+    await install.execute({ source: url, name: 'atc' }, CTX)
+
+    const result = await uninstall.execute({ name: 'atc' }, CTX)
+    expect(result.success).toBe(true)
+    // Two rooms had atc active; one didn't — only the affected two
+    // are reported.
+    expect(scrubbed.map(s => s.roomId).sort()).toEqual(['room-a', 'room-b'])
+    expect(fakeRooms.get('room-a')).toEqual(['cafes'])
+    expect(fakeRooms.get('room-b')).toEqual([])
+    expect(fakeRooms.get('room-c')).toEqual(['cafes']) // untouched
+    // Result body carries the audit list for the WS broadcast layer.
+    expect((result.data as { scrubbedRooms: unknown }).scrubbedRooms).toEqual(scrubbed)
+  })
 })
 
 describe('update_pack', () => {

@@ -62,6 +62,14 @@ export interface PackToolsDeps {
   readonly skillStore: SkillStore
   readonly refreshAllAgentTools: RefreshAllFn
   readonly notifyPacksChanged?: NotifyPacksChanged
+  // Optional: list rooms + scrub activePacks on uninstall. When wired,
+  // uninstall_pack atomically removes the pack's namespace from every
+  // room's activePacks list before unregistering, so no room ends up
+  // referencing a now-deleted pack. Without this, the scrub is skipped
+  // (tests / MCP-only mode where House isn't in scope — no rooms to
+  // scrub anyway).
+  readonly scrubActivePacks?: (packNamespace: string) =>
+    | { roomId: string; activePacks: ReadonlyArray<string> }[]
 }
 
 // --- URL resolution ---
@@ -359,30 +367,63 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
       return { success: false, error: `Pack "${namespace}" is not installed` }
     }
 
+    // Step 1: scrub activePacks across every room before tearing down the
+    // registry. Order matters — once tools/skills are unregistered, an
+    // agent eval against an active room with a stale activePacks entry
+    // would see the pack's resolved-to-empty surface and behave oddly.
+    // Scrubbing first means rooms transition cleanly from "active with
+    // tools" to "no longer active" with no intermediate broken state.
+    const scrubbed = deps.scrubActivePacks?.(namespace) ?? []
+
+    // Step 2: registry teardown. unregisterByPack returns the keys that
+    // were removed so we can report and audit. Both are synchronous so
+    // there's no half-state window between them.
     const removedTools = deps.toolRegistry.unregisterByPack(namespace)
     const removedSkills = deps.skillStore.removeByPack(namespace)
 
+    // Step 3: refresh agent surfaces so live evals see the new state on
+    // their next call. refreshTools is idempotent; an error here means
+    // some agent's tool list is stale until next spawn — log loudly,
+    // don't fail the uninstall (the registry teardown already succeeded
+    // and rolling back would leave a worse partial state).
     try {
       await deps.refreshAllAgentTools()
     } catch (err) {
       console.error(`[packs] refreshAllAgentTools failed after uninstall "${namespace}":`, err)
     }
+
+    // Step 4: notify clients of activation scrubs first (so per-room UIs
+    // refresh before the global packs panel does), then the global change.
+    // The order shows users "this room lost the pack" before "the pack
+    // is gone" rather than the reverse confusing sequence.
     deps.notifyPacksChanged?.({
       action: 'uninstalled', namespace,
       tools: removedTools, skills: removedSkills,
     })
 
+    // Step 5: rm. If this fails the runtime state is consistent (registry
+    // is clean, rooms are scrubbed, agents refreshed) but the directory
+    // lingers — operator can rm by hand. Surface as a partial success so
+    // the caller knows manual cleanup is needed.
     const rm = await $`rm -rf ${dirPath}`.quiet().nothrow()
     if (rm.exitCode !== 0) {
       return {
         success: false,
-        error: `Unregistered from runtime but failed to delete directory: ${rm.stderr.toString().trim()}`,
+        error: `Unregistered from runtime + scrubbed ${scrubbed.length} room(s), but failed to delete directory: ${rm.stderr.toString().trim()}`,
       }
     }
 
     return {
       success: true,
-      data: { namespace, removedTools, removedSkills },
+      data: {
+        namespace,
+        removedTools,
+        removedSkills,
+        // Diagnostic: which rooms were scrubbed and what their new
+        // activePacks lists look like. Useful for auditing + the WS
+        // broadcast layer that needs to fan out per-room events.
+        scrubbedRooms: scrubbed,
+      },
     }
   },
 })

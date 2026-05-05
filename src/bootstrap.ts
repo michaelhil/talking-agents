@@ -395,12 +395,44 @@ export const bootstrap = async (): Promise<void> => {
     ))
   }
   if (packsEnabled) {
+    // Cross-instance scrub: when a pack is uninstalled, remove its
+    // namespace from every room.activePacks across every live instance,
+    // and broadcast pack_activation_changed per affected room. Returns
+    // the audit list so the uninstall response can include it.
+    const crossInstanceScrubActivePacks = (
+      packNamespace: string,
+    ): { roomId: string; activePacks: ReadonlyArray<string> }[] => {
+      const out: { roomId: string; activePacks: ReadonlyArray<string> }[] = []
+      for (const meta of registry.list()) {
+        const sys = registry.tryGetLive(meta.id)
+        if (!sys) continue
+        for (const profile of sys.house.listAllRooms()) {
+          const room = sys.house.getRoom(profile.id)
+          if (!room) continue
+          const before = room.getActivePacks()
+          if (!before.includes(packNamespace)) continue
+          const after = before.filter(p => p !== packNamespace)
+          room.setActivePacks(after)
+          out.push({ roomId: profile.id, activePacks: after })
+          // Per-room WS event so any open packs panel re-renders. Best-
+          // effort — broadcast layer may not be wired in tests / MCP-only.
+          try {
+            wsManager?.broadcastToInstance(meta.id, {
+              type: 'pack_activation_changed', roomId: profile.id, activePacks: after,
+            })
+          } catch { /* ignore */ }
+        }
+      }
+      return out
+    }
+
     shared.sharedToolRegistry.registerAll(createPackTools({
       packsDir: sharedPaths.packs(),
       toolRegistry: shared.sharedToolRegistry,
       skillStore: shared.sharedSkillStore,
       refreshAllAgentTools: crossInstanceRefreshAllAgentTools,
       notifyPacksChanged: crossInstanceNotifyPacksChanged,
+      scrubActivePacks: crossInstanceScrubActivePacks,
     }))
   }
 
