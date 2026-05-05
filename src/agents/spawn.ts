@@ -12,12 +12,13 @@ import type { House, Room } from '../core/types/room.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
 import type { LLMService } from '../llm/llm-service.ts'
 import type { MessageTarget } from '../core/types/messaging.ts'
-import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult } from '../core/types/tool.ts'
+import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolRegistryEntry, ToolResult } from '../core/types/tool.ts'
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import { callLLM, streamLLM } from './evaluation.ts'
 import { addAgentToRoom } from './actions.ts'
 import { toolsToDefinitions } from '../llm/tool-capability.ts'
+import { effectiveActivePackSet } from '../packs/activation.ts'
 
 // --- Tool executor ---
 
@@ -30,6 +31,27 @@ import { toolsToDefinitions } from '../llm/tool-capability.ts'
 // but agents can be members of multiple rooms. A spawn-time intersection
 // would freeze the whitelist to whichever room the agent first joined.
 export type GetAllowedToolsForRoom = (roomId: string) => ReadonlySet<string> | null
+
+// Maps a registered tool to the pack that owns it. The mapping is the source
+// of truth for "is this tool in the active surface for room X":
+//
+//   built-in        → 'core'   (immutable, always active)
+//   external        → 'local'  (drop-in dir, default-active)
+//   skill-bundled   → 'core' if no pack, else the pack the skill came from
+//   pack-bundled    → the pack namespace (e.g. 'aviation')
+//
+// Skills installed via packs already get kind='pack-bundled' on their tools
+// in src/skills/loader.ts, so 'skill-bundled' here means a standalone skill
+// not bundled into a pack — it's part of the implicit user surface, which
+// the resolver currently maps to 'local' if a path is set, else 'core'.
+const packForToolEntry = (entry: ToolRegistryEntry): string => {
+  switch (entry.source.kind) {
+    case 'built-in': return 'core'
+    case 'external': return 'local'
+    case 'pack-bundled': return entry.source.pack ?? 'local'
+    case 'skill-bundled': return entry.source.pack ?? 'local'
+  }
+}
 
 const createToolExecutor = (
   registry: ToolRegistry,
@@ -97,7 +119,19 @@ export const __testSeam = { createToolExecutor }
 
 export interface AgentToolSupport {
   readonly toolExecutor?: ToolExecutor
+  // Static tool definitions — the maximal set across all rooms. Used as a
+  // fallback when no resolver is wired (tests, MCP-only mode, room not
+  // found). Pack-aware spawns also set resolveToolDefinitions, which the
+  // agent prefers per eval.
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
+  // Per-eval tool surface resolver. Filters definitions + executor allow-set
+  // by the active packs in `roomId`. Returns null when the room is unknown
+  // (caller falls back to the static toolDefinitions).
+  //
+  // This is the structural fix for tool-context bloat: the LLM only sees
+  // tools from packs the operator has activated in the current room, plus
+  // the implicit-active core + local packs.
+  readonly resolveToolDefinitions?: (roomId: string) => ReadonlyArray<ToolDefinition> | null
 }
 
 const warnMissingTools = (agentName: string, requested: ReadonlyArray<string>, registry: ToolRegistry): void => {
@@ -106,10 +140,23 @@ const warnMissingTools = (agentName: string, requested: ReadonlyArray<string>, r
     console.warn(`[spawn] Agent "${agentName}": tools not found in registry: ${missing.join(', ')}`)
 }
 
+// Resolves a room → pack-activation view. Used by the per-eval tool surface
+// resolver to filter the static tool list down to tools whose owning pack is
+// active in the current room. Returns undefined when the room is unknown
+// (caller falls through to the static toolDefinitions).
+export type GetRoomActivation = (roomId: string) =>
+  | { readonly getActivePacks: () => ReadonlyArray<string> }
+  | undefined
+
 // Build tool support — always uses native tool calling.
 // The pass tool is auto-injected so all agents can decline to respond.
 // `seed`, when provided, is threaded into every tool-initiated LLM sub-call
 // so reproducibility extends past the agent's main turn.
+//
+// `getRoomActivation`, when provided, enables the per-room tool-surface
+// filter (the bloat fix): the resolver reads the room's active packs and
+// the LLM only sees definitions owned by those packs. Without it, the
+// behavior is unchanged from pre-pack days.
 export const buildToolSupport = async (
   toolNames: ReadonlyArray<string>,
   registry: ToolRegistry,
@@ -118,6 +165,7 @@ export const buildToolSupport = async (
   maxResultChars?: number,
   seed?: number,
   getAllowedToolsForRoom?: GetAllowedToolsForRoom,
+  getRoomActivation?: GetRoomActivation,
 ): Promise<AgentToolSupport> => {
   // Always include the pass tool (auto-injected for all agents)
   const allToolNames = toolNames.includes('pass') ? toolNames : [...toolNames, 'pass']
@@ -144,7 +192,34 @@ export const buildToolSupport = async (
     maxResultChars,
   }
   const executor = createToolExecutor(registry, allToolNames, lazyContext, getAllowedToolsForRoom)
-  return { toolExecutor: executor, toolDefinitions: toolsToDefinitions(availableTools) }
+
+  const support: { -readonly [K in keyof AgentToolSupport]: AgentToolSupport[K] } = {
+    toolExecutor: executor,
+    toolDefinitions: toolsToDefinitions(availableTools),
+  }
+
+  if (getRoomActivation) {
+    // Per-eval resolver: filter the static availableTools by the room's
+    // active pack set. Implicit-active packs ('core', 'local') ensure
+    // built-in / drop-in tools are always present. The 'pass' tool is in
+    // 'core' and therefore always visible.
+    support.resolveToolDefinitions = (roomId: string): ReadonlyArray<ToolDefinition> | null => {
+      const room = getRoomActivation(roomId)
+      if (!room) return null
+      const active = effectiveActivePackSet(room)
+      const filtered: Tool[] = []
+      for (const tool of availableTools) {
+        const entry = registry.getEntry(tool.name)
+        // Defensive: an entry should exist (we just resolved this name above),
+        // but if registry races (hot reload) drop the tool rather than crash.
+        if (!entry) continue
+        if (active.has(packForToolEntry(entry))) filtered.push(tool)
+      }
+      return toolsToDefinitions(filtered)
+    }
+  }
+
+  return support
 }
 
 const resolveAgentTools = async (
@@ -153,6 +228,7 @@ const resolveAgentTools = async (
   toolRegistry: ToolRegistry | undefined,
   agentRef: { id: string; name: string },
   getAllowedToolsForRoom?: GetAllowedToolsForRoom,
+  getRoomActivation?: GetRoomActivation,
 ): Promise<AgentToolSupport> => {
   const requestedTools = config.tools ?? toolRegistry?.list().map(t => t.name) ?? []
   if (!toolRegistry) return {}
@@ -161,7 +237,16 @@ const resolveAgentTools = async (
     warnMissingTools(config.name, requestedTools, toolRegistry)
   }
 
-  return buildToolSupport(requestedTools, toolRegistry, agentRef, llmProvider, config.maxToolResultChars, config.seed, getAllowedToolsForRoom)
+  return buildToolSupport(
+    requestedTools,
+    toolRegistry,
+    agentRef,
+    llmProvider,
+    config.maxToolResultChars,
+    config.seed,
+    getAllowedToolsForRoom,
+    getRoomActivation,
+  )
 }
 
 // --- Spawn AI Agent ---
@@ -181,6 +266,12 @@ export interface SpawnOptions {
   // intersects the agent's spawn-time toolset with this room's skill
   // whitelist on every call. See createToolExecutor for semantics.
   readonly getAllowedToolsForRoom?: GetAllowedToolsForRoom
+  // Per-room pack-activation resolver. When provided, the LLM tool surface
+  // is filtered per eval to tools owned by packs active in the trigger
+  // room (plus implicit-active 'core' + 'local'). This is the structural
+  // fix for tool-context bloat — without it, every agent sees every tool
+  // the registry has registered.
+  readonly getRoomActivation?: GetRoomActivation
   // Per-call effective-model resolver (Phase 4 / commit-pending). Forwarded
   // verbatim into createAIAgent's options so each eval picks an effective
   // model from the user's preferred + currently-available providers, without
@@ -291,7 +382,14 @@ export const spawnAIAgent = async (
 
   // Resolve tool support — agentRef filled after agent creation (lazy context)
   const agentRef = { id: '', name: '' }
-  const toolSupport = await resolveAgentTools(config, llmProvider, toolRegistry, agentRef, spawnOptions?.getAllowedToolsForRoom)
+  const toolSupport = await resolveAgentTools(
+    config,
+    llmProvider,
+    toolRegistry,
+    agentRef,
+    spawnOptions?.getAllowedToolsForRoom,
+    spawnOptions?.getRoomActivation,
+  )
 
   const agent = createAIAgent(config, llmProvider, onDecision, {
     ...toolSupport,

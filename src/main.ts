@@ -557,6 +557,13 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
         toolNames, toolRegistry,
         { id: ai.id, name: ai.name, currentModel: () => ai.getModel() },
         llm,
+        undefined,
+        undefined,
+        getAllowedToolsForRoom,
+        // Pack-aware filter must survive a hot reload — without re-passing
+        // it here, refreshing tools (e.g. after install_pack) would silently
+        // erase the resolver and revert the agent to seeing every tool.
+        (roomId: string) => house.getRoom(roomId),
       )
       ai.refreshTools(support)
     }
@@ -640,6 +647,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       getWikisCatalog: buildWikisCatalogForAgent,
       getScriptContext: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
       getAllowedToolsForRoom,
+      // Pack-aware tool surface filter — the LLM only sees tools owned by
+      // packs active in the trigger room. Returns the Room directly; the
+      // resolver only needs getActivePacks().
+      getRoomActivation: (roomId: string) => house.getRoom(roomId),
       onEvalEvent: evalEvent.proxy,
       resolveEffectiveModel,
     })

@@ -93,7 +93,11 @@ export interface AIAgent extends Agent {
   readonly updateThinking?: (enabled: boolean) => void
   readonly getTools: () => ReadonlyArray<string> | undefined
   readonly updateTools?: (tools: ReadonlyArray<string>) => void
-  readonly refreshTools?: (support: { toolExecutor?: ToolExecutor; toolDefinitions?: ReadonlyArray<ToolDefinition> }) => void
+  readonly refreshTools?: (support: {
+    toolExecutor?: ToolExecutor
+    toolDefinitions?: ReadonlyArray<ToolDefinition>
+    resolveToolDefinitions?: (roomId: string) => ReadonlyArray<ToolDefinition> | null
+  }) => void
   // Context & Prompts toggles
   readonly getIncludePrompts: () => Required<IncludePrompts>
   readonly updateIncludePrompts: (partial: IncludePrompts) => void

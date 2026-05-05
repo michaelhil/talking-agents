@@ -63,6 +63,11 @@ export type { Decision, OnDecision } from './evaluation.ts'
 export interface AIAgentOptions {
   readonly toolExecutor?: ToolExecutor
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
+  // Per-eval tool-surface resolver — when provided, the agent calls this
+  // before each LLM request and the model sees only pack-filtered tools for
+  // the trigger room. Returns null when the room is unknown (agent falls
+  // back to the static toolDefinitions). See spawn.ts AgentToolSupport.
+  readonly resolveToolDefinitions?: (roomId: string) => ReadonlyArray<ToolDefinition> | null
   readonly getHousePrompt?: () => string
   readonly getResponseFormat?: () => string
   readonly getCompressedIds?: (roomId: string) => ReadonlySet<string>
@@ -117,6 +122,7 @@ export const createAIAgent = (
   let historyLimit = config.historyLimit ?? DEFAULTS.historyLimit
   let toolExecutor = options?.toolExecutor
   let toolDefinitions = options?.toolDefinitions
+  let resolveToolDefinitions = options?.resolveToolDefinitions
   let currentTools: ReadonlyArray<string> | undefined = config.tools
   let currentTags: ReadonlyArray<string> = config.tags ?? []
   let currentWikiBindings: ReadonlyArray<string> = config.wikiBindings ?? []
@@ -234,7 +240,13 @@ export const createAIAgent = (
       maxToolIterations: maxToolIterationsCfg,
     }
     const evalToolExec = includeTools ? toolExecutor : undefined
-    const evalToolDefs = includeTools ? toolDefinitions : undefined
+    // Per-room tool surface: prefer the resolver (pack-aware filter) when
+    // wired; fall back to static toolDefinitions when not (tests, MCP-only,
+    // unknown room — the resolver returns null and we use the maximal set).
+    const resolvedDefs = includeTools && resolveToolDefinitions
+      ? resolveToolDefinitions(triggerRoomId)
+      : null
+    const evalToolDefs = includeTools ? (resolvedDefs ?? toolDefinitions) : undefined
     const evalEventCb = onEvalEvent
       ? (event: EvalEvent) => onEvalEvent(config.name, event)
       : undefined
@@ -290,7 +302,13 @@ export const createAIAgent = (
     const abortController = new AbortController()
     activeAbortController = abortController
 
-    const effectiveToolDefs = includeTools ? toolDefinitions : undefined
+    // Pack-aware tool count for the context_ready event — same resolution
+    // path the eval will take, so the UI's tool-count badge matches what
+    // the LLM actually sees.
+    const evalResolvedDefs = includeTools && resolveToolDefinitions
+      ? resolveToolDefinitions(triggerRoomId)
+      : null
+    const effectiveToolDefs = includeTools ? (evalResolvedDefs ?? toolDefinitions) : undefined
 
     // Emit context_ready + any context builder warnings before LLM call
     if (onEvalEvent) {
@@ -577,6 +595,7 @@ export const createAIAgent = (
     refreshTools: (support) => {
       if (support.toolExecutor !== undefined) toolExecutor = support.toolExecutor
       if (support.toolDefinitions !== undefined) toolDefinitions = support.toolDefinitions
+      if (support.resolveToolDefinitions !== undefined) resolveToolDefinitions = support.resolveToolDefinitions
     },
     // Manual-mode primitive: append unseen messages to the room's history
     // without triggering eval or compression. `extractProfile` still runs so
