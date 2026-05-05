@@ -70,6 +70,11 @@ export interface PackToolsDeps {
   // scrub anyway).
   readonly scrubActivePacks?: (packNamespace: string) =>
     | { roomId: string; activePacks: ReadonlyArray<string> }[]
+  // Optional: re-scan <pack>/geodata/*.geojson across all installed
+  // packs. Called on install/update/uninstall so newly-bundled (or
+  // newly-removed) geodata categories show up in geo_lookup + the
+  // overview UI without a server restart.
+  readonly refreshPackGeodata?: () => Promise<void>
 }
 
 // --- URL resolution ---
@@ -264,6 +269,10 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
 
     try {
       await deps.refreshAllAgentTools()
+      if (deps.refreshPackGeodata) {
+        try { await deps.refreshPackGeodata() }
+        catch (err) { console.error('[packs] refreshPackGeodata failed:', err) }
+      }
     } catch (err) {
       console.error(`[packs] refreshAllAgentTools failed after install "${namespace}":`, err)
     }
@@ -341,6 +350,10 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
 
     try {
       await deps.refreshAllAgentTools()
+      if (deps.refreshPackGeodata) {
+        try { await deps.refreshPackGeodata() }
+        catch (err) { console.error('[packs] refreshPackGeodata failed:', err) }
+      }
     } catch (err) {
       console.error(`[packs] refreshAllAgentTools failed after update "${namespace}":`, err)
     }
@@ -406,6 +419,10 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
     // and rolling back would leave a worse partial state).
     try {
       await deps.refreshAllAgentTools()
+      if (deps.refreshPackGeodata) {
+        try { await deps.refreshPackGeodata() }
+        catch (err) { console.error('[packs] refreshPackGeodata failed:', err) }
+      }
     } catch (err) {
       console.error(`[packs] refreshAllAgentTools failed after uninstall "${namespace}":`, err)
     }

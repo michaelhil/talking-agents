@@ -447,6 +447,14 @@ export const bootstrap = async (): Promise<void> => {
       return out
     }
 
+    // Re-scan pack geodata after install/update/uninstall so new
+    // <pack>/geodata/*.geojson contents surface in geo_lookup + the
+    // overview UI without a server restart.
+    const refreshPackGeodataAfterMutation = async (): Promise<void> => {
+      const { refreshPackGeodata } = await import('./geo/pack-source.ts')
+      await refreshPackGeodata(sharedPaths.packs())
+    }
+
     shared.sharedToolRegistry.registerAll(createPackTools({
       packsDir: sharedPaths.packs(),
       toolRegistry: shared.sharedToolRegistry,
@@ -454,6 +462,7 @@ export const bootstrap = async (): Promise<void> => {
       refreshAllAgentTools: crossInstanceRefreshAllAgentTools,
       notifyPacksChanged: crossInstanceNotifyPacksChanged,
       scrubActivePacks: crossInstanceScrubActivePacks,
+      refreshPackGeodata: refreshPackGeodataAfterMutation,
     }))
   }
 
