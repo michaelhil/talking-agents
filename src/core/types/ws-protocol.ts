@@ -78,6 +78,9 @@ export type WSOutbound =
   | { readonly type: 'providers_changed'; readonly providers: ReadonlyArray<string> }
   // Fired after a pack is installed / updated / uninstalled. UI panels refresh.
   | { readonly type: 'packs_changed' }
+  // Fired after a room's activePacks list is replaced. UI updates the
+  // active-packs panel for that room without a full refetch.
+  | { readonly type: 'pack_activation_changed'; readonly roomId: string; readonly activePacks: ReadonlyArray<string> }
   // Fired after a wiki is created/updated/deleted/warmed/bound. UI panels refresh.
   | {
       readonly type: 'wiki_changed'

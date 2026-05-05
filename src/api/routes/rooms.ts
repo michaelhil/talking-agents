@@ -109,6 +109,55 @@ export const roomRoutes: RouteEntry[] = [
     },
   },
   {
+    // List packs activated in this room. Implicit-active packs ('core',
+    // 'local') are NOT included — those are always active and not under
+    // operator control.
+    method: 'GET',
+    pattern: /^\/api\/rooms\/([^/]+)\/packs$/,
+    handler: async (_req, match, { system }) => {
+      const name = decodeURIComponent(match[1]!)
+      const room = system.house.getRoom(name)
+      if (!room) return errorResponse(`Room "${name}" not found`, 404)
+      return json({ activePacks: room.getActivePacks() })
+    },
+  },
+  {
+    // Replace activation list. Validates each entry against installed packs;
+    // unknown namespaces fail the whole request (atomic — no partial sets).
+    // 'core' and 'local' are filtered from the input if present (they're
+    // always active and don't belong in the stored list).
+    method: 'PUT',
+    pattern: /^\/api\/rooms\/([^/]+)\/packs$/,
+    handler: async (req, match, { system, broadcast }) => {
+      const name = decodeURIComponent(match[1]!)
+      const room = system.house.getRoom(name)
+      if (!room) return errorResponse(`Room "${name}" not found`, 404)
+      const body = await parseBody(req) as { activePacks?: ReadonlyArray<unknown> } | null
+      const requested = Array.isArray(body?.activePacks)
+        ? (body!.activePacks as unknown[]).filter((v): v is string => typeof v === 'string')
+        : []
+      const filtered = requested.filter(p => p !== 'core' && p !== 'local')
+
+      // Validate against installed packs via the list_packs tool — same
+      // truth source the UI uses, no parallel scanner.
+      const listTool = system.toolRegistry.get('list_packs')
+      const installed = listTool
+        ? await listTool.execute({}, { callerId: 'api', callerName: 'api' })
+        : { success: false }
+      const installedSet = installed.success && Array.isArray(installed.data)
+        ? new Set((installed.data as Array<{ namespace: string }>).map(p => p.namespace))
+        : new Set<string>()
+      const unknown = filtered.filter(ns => !installedSet.has(ns))
+      if (unknown.length > 0) return errorResponse(`unknown pack namespaces: ${unknown.join(', ')}`, 400)
+
+      room.setActivePacks(filtered)
+      try {
+        broadcast({ type: 'pack_activation_changed', roomId: room.profile.id, activePacks: filtered })
+      } catch { /* ignore */ }
+      return json({ activePacks: room.getActivePacks() })
+    },
+  },
+  {
     method: 'GET',
     pattern: /^\/api\/rooms\/([^/]+)\/members$/,
     handler: (_req, match, { system }) => {
