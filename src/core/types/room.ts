@@ -53,6 +53,11 @@ export interface RoomState {
   readonly summaryConfig?: SummaryConfig
   readonly latestSummary?: string
   readonly wikiBindings?: ReadonlyArray<string>
+  // Pack namespaces activated in this room. Empty = no installed packs are
+  // active here (agent tool/skill/script surface = core + local only).
+  // Implicit-active packs ("core", "local") are NOT listed — they're always
+  // included by the resolver. See effectiveActivePacks() in src/packs/activation.ts.
+  readonly activePacks?: ReadonlyArray<string>
 }
 
 // === Room — self-contained component: stores messages and delivers to members ===
@@ -112,6 +117,13 @@ export interface Room {
   readonly getWikiBindings: () => ReadonlyArray<string>
   readonly setWikiBindings: (wikiIds: ReadonlyArray<string>) => void
 
+  // Active packs — namespaces of installed packs activated in this room.
+  // Default empty: agent sees core + local only (no bloat). Activation is
+  // additive across the persistent surface; "core" and "local" are implicit
+  // and not stored here.
+  readonly getActivePacks: () => ReadonlyArray<string>
+  readonly setActivePacks: (namespaces: ReadonlyArray<string>) => void
+
   // Snapshot restore — bypass delivery, populate state directly
   readonly injectMessages: (msgs: ReadonlyArray<Message>) => void
   readonly restoreState: (state: RoomRestoreParams) => void
@@ -126,6 +138,7 @@ export interface RoomRestoreParams {
   readonly summaryConfig?: SummaryConfig
   readonly latestSummary?: string
   readonly wikiBindings?: ReadonlyArray<string>
+  readonly activePacks?: ReadonlyArray<string>
 }
 
 // === CreateResult — returned when name uniqueness is enforced ===
