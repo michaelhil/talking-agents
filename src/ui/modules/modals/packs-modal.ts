@@ -30,13 +30,18 @@ export const openPacksModal = async (): Promise<void> => {
 
   await renderPacksInto(listEl)
 
-  // Re-render on packs_changed WS event. Remove listener when the overlay is
-  // detached from the DOM (via × click, overlay click-outside, or anything else).
+  // Re-render on either the global packs_changed event (install/update/
+  // uninstall) or the per-room pack_activation_changed event. The latter
+  // is fired only for the room currently selected in the panel — but the
+  // panel reads $selectedRoomId at render time, so an indiscriminate
+  // re-render is fine and keeps the dispatcher simple.
   const listener = (): void => { if (listEl.isConnected) void renderPacksInto(listEl) }
   window.addEventListener('packs-changed', listener)
+  window.addEventListener('pack-activation-changed', listener)
   const removalObserver = new MutationObserver(() => {
     if (!modal.overlay.isConnected) {
       window.removeEventListener('packs-changed', listener)
+      window.removeEventListener('pack-activation-changed', listener)
       removalObserver.disconnect()
     }
   })

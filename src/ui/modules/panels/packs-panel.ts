@@ -11,6 +11,7 @@
 // ============================================================================
 
 import { showToast } from '../toast.ts'
+import { $selectedRoomId, $rooms } from '../stores.ts'
 
 interface InstalledPack {
   namespace: string
@@ -26,6 +27,52 @@ interface RegistryPack {
   repoUrl: string
   description: string
   installed: boolean
+}
+
+// Per-room activation. Empty array when the room is fresh / unknown — the
+// panel uses this to decide which installed packs are toggled on.
+interface RoomActivation {
+  readonly roomId: string
+  readonly roomName: string
+  readonly activePacks: ReadonlyArray<string>
+}
+
+const fetchActivation = async (roomId: string): Promise<ReadonlyArray<string>> => {
+  try {
+    const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/packs`)
+    if (!res.ok) return []
+    const body = await res.json() as { activePacks?: ReadonlyArray<string> }
+    return body.activePacks ?? []
+  } catch { return [] }
+}
+
+const setActivation = async (
+  roomId: string,
+  activePacks: ReadonlyArray<string>,
+): Promise<{ ok: boolean; error?: string; activePacks?: ReadonlyArray<string> }> => {
+  const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/packs`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ activePacks }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: 'request failed' })) as { error?: string }
+    return { ok: false, error: body.error ?? 'request failed' }
+  }
+  const body = await res.json() as { activePacks: ReadonlyArray<string> }
+  return { ok: true, activePacks: body.activePacks }
+}
+
+// Resolve the room context the panel renders for. Selected room wins; if
+// no room is selected (sidebar root, agent selected), returns null and the
+// panel shows install/uninstall only — no activation column.
+const currentRoomActivation = async (): Promise<RoomActivation | null> => {
+  const roomId = $selectedRoomId.get()
+  if (!roomId) return null
+  const room = $rooms.get()[roomId]
+  if (!room) return null
+  const activePacks = await fetchActivation(roomId)
+  return { roomId, roomName: room.name, activePacks }
 }
 
 const fetchPacks = async (): Promise<InstalledPack[]> => {
@@ -70,17 +117,31 @@ const escapeHtml = (s: string): string =>
 
 export const renderPacksInto = async (container: HTMLElement): Promise<void> => {
   container.innerHTML = '<div class="text-xs text-text-muted px-3 py-2 italic">Loading…</div>'
-  // Fetch in parallel — installed list is local + fast; registry hits GitHub.
-  const [installed, registry] = await Promise.all([fetchPacks(), fetchRegistry()])
+  // Three parallel fetches: installed list (fast, local), registry (hits
+  // GitHub, may be slow), and per-room activation (fast, local — null when
+  // no room is selected).
+  const [installed, registry, activation] = await Promise.all([
+    fetchPacks(),
+    fetchRegistry(),
+    currentRoomActivation(),
+  ])
   container.innerHTML = ''
-  renderInstalledSection(container, installed)
+  renderInstalledSection(container, installed, activation)
   renderBrowseSection(container, registry)
 }
 
-const renderInstalledSection = (container: HTMLElement, packs: InstalledPack[]): void => {
+const renderInstalledSection = (
+  container: HTMLElement,
+  packs: InstalledPack[],
+  activation: RoomActivation | null,
+): void => {
   const header = document.createElement('div')
-  header.className = 'px-3 py-2 text-[11px] uppercase tracking-wide text-text-subtle border-b border-border bg-surface-muted'
-  header.textContent = `Installed (${packs.length})`
+  header.className = 'px-3 py-2 text-[11px] uppercase tracking-wide text-text-subtle border-b border-border bg-surface-muted flex items-center justify-between'
+  header.innerHTML = `<span>Installed (${packs.length})</span>${
+    activation
+      ? `<span class="text-[10px] normal-case tracking-normal text-text-muted">activation in <span class="text-text">${escapeHtml(activation.roomName)}</span></span>`
+      : `<span class="text-[10px] normal-case tracking-normal text-text-subtle">select a room to toggle activation</span>`
+  }`
   container.appendChild(header)
 
   if (packs.length === 0) {
@@ -91,21 +152,54 @@ const renderInstalledSection = (container: HTMLElement, packs: InstalledPack[]):
     return
   }
 
+  const activeSet = new Set(activation?.activePacks ?? [])
+
   for (const pack of packs) {
     const row = document.createElement('div')
     row.className = 'px-3 py-2 text-xs hover:bg-surface-muted flex items-center gap-2 border-b border-border'
     const label = pack.manifest.name ?? pack.namespace
     const desc = pack.manifest.description ?? ''
     const counts = `${pack.tools.length} tool${pack.tools.length === 1 ? '' : 's'}, ${pack.skills.length} skill${pack.skills.length === 1 ? '' : 's'}`
+    const isActive = activeSet.has(pack.namespace)
+    const toggleHtml = activation
+      ? `<label class="pack-toggle inline-flex items-center gap-1 cursor-pointer select-none px-2" title="Toggle activation in ${escapeHtml(activation.roomName)}">
+           <input type="checkbox" class="pack-toggle-input" ${isActive ? 'checked' : ''} />
+           <span class="text-[10px] text-text-subtle">${isActive ? 'active' : 'inactive'}</span>
+         </label>`
+      : ''
     row.innerHTML = `
       <div class="flex-1 min-w-0">
         <div class="text-text-strong font-medium truncate">${label}</div>
         <div class="text-text-muted truncate" title="${desc}">${desc || counts}</div>
         <div class="text-text-subtle text-[10px]">${counts}</div>
       </div>
+      ${toggleHtml}
       <button class="pack-update text-text-subtle hover:text-text px-2 py-1" title="Update (git pull)">↻</button>
       <button class="pack-uninstall text-text-subtle hover:text-danger px-2 py-1" title="Uninstall">✕</button>
     `
+
+    if (activation) {
+      const input = row.querySelector<HTMLInputElement>('.pack-toggle-input')
+      input?.addEventListener('change', async () => {
+        const next = input.checked
+          ? [...activation.activePacks.filter(p => p !== pack.namespace), pack.namespace]
+          : activation.activePacks.filter(p => p !== pack.namespace)
+        const result = await setActivation(activation.roomId, next)
+        if (!result.ok) {
+          // Revert UI on failure — server is the truth source.
+          input.checked = !input.checked
+          showToast(document.body, `Activation failed: ${result.error ?? 'unknown'}`, { type: 'error', position: 'fixed' })
+          return
+        }
+        showToast(
+          document.body,
+          `${pack.namespace}: ${input.checked ? 'activated' : 'deactivated'} in ${activation.roomName}`,
+          { type: 'success', position: 'fixed' },
+        )
+        // The pack-activation-changed WS event triggers re-render; no
+        // manual call needed.
+      })
+    }
     row.querySelector<HTMLButtonElement>('.pack-update')?.addEventListener('click', async () => {
       showToast(document.body, `${pack.namespace}: updating…`, { position: 'fixed' })
       const res = await fetch(`/api/packs/update/${encodeURIComponent(pack.namespace)}`, { method: 'POST' })

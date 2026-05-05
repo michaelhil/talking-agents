@@ -519,6 +519,15 @@ const handlers: Handlers = {
     window.dispatchEvent(new CustomEvent('packs-changed'))
   },
 
+  pack_activation_changed(msg) {
+    // A room's activePacks list was replaced. Packs panel re-renders the
+    // per-room toggle column. Keyed by roomId so unrelated rooms don't
+    // trigger a refetch.
+    window.dispatchEvent(new CustomEvent('pack-activation-changed', {
+      detail: { roomId: msg.roomId, activePacks: msg.activePacks },
+    }))
+  },
+
   wiki_changed(_msg) {
     // A wiki was created / updated / deleted / warmed / bound. Wikis panel
     // re-fetches /api/wikis on this event.
