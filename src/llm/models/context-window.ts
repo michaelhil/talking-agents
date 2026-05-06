@@ -145,6 +145,3 @@ export const getContextWindowSync = (providerName: string, modelId: string): Con
   if (hard) return { contextMax: hard, source: 'known_table' }
   return { contextMax: 0, source: 'unknown' }
 }
-
-// For tests only.
-export const clearContextCache = (): void => { cache.clear() }
