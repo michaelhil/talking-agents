@@ -18,7 +18,7 @@ knowledge graph.
 
 ## Status
 
-This document specifies **procmd v0.3**. Samsinn-side runtime support
+This document specifies **procmd v0.4**. Samsinn-side runtime support
 (executor tool, agent guardrail traversal, render integration) is out of
 scope for v0.2; see [Deferred](#deferred--out-of-scope-for-v02) at the
 bottom.
@@ -70,7 +70,7 @@ procedures use standard `[[wikilinks]]`.
 ```yaml
 ---
 type: procedure
-procedure-md: 0.3
+procedure-md: 0.4
 procedure-id: E-0
 title: Reactor Trip or Safety Injection
 profile: nuclear-erg
@@ -231,55 +231,33 @@ escapes: `[[E-3|Heat\|Sink]]`.
 Rationale is *unweighted* in v0.2 — agents reason over it as soft
 context. Weighted argumentation is deferred.
 
-### Edge type labels
+### Edge type inference (no in-source labels)
 
-A branch may carry an optional **edge type label** placed immediately
-after the arrow, before the target. The label modifies the transition
-itself, turning the procedure graph into a typed knowledge graph:
+Branches do **not** carry explicit edge labels in source. Earlier
+versions (v0.2, v0.3) experimented with bracket-prefix labels; they
+were dropped in v0.4 because the heuristic-derived labels added little
+information beyond what target naming already conveys, and authoring /
+visibility cost outweighed the value.
 
-```markdown
-- Verified → [Continue] #verify-turbine-trip
-- Reactor not tripped → [Escalate] [[FR-S.1]]
-- Symptoms ambiguous → [Delegate] [[ES-0.0]]
-- All criteria met → [Recover] [[ES-1.1]]
-- Cannot stabilize on intact SG → [Fallback] [[FR-H.1]]
-- Stable → [Terminate] END
-```
+KG exporters compute edge types **at export time** from the target's
+shape and the loaded profile's naming patterns:
 
-(In v0.2 the label preceded the condition; v0.3 moved it after the
-arrow because the label semantically modifies the transition, not the
-branch. v0.2 syntax is rejected by v0.3 validators.)
-
-Canonical vocabulary (7 labels):
-
-| Label | Meaning |
+| Target shape | Inferred edge type |
 |---|---|
-| `Continue` | Sequential progression within the procedure |
-| `Escalate` | Transition to a higher-priority procedure (e.g. CSF function-restoration) |
-| `Delegate` | Transition to a procedure that takes over diagnosis or recovery |
-| `Recover` | Transition to a recovery / post-event procedure |
-| `Fallback` | Alternative path when the primary path fails or is unavailable |
-| `Monitor` | Transition to a parallel monitoring path (rare; reserve for future use) |
-| `Terminate` | Explicit end (paired with `→ END`) |
+| `→ #<step-id>` (same page) | `continuesTo` |
+| `→ [[<page>]]` matching profile "function-restoration" pattern (e.g. FR-x) | `escalatesTo` |
+| `→ [[<page>]]` matching profile "recovery" pattern (e.g. ES-x) | `recoversVia` |
+| `→ [[<page>]]` matching profile "extreme-conditions" pattern (e.g. ECA-x) | `fallbacksTo` |
+| `→ [[<page>]]` matching profile "diagnostic-eop" pattern (e.g. E-x) | `delegatesTo` |
+| `→ END` | `terminates` |
 
-Labels are **optional**. When absent, the label is inferred from target:
+Profiles declare these naming patterns under `## Naming patterns`.
+Without a profile, the default is `continuesTo` (same-page) or
+`branchesTo` (cross-page, untyped).
 
-| Target shape | Inferred label |
-|---|---|
-| `→ #<step-id>` (same page) | `Continue` |
-| `→ [[<page>]]` where target's `procedure-id` matches a profile-declared "function-restoration" pattern (e.g. FR-x) | `Escalate` |
-| `→ [[<page>]]` where target matches "recovery" pattern (e.g. ES-x) | `Recover` |
-| `→ [[<page>]]` where target matches "extreme-conditions" pattern (e.g. ECA-x) | `Fallback` |
-| `→ [[<page>]]` where target matches "diagnostic-eop" pattern (e.g. E-x) | `Delegate` |
-| `→ END` | `Terminate` |
-
-**Explicit label always wins** over inference. Profiles declare which
-naming patterns map to which inferred labels; without a profile,
-inference is `Continue` for same-page and `Delegate` for cross-page (a
-neutral default).
-
-Validator behavior: unknown label values produce a warning, not an
-error. Label inference is non-blocking.
+**v0.3 in-source `[Label]` syntax is rejected by v0.4 validators.**
+Migration: strip `[Label]` from each branch line. The KG produces the
+same predicates as before via inference.
 
 ### Profiles
 
@@ -292,7 +270,7 @@ its frontmatter.
 ```yaml
 ---
 type: procedure-profile
-procedure-md: 0.3
+procedure-md: 0.4
 profile-id: nuclear-erg
 title: Nuclear Emergency Response Guidelines profile
 ---
@@ -542,7 +520,6 @@ they wish.
 
 | Category | Source element | CSS class on render | Default |
 |---|---|---|---|
-| Edge labels | `[Continue]` / `[Escalate]` / etc. branch prefix | `procmd-edge-label` | Hidden |
 | Rationale | `Because:` / `Against:` lines | `procmd-rationale` | Visible |
 | Step ID suffix | Visible code-span suffix on step heading | `procmd-step-id-suffix` | Visible |
 
@@ -625,7 +602,7 @@ of features must be announced one minor version before removal.
 ```markdown
 ---
 type: procedure
-procedure-md: 0.3
+procedure-md: 0.4
 procedure-id: example-engine-restart
 title: Engine Restart After In-Flight Shutdown
 profile: aviation-qrh
@@ -637,21 +614,21 @@ category: emergency-checklist
 ## Step 1 [id: confirm-shutdown]
 Check: affected engine N1 < 10% AND throttle at IDLE
 Caution: confirm correct engine before any action
-- Confirmed → [Continue] #attempt-restart
-- Not confirmed → [Delegate] [[engine-fire-checklist]]
+- Confirmed → #attempt-restart
+- Not confirmed → [[engine-fire-checklist]]
 
 ## Step 2 [id: attempt-restart]
 Action: ENGINE START switch — IGN/START
 Within: 30s of stable airspeed
-- Started (N1 increasing, EGT rising within limits) → [Continue] #stabilize
-- Not started → [Continue] #abandon-restart
+- Started (N1 increasing, EGT rising within limits) → #stabilize
+- Not started → #abandon-restart
   Because: continued attempts risk hot start damage
 
 ## Step 3 [id: stabilize]
 Action: monitor N1 to idle, EGT within limits
 Until: stable idle for 60s
-- Stable → [Terminate] END
-- Unstable → [Fallback] #abandon-restart
+- Stable → END
+- Unstable → #abandon-restart
 
 ## Step 4 [id: abandon-restart]
 Action: ENGINE START switch — OFF
@@ -719,4 +696,4 @@ The following are deferred to v0.3 or later:
 
 ---
 
-*procmd v0.3 — last reviewed 2026-05-06.*
+*procmd v0.4 — last reviewed 2026-05-06.*
