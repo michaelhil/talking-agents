@@ -11,6 +11,16 @@ import { readManifest, namespaceFor } from './manifest.ts'
 // prefix: `<ns>_<tool>` must remain a valid tool identifier.
 const VALID_NAMESPACE = /^[a-zA-Z0-9_-]+$/
 
+// scanPacks runs on every install/update/uninstall (for list_packs), every
+// PUT /api/rooms/:name/packs (for activation validation), and every
+// refreshPackGeodata. Without dedup, an orphan .prev sibling would emit
+// the warning once per call — flooding logs after a single crashed update.
+// Module-level Set lives for the process lifetime; bounded by operator's
+// failed updates.
+const warnedOrphanPaths = new Set<string>()
+// Test seam — clear between tests so warn-once assertions don't leak.
+export const __resetScannerWarnings = (): void => { warnedOrphanPaths.clear() }
+
 export const scanPacks = async (rootDir: string): Promise<ReadonlyArray<Pack>> => {
   try {
     const s = await stat(rootDir)
@@ -26,8 +36,13 @@ export const scanPacks = async (rootDir: string): Promise<ReadonlyArray<Pack>> =
     // Orphan rollback snapshots from a crashed update_pack. Scanner skips
     // them (they're not packs) but surfaces a warning so the operator can
     // inspect + remove. update_pack also refuses to run when one exists.
+    // Warn-once per path so subsequent scans don't flood the logs.
     if (entry.endsWith('.prev')) {
-      console.warn(`[packs] orphan rollback snapshot: ${join(rootDir, entry)} — a previous update_pack crashed before cleanup. Inspect and remove manually.`)
+      const fullPath = join(rootDir, entry)
+      if (!warnedOrphanPaths.has(fullPath)) {
+        warnedOrphanPaths.add(fullPath)
+        console.warn(`[packs] orphan rollback snapshot: ${fullPath} — a previous update_pack crashed before cleanup. Inspect and remove manually.`)
+      }
       continue
     }
     if (entry.startsWith('.') || entry.startsWith('_')) continue

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { scanPacks } from './scanner.ts'
+import { scanPacks, __resetScannerWarnings } from './scanner.ts'
 
 describe('scanPacks', () => {
   let root: string
@@ -60,5 +60,26 @@ describe('scanPacks', () => {
 
     const packs = await scanPacks(root)
     expect(packs.map(p => p.namespace)).toEqual(['ok-name'])
+  })
+
+  it('C1: orphan .prev warning fires once per path across many scans', async () => {
+    __resetScannerWarnings()
+    await mkdir(join(root, 'aviation.prev'))
+    await mkdir(join(root, 'aviation'))
+
+    let warnings = 0
+    const origWarn = console.warn
+    console.warn = (msg: unknown) => {
+      if (typeof msg === 'string' && msg.includes('orphan rollback snapshot')) warnings++
+    }
+    try {
+      await scanPacks(root)
+      await scanPacks(root)
+      await scanPacks(root)
+      expect(warnings).toBe(1)
+    } finally {
+      console.warn = origWarn
+      __resetScannerWarnings()
+    }
   })
 })
