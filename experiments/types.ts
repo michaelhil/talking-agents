@@ -49,7 +49,6 @@ export interface AgentSpec {
   readonly thinking?: boolean
   readonly includePrompts?: IncludePromptsSpec
   readonly includeContext?: IncludeContextSpec
-  readonly includeMacroStepPrompt?: boolean
   readonly includeTools?: boolean
   readonly promptsEnabled?: boolean
   readonly contextEnabled?: boolean

@@ -55,7 +55,6 @@ Every field below maps 1:1 to the samsinn `AIAgentConfig`. Required: `name`, `mo
 | `thinking` | `boolean` | Enable CoT (qwen3 thinking mode, etc.). |
 | `includePrompts` | object | Per-section gates. **Keys don't match UI labels — see table below.** |
 | `includeContext` | object | CONTEXT sub-section toggles (`participants`, `macro`, `artifacts`, `activity`, `knownAgents`). |
-| `includeMacroStepPrompt` | `boolean` | Include `[Step instruction: …]` on macro messages. |
 | `includeTools` | `boolean` | Master: send tool definitions to LLM at all. |
 | `promptsEnabled` | `boolean` | Master: every `includePrompts` section off when `false`. |
 | `contextEnabled` | `boolean` | Master: every `includeContext` sub-section off when `false`. |

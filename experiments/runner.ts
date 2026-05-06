@@ -46,7 +46,6 @@ const createAgentArgs = (agent: AgentSpec): Record<string, unknown> => {
   if (agent.thinking !== undefined) args.thinking = agent.thinking
   if (agent.includePrompts !== undefined) args.includePrompts = agent.includePrompts
   if (agent.includeContext !== undefined) args.includeContext = agent.includeContext
-  if (agent.includeMacroStepPrompt !== undefined) args.includeMacroStepPrompt = agent.includeMacroStepPrompt
   if (agent.includeTools !== undefined) args.includeTools = agent.includeTools
   if (agent.promptsEnabled !== undefined) args.promptsEnabled = agent.promptsEnabled
   if (agent.contextEnabled !== undefined) args.contextEnabled = agent.contextEnabled
