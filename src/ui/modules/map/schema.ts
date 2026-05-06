@@ -86,6 +86,27 @@ const isLatLngArray = (v: unknown): v is ReadonlyArray<[number, number]> =>
 const inLatRange = (n: number): boolean => n >= -90 && n <= 90 && Number.isFinite(n)
 const inLngRange = (n: number): boolean => n >= -180 && n <= 180 && Number.isFinite(n)
 
+// Coordinate aliases: agents producing GeoJSON-flavoured output frequently
+// use `lon` (or `longitude`/`latitude`) instead of `lng`/`lat`. Internally
+// the schema is canonicalised on `lat`/`lng`; this helper resolves any of
+// the common spellings into a number, returning undefined if missing.
+// Numeric strings are coerced — common LLM output sin.
+const resolveCoord = (raw: Record<string, unknown>, ...keys: ReadonlyArray<string>): number | undefined => {
+  for (const k of keys) {
+    const v = raw[k]
+    if (typeof v === 'number') return v
+    if (typeof v === 'string' && v.trim() !== '') {
+      const n = Number(v)
+      if (Number.isFinite(n)) return n
+    }
+  }
+  return undefined
+}
+const resolveLat = (raw: Record<string, unknown>): number | undefined =>
+  resolveCoord(raw, 'lat', 'latitude')
+const resolveLng = (raw: Record<string, unknown>): number | undefined =>
+  resolveCoord(raw, 'lng', 'lon', 'longitude')
+
 const validateView = (raw: unknown, errs: MapValidationError[]): MapView | undefined => {
   if (raw === undefined || raw === null) return undefined
   if (typeof raw !== 'object') {
@@ -109,12 +130,14 @@ const validateView = (raw: unknown, errs: MapValidationError[]): MapView | undef
 }
 
 const validateMarker = (raw: Record<string, unknown>, path: string, errs: MapValidationError[]): MapFeature | null => {
-  if (typeof raw.lat !== 'number' || !inLatRange(raw.lat)) {
-    errs.push({ path: `${path}.lat`, message: 'marker.lat must be a number in [-90, 90]' })
+  const lat = resolveLat(raw)
+  const lng = resolveLng(raw)
+  if (lat === undefined || !inLatRange(lat)) {
+    errs.push({ path: `${path}.lat`, message: 'marker.lat must be a number in [-90, 90] (also accepts: latitude)' })
     return null
   }
-  if (typeof raw.lng !== 'number' || !inLngRange(raw.lng)) {
-    errs.push({ path: `${path}.lng`, message: 'marker.lng must be a number in [-180, 180]' })
+  if (lng === undefined || !inLngRange(lng)) {
+    errs.push({ path: `${path}.lng`, message: 'marker.lng must be a number in [-180, 180] (also accepts: lon, longitude)' })
     return null
   }
   // Strict on icon — unknown icon is a structured error, not silent fallback.
@@ -132,8 +155,8 @@ const validateMarker = (raw: Record<string, unknown>, path: string, errs: MapVal
   }
   const out: MapFeature = {
     type: 'marker',
-    lat: raw.lat,
-    lng: raw.lng,
+    lat,
+    lng,
     ...(typeof raw.label === 'string' ? { label: raw.label } : {}),
     ...(typeof raw.tooltip === 'string' ? { tooltip: raw.tooltip } : {}),
     ...(typeof raw.color === 'string' ? { color: raw.color } : {}),
@@ -169,12 +192,14 @@ const validatePolygon = (raw: Record<string, unknown>, path: string, errs: MapVa
 }
 
 const validateCircle = (raw: Record<string, unknown>, path: string, errs: MapValidationError[]): MapFeature | null => {
-  if (typeof raw.lat !== 'number' || !inLatRange(raw.lat)) {
-    errs.push({ path: `${path}.lat`, message: 'circle.lat must be a number in [-90, 90]' })
+  const lat = resolveLat(raw)
+  const lng = resolveLng(raw)
+  if (lat === undefined || !inLatRange(lat)) {
+    errs.push({ path: `${path}.lat`, message: 'circle.lat must be a number in [-90, 90] (also accepts: latitude)' })
     return null
   }
-  if (typeof raw.lng !== 'number' || !inLngRange(raw.lng)) {
-    errs.push({ path: `${path}.lng`, message: 'circle.lng must be a number in [-180, 180]' })
+  if (lng === undefined || !inLngRange(lng)) {
+    errs.push({ path: `${path}.lng`, message: 'circle.lng must be a number in [-180, 180] (also accepts: lon, longitude)' })
     return null
   }
   if (typeof raw.radius !== 'number' || raw.radius <= 0) {
@@ -183,8 +208,8 @@ const validateCircle = (raw: Record<string, unknown>, path: string, errs: MapVal
   }
   return {
     type: 'circle',
-    lat: raw.lat,
-    lng: raw.lng,
+    lat,
+    lng,
     radius: raw.radius,
     ...(typeof raw.color === 'string' ? { color: raw.color } : {}),
   }

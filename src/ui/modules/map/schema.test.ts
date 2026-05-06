@@ -39,6 +39,64 @@ describe('validateMapEnvelope — happy paths', () => {
     if (r.ok) expect(r.envelope.features.length).toBe(5)
   })
 
+  test('marker accepts lon as alias for lng (agent-output compat)', () => {
+    const r = validateMapEnvelope({
+      features: [
+        { type: 'marker', lat: 51.4776, lon: -0.45743, label: 'BAW32', icon: 'plane' },
+      ],
+    })
+    expectOk(r)
+    if (r.ok) {
+      const f = r.envelope.features[0]
+      if (f?.type !== 'marker') throw new Error('expected marker')
+      expect(f.lat).toBe(51.4776)
+      expect(f.lng).toBe(-0.45743)
+    }
+  })
+
+  test('marker accepts longitude/latitude aliases', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', latitude: 60, longitude: 5 }],
+    })
+    expectOk(r)
+    if (r.ok) {
+      const f = r.envelope.features[0]
+      if (f?.type !== 'marker') throw new Error('expected marker')
+      expect(f.lat).toBe(60)
+      expect(f.lng).toBe(5)
+    }
+  })
+
+  test('marker accepts numeric-string coordinates', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', lat: '60', lng: '5' }],
+    })
+    expectOk(r)
+    if (r.ok) {
+      const f = r.envelope.features[0]
+      if (f?.type !== 'marker') throw new Error('expected marker')
+      expect(f.lat).toBe(60)
+      expect(f.lng).toBe(5)
+    }
+  })
+
+  test('circle accepts lon alias', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'circle', lat: 60, lon: 5, radius: 1000 }],
+    })
+    expectOk(r)
+  })
+
+  test('lng wins when both lng and lon are present (canonical takes precedence)', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', lat: 60, lng: 5, lon: 99 }],
+    })
+    expectOk(r)
+    if (r.ok && r.envelope.features[0]?.type === 'marker') {
+      expect(r.envelope.features[0].lng).toBe(5)
+    }
+  })
+
   test('view passes through', () => {
     const r = validateMapEnvelope({
       view: { center: [60, 5], zoom: 8 },
