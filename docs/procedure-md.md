@@ -559,6 +559,23 @@ Other consumers (samsinn UI, future llm-wiki-skills bootstrap, custom
 renderers) may implement compatible behavior using the same CSS class
 names.
 
+## Version history
+
+Edge label syntax evolved across three versions before being removed:
+
+| Version | Branch syntax | Notes |
+|---|---|---|
+| **v0.2** | `- [Continue] cond → target` | Label as bracket prefix at start of branch list item. Introduced typed-edge concept. |
+| **v0.3** | `- cond → [Continue] target` | Label moved to **after the arrow**, before the target. The label semantically modifies the transition (the `→`), not the branch as a whole — placing it next to the arrow reads as "if condition, [transition-type] to target." |
+| **v0.4** | `- cond → target` | In-source labels dropped entirely. The heuristic-derived labels added little information beyond what target naming already conveyed, and the authoring + visibility cost outweighed the value. KG export now infers edge type from the target's profile-declared naming pattern at serialization time. |
+
+Migration paths:
+- v0.2 → v0.3: move the `[Label]` token from before the condition to after the arrow. Mechanical regex.
+- v0.3 → v0.4: strip `[Label]` from each branch line. Mechanical regex.
+- v0.2 → v0.4: strip `[Label]` from each branch line (regardless of position).
+
+Validators reject older syntax with explicit migration messages.
+
 ## Versioning policy
 
 Until v1.0, breaking changes between minor versions are allowed.
