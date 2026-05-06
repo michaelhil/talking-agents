@@ -260,4 +260,53 @@ describe('ScriptStore.upsert size cap', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  test('B2: concurrent upserts of distinct names all land', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
+    try {
+      const store = createScriptStore({ baseDir: dir })
+      await store.reload()
+      // Build 10 valid scripts with distinct names; fire upserts concurrently.
+      const names = Array.from({ length: 10 }, (_, i) => `concurrent-${i}`)
+      const sources = names.map(n => VALID.replace('Quarterly Planning', `Plan ${n}`))
+      const results = await Promise.all(
+        names.map((n, i) => store.upsert(n, sources[i]!)),
+      )
+      // Each result corresponds to its own input.
+      for (let i = 0; i < names.length; i++) {
+        expect(results[i]!.name).toBe(names[i])
+        expect(results[i]!.title).toBe(`Plan ${names[i]}`)
+      }
+      // All 10 are present in the store after.
+      for (const n of names) expect(store.get(n)?.name).toBe(n)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('B2: concurrent upserts of the same name produce a coherent final state', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'samsinn-scripts-'))
+    try {
+      const store = createScriptStore({ baseDir: dir })
+      await store.reload()
+      // 5 concurrent upserts of "shared". Filesystem write order is
+      // serialised by the chain — last-submitted wins, and each upsert's
+      // returned Script matches its own promise (no cross-pollution).
+      const sources = Array.from({ length: 5 }, (_, i) =>
+        VALID.replace('Quarterly Planning', `Variant ${i}`),
+      )
+      const results = await Promise.all(
+        sources.map(s => store.upsert('shared', s)),
+      )
+      // Each promise resolved to ITS OWN input parsed shape.
+      for (let i = 0; i < 5; i++) {
+        expect(results[i]!.title).toBe(`Variant ${i}`)
+      }
+      // Final store state matches the last-submitted input.
+      const final = store.get('shared')
+      expect(final?.title).toBe('Variant 4')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })

@@ -65,7 +65,20 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
     }
   }
 
-  const reload = async (): Promise<ReadonlyArray<string>> => {
+  // B2: serialise all store mutations through a single chained promise.
+  // Mirror of M2 (pack-source.ts) and A4 (snapshot.ts). Without this, two
+  // concurrent upsert(name, A) and upsert(name, B) calls interleave: A's
+  // writeFile, B's writeFile (clobbers A), A's reload sees B's content,
+  // A's promise resolves with B's parsed shape — caller thinks they wrote
+  // A but got B.
+  let chain: Promise<unknown> = Promise.resolve()
+  const serialise = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = chain.then(fn, fn)
+    chain = next.catch(() => undefined)
+    return next
+  }
+
+  const reloadInternal = async (): Promise<ReadonlyArray<string>> => {
     // First-seen wins ONLY if no other directory has the same name. We track
     // (name → source path) so a collision can be reported with both paths.
     const seenAt = new Map<string, string>()
@@ -102,7 +115,11 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
     return [...scripts.keys()]
   }
 
-  const upsert = async (name: string, source: string): Promise<Script> => {
+  // Public API — every entry serialises. Internal upsert/remove call
+  // reloadInternal directly to avoid deadlocking on the chain we already hold.
+  const reload = (): Promise<ReadonlyArray<string>> => serialise(reloadInternal)
+
+  const upsert = (name: string, source: string): Promise<Script> => serialise(async () => {
     if (!VALID_NAME.test(name)) {
       throw new Error(`script name must match ${VALID_NAME} (got "${name}")`)
     }
@@ -113,22 +130,22 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
     const dir = join(baseDir, name)
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'script.md'), source, 'utf-8')
-    await reload()
+    await reloadInternal()
     const reloaded = scripts.get(name)
     if (!reloaded) throw new Error(`upsert: script "${name}" did not reload`)
     return reloaded
-  }
+  })
 
-  const remove = async (name: string): Promise<boolean> => {
+  const remove = (name: string): Promise<boolean> => serialise(async () => {
     if (!VALID_NAME.test(name)) return false
     const dir = join(baseDir, name)
     const flat = join(baseDir, `${name}.md`)
     let removed = false
     try { await rm(dir, { recursive: true, force: true }); removed = true } catch { /* may not exist */ }
     try { await rm(flat, { force: true }); removed = removed || true } catch { /* may not exist */ }
-    if (removed) await reload()
+    if (removed) await reloadInternal()
     return scripts.get(name) === undefined && removed
-  }
+  })
 
   const onChange = (fn: () => void): (() => void) => {
     listeners.add(fn)
