@@ -198,6 +198,17 @@ const updateAgentsLabel = () => {
 
 // ============================================================================
 // STORE SUBSCRIPTIONS — wire reactive state to DOM
+//
+// File-size note: app.ts exceeds the project's 500-line guideline. An
+// extraction round (B2) was attempted but rejected — every subscription
+// here references app-local closures (handleDeleteRoom, handleBookmark,
+// send, $selectedAgentId.set, etc.) and DOM elements defined in this
+// file's setup phase. Moving the subscriptions into the render layer
+// would force two-way imports (render-* → app for handlers, app →
+// render-* for init()) which is strictly worse coupling than the
+// current shape. Per CLAUDE.md "Rejected refactors": splits that don't
+// reduce coupling are motion-without-progress. Revisit only when handlers
+// + DOM bindings can also move out together.
 // ============================================================================
 
 // --- Room list (batched: rooms + selection + pause + unread + generating) ---
