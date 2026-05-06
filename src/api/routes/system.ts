@@ -10,7 +10,7 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
-import { authEnabled, buildSessionCookie, issueSession, validateToken } from '../auth.ts'
+import { authEnabled, buildSessionCookie, issueSession, validateToken, getAuthLimiter } from '../auth.ts'
 
 // Cached on first read. package.json doesn't change at runtime.
 let cachedInfo: { version: string; repoUrl: string } | null = null
@@ -61,14 +61,28 @@ export const systemRoutes: RouteEntry[] = [
   {
     method: 'POST',
     pattern: /^\/api\/auth$/,
-    handler: async (req) => {
+    handler: async (req, _match, ctx) => {
       if (!authEnabled()) {
         // Dev / unset-token mode — pretend success so the UI flow still runs.
         return json({ ok: true })
       }
+      // A1: rate-limit per IP BEFORE validating, so a brute-force attempt
+      // doesn't run validateToken at line speed.
+      const limit = getAuthLimiter().check(ctx.remoteAddress)
+      if (!limit.ok) {
+        const retryS = Math.ceil(limit.retryAfterMs / 1000)
+        return new Response(
+          JSON.stringify({ error: `too many auth attempts — try again in ${retryS}s` }),
+          { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(retryS) } },
+        )
+      }
       const body = await parseBody(req)
       const candidate = typeof body.token === 'string' ? body.token : ''
-      if (!validateToken(candidate)) return errorResponse('invalid token', 401)
+      if (!validateToken(candidate)) {
+        // A1: log so an operator running journalctl can notice an attack.
+        console.warn(`[auth] failed token attempt from ${ctx.remoteAddress ?? 'unknown'}`)
+        return errorResponse('invalid token', 401)
+      }
       const sessionId = issueSession()
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,

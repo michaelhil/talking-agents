@@ -74,10 +74,11 @@ const req = (method: string, path: string, body?: unknown): Request => {
   })
 }
 
-const call = (system: System, r: Request, path: string) =>
+const call = (system: System, r: Request, path: string, opts: { remoteAddress?: string } = {}) =>
   handleAPI(r, path, system, TEST_INSTANCE_ID, {
     broadcast: noopBroadcast,
     subscribeAgentState: noopSubscribe,
+    ...(opts.remoteAddress ? { remoteAddress: opts.remoteAddress } : {}),
   })
 
 // === Tests ===
@@ -332,6 +333,52 @@ describe('HTTP Routes — auth gate (deploy mode)', () => {
   test('GET /api/system/limits without cookie → 401 (auth-gated, NOT exempt)', async () => {
     const res = await call(system, req('GET', '/api/system/limits'), '/api/system/limits')
     expect(res?.status).toBe(401)
+    restoreToken()
+  })
+
+  test('A1: POST /api/auth rate-limited per IP — 21st bad attempt returns 429', async () => {
+    // The shared route handler reads ctx.remoteAddress; in tests the call()
+    // helper threads through whatever the test passes. The default tight
+    // window is 5 min / 20 attempts; 21 attempts from the same IP trips it.
+    const { __resetAuthLimiter } = await import('./auth.ts')
+    __resetAuthLimiter()
+
+    let lastStatus = 0
+    let last429: Response | null = null
+    for (let i = 0; i < 25; i++) {
+      const res = await call(
+        system,
+        req('POST', '/api/auth', { token: 'wrong-token' }),
+        '/api/auth',
+        { remoteAddress: '198.51.100.7' },
+      )
+      lastStatus = res!.status
+      if (res!.status === 429) { last429 = res; break }
+    }
+    expect(last429).not.toBeNull()
+    expect(lastStatus).toBe(429)
+    expect(last429!.headers.get('Retry-After')).toBeTruthy()
+    __resetAuthLimiter()
+    restoreToken()
+  })
+
+  test('A1: failed POST /api/auth attempt logs to stderr', async () => {
+    const { __resetAuthLimiter } = await import('./auth.ts')
+    __resetAuthLimiter()
+    const origWarn = console.warn
+    let warned = ''
+    console.warn = (msg: unknown) => { warned += String(msg) + '\n' }
+    try {
+      await call(
+        system,
+        req('POST', '/api/auth', { token: 'wrong' }),
+        '/api/auth',
+        { remoteAddress: '198.51.100.8' },
+      )
+    } finally { console.warn = origWarn }
+    expect(warned).toContain('[auth] failed token attempt')
+    expect(warned).toContain('198.51.100.8')
+    __resetAuthLimiter()
     restoreToken()
   })
 })

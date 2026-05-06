@@ -8,7 +8,7 @@
 import type { SystemRegistry } from '../core/instances/system-registry.ts'
 import type { WSManager } from './ws-handler.ts'
 import { DEFAULTS } from '../core/types/constants.ts'
-import { authEnabled, isValidSession, sessionFromRequest, validateToken, issueSession, buildSessionCookie } from './auth.ts'
+import { authEnabled, isValidSession, sessionFromRequest, validateToken, issueSession, buildSessionCookie, getAuthLimiter } from './auth.ts'
 import { handleAPI } from './http-routes.ts'
 import { handleWSMessage, type WSData } from './ws-handler.ts'
 import {
@@ -152,20 +152,38 @@ export const createServer = (config: ServerConfig) => {
       // server validates, issues a session cookie, and 303s to a clean URL.
       // Wrong / unset tokens fall through to the normal flow (UI shows the
       // token prompt) so an outdated link doesn't lock anyone out.
+      //
+      // A1: rate-limited per IP via the same auth limiter as POST /api/auth
+      // so this URL-param path can't bypass the brute-force throttle.
+      // Limit hit returns 429 directly (not 303 to clean URL — the user
+      // needs to see the rate-limit message).
       if (authEnabled()) {
         const tokenParam = url.searchParams.get('token')
-        if (tokenParam && validateToken(tokenParam)) {
-          const sessionId = issueSession()
-          const cleaned = new URL(url)
-          cleaned.searchParams.delete('token')
-          const target = cleaned.pathname + (cleaned.search || '')
-          return sec(new Response(null, {
-            status: 303,
-            headers: {
-              'Location': target,
-              'Set-Cookie': buildSessionCookie(sessionId),
-            },
-          }))
+        if (tokenParam) {
+          const remoteAddr = server.requestIP(req)?.address
+          const limit = getAuthLimiter().check(remoteAddr)
+          if (!limit.ok) {
+            const retryS = Math.ceil(limit.retryAfterMs / 1000)
+            return sec(new Response(`Too many auth attempts — try again in ${retryS}s`, {
+              status: 429,
+              headers: { 'Retry-After': String(retryS), 'Content-Type': 'text/plain' },
+            }))
+          }
+          if (validateToken(tokenParam)) {
+            const sessionId = issueSession()
+            const cleaned = new URL(url)
+            cleaned.searchParams.delete('token')
+            const target = cleaned.pathname + (cleaned.search || '')
+            return sec(new Response(null, {
+              status: 303,
+              headers: {
+                'Location': target,
+                'Set-Cookie': buildSessionCookie(sessionId),
+              },
+            }))
+          } else {
+            console.warn(`[auth] failed ?token= attempt from ${remoteAddr ?? 'unknown'}`)
+          }
         }
       }
 

@@ -17,6 +17,7 @@
 // ============================================================================
 
 import { createHash } from 'node:crypto'
+import { createRateLimiter, type RateLimiter } from './rate-limit.ts'
 
 const SESSION_COOKIE = 'samsinn_session'
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000  // 30 days — cookie lifetime
@@ -78,3 +79,31 @@ export const sessionCookieName = SESSION_COOKIE
 // Read session id from a request's Cookie header.
 export const sessionFromRequest = (req: Request): string | null =>
   parseCookie(req.headers.get('cookie'), SESSION_COOKIE)
+
+// A1: rate-limit token-validation attempts per IP.
+//
+// Two entry points use the same limiter:
+//   - POST /api/auth                 (UI form submit)
+//   - GET /?token=X                  (invitation URL — server.ts handler)
+//
+// Defaults sized for an alpha sandbox: 20 attempts per 5-minute window
+// covers a fat-fingered user retrying a few times across multiple sessions
+// while making online brute-force expensive enough that a 32-byte token
+// is well out of reach. Override with SAMSINN_AUTH_RATE_LIMIT and
+// SAMSINN_AUTH_RATE_WINDOW_MS.
+//
+// Co-located with auth.ts so both call sites can import without dragging
+// in routes/* (avoids a circular dep with server.ts).
+let authLimiter: RateLimiter | null = null
+export const getAuthLimiter = (): RateLimiter => {
+  if (!authLimiter) {
+    authLimiter = createRateLimiter({
+      windowMs: Number(process.env.SAMSINN_AUTH_RATE_WINDOW_MS) || 300_000, // 5 min
+      max: Number(process.env.SAMSINN_AUTH_RATE_LIMIT) || 20,
+    })
+  }
+  return authLimiter
+}
+
+// Test seam — clears the limiter between tests so attempts don't leak.
+export const __resetAuthLimiter = (): void => { authLimiter = null }
