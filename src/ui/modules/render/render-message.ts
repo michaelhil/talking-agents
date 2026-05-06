@@ -51,14 +51,19 @@ const writeClipboard = async (text: string): Promise<boolean> => {
 
 // Render Markdown content safely. Falls back to textContent if libraries not loaded.
 // Post-processes mermaid code blocks into rendered diagrams.
+//
+// marked + DOMPurify are loaded via CDN script tags in index.html. The
+// graceful textContent fallback covers the brief window during page load
+// when one or both are still fetching — must NOT throw, or the page
+// bricks on slow networks.
 const renderMarkdownContent = (el: HTMLElement, text: string): void => {
-  const w = globalThis as unknown as Record<string, unknown>
-  const markedLib = w.marked as { parse?: (src: string) => string } | undefined
-  const purifyLib = w.DOMPurify as { sanitize?: (html: string) => string } | undefined
-
-  if (markedLib?.parse && purifyLib?.sanitize) {
+  const w = globalThis as {
+    marked?: { parse: (src: string) => string }
+    DOMPurify?: { sanitize: (html: string) => string }
+  }
+  if (w.marked?.parse && w.DOMPurify?.sanitize) {
     el.className += ' msg-prose'
-    el.innerHTML = purifyLib.sanitize(markedLib.parse(text))
+    el.innerHTML = w.DOMPurify.sanitize(w.marked.parse(text))
     for (const proc of postRenderProcessors) void proc(el)
   } else {
     el.textContent = text
