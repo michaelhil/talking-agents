@@ -96,7 +96,7 @@ export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler =>
     const trigger = agent.getTriggers?.().find(t => t.id === triggerId)
     if (!trigger) return
     const room = deps.house.getRoom(trigger.roomId)
-    if (!room) return  // room was deleted between tick and dispatch; cascade-clean will catch up
+    if (!room) return  // Skip silently — room deletion between tick and dispatch is a normal race; cascade-clean in room-operations.ts:65-71 deletes orphaned triggers on the same path.
 
     // Mark fired BEFORE dispatch (overrun protection).
     agent.markTriggerFired?.(triggerId, now())

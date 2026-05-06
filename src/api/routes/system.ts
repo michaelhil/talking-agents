@@ -139,9 +139,12 @@ export const systemRoutes: RouteEntry[] = [
       if (resetTimers.has(id)) return errorResponse('reset already in progress', 409)
       const commitsAtMs = Date.now() + RESET_COUNTDOWN_MS
 
+      // broadcastToInstance is always wired by HTTP-mode bootstrap. Headless
+      // / MCP mode never reaches this route. The previous `else ctx.broadcast`
+      // fallback would have leaked reset countdowns to every connected
+      // instance; deleted as unreachable + dangerous.
       const sendToInstance = (msg: import('../../core/types/ws-protocol.ts').WSOutbound): void => {
-        if (ctx.broadcastToInstance) ctx.broadcastToInstance(id, msg)
-        else ctx.broadcast(msg)
+        ctx.broadcastToInstance?.(id, msg)
       }
 
       const timer = setTimeout(async () => {
@@ -192,8 +195,7 @@ export const systemRoutes: RouteEntry[] = [
       clearTimeout(timer)
       resetTimers.delete(id)
       const sendToInstance = (msg: import('../../core/types/ws-protocol.ts').WSOutbound): void => {
-        if (ctx.broadcastToInstance) ctx.broadcastToInstance(id, msg)
-        else ctx.broadcast(msg)
+        ctx.broadcastToInstance?.(id, msg)
       }
       sendToInstance({ type: 'reset_cancelled' })
       return json({ cancelled: true })
