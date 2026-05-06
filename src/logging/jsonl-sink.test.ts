@@ -16,7 +16,7 @@ describe('createJsonlFileSink — round-trip', () => {
   test('write → close flushes all queued events to a single file', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'samsinn-sink-'))
     try {
-      const sink = createJsonlFileSink({ dir, sessionId: 'alpha' })
+      const sink = await createJsonlFileSink({ dir, sessionId: 'alpha' })
       for (let i = 0; i < 10; i++) sink.write(mkEvent('alpha', 'test.event', i))
       await sink.close()
 
@@ -35,7 +35,7 @@ describe('createJsonlFileSink — round-trip', () => {
   test('flush() persists without closing', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'samsinn-sink-'))
     try {
-      const sink = createJsonlFileSink({ dir, sessionId: 'beta' })
+      const sink = await createJsonlFileSink({ dir, sessionId: 'beta' })
       sink.write(mkEvent('beta', 'x', 0))
       await sink.flush()
       const raw = await readFile(join(dir, 'beta.jsonl'), 'utf-8')
@@ -58,7 +58,7 @@ describe('createJsonlFileSink — rotation', () => {
       // Tiny threshold + flush between batches forces multiple rotations.
       // The 2-file ring drops anything older than .1, so total events
       // recovered from disk is a recent suffix of the writes, not all 20.
-      const sink = createJsonlFileSink({ dir, sessionId: 'gamma', rotateAtBytes: 200 })
+      const sink = await createJsonlFileSink({ dir, sessionId: 'gamma', rotateAtBytes: 200 })
       for (let i = 0; i < 20; i++) {
         sink.write(mkEvent('gamma', 'test.event', i))
         if (i % 5 === 4) await sink.flush()
@@ -84,6 +84,43 @@ describe('createJsonlFileSink — rotation', () => {
       await rm(dir, { recursive: true })
     }
   })
+
+  test('B1: rotates a pre-existing file even when the very first batch lands immediately', async () => {
+    // Regression for B1 — previously seedBytes() was fire-and-forget.
+    // If a write hit before seedBytes() resolved, currentFileBytes was 0
+    // and the rotation check (`currentFileBytes > 0` short-circuit) was
+    // skipped. The pre-existing file kept growing past the cap.
+    //
+    // Now that createJsonlFileSink awaits seedBytes(), the constructor
+    // returns with currentFileBytes already populated. The first batch
+    // sees the correct size and rotates if needed.
+    const dir = await mkdtemp(join(tmpdir(), 'samsinn-sink-seed-'))
+    try {
+      const sessionId = 'seed-test'
+      const activePath = join(dir, `${sessionId}.jsonl`)
+      const rolledPath = join(dir, `${sessionId}.1.jsonl`)
+      // Pre-create a file at 90% of the rotation threshold.
+      const rotateAtBytes = 200
+      await Bun.write(activePath, 'x'.repeat(180))
+
+      const sink = await createJsonlFileSink({ dir, sessionId, rotateAtBytes })
+      // First batch — large enough to trigger rotation given the seeded size.
+      for (let i = 0; i < 5; i++) sink.write(mkEvent(sessionId, 'test.event', i))
+      await sink.flush()
+      await sink.close()
+
+      // Rotation must have happened: rolled file exists with the original
+      // 180-byte body. Active file contains ONLY the new events (no
+      // pre-existing 180 bytes carried over).
+      const rolledContent = await Bun.file(rolledPath).text()
+      expect(rolledContent.length).toBe(180)
+      const activeContent = await Bun.file(activePath).text()
+      expect(activeContent.includes('x'.repeat(180))).toBe(false)
+      expect(activeContent.split('\n').filter(Boolean).length).toBe(5)
+    } finally {
+      await rm(dir, { recursive: true })
+    }
+  })
 })
 
 describe('createJsonlFileSink — overflow handling', () => {
@@ -95,7 +132,7 @@ describe('createJsonlFileSink — overflow handling', () => {
       const origErr = console.error
       console.error = () => {}
 
-      const sink = createJsonlFileSink({
+      const sink = await createJsonlFileSink({
         dir, sessionId: 'delta',
         queueCap: 5,
         flushIntervalMs: 1_000_000,  // effectively never auto-flush — force queue buildup
@@ -126,7 +163,7 @@ describe('createJsonlFileSink — error containment', () => {
     console.error = (msg: unknown) => { errMsgs.push(String(msg)) }
 
     try {
-      const sink = createJsonlFileSink({
+      const sink = await createJsonlFileSink({
         dir: '/this/path/should/not/exist/samsinn-sink-test-xyz',
         sessionId: 'e1',
         flushIntervalMs: 1_000_000,
@@ -147,7 +184,7 @@ describe('createJsonlFileSink — stats', () => {
   test('stats reports currentFile + bytes + counts', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'samsinn-sink-'))
     try {
-      const sink = createJsonlFileSink({ dir, sessionId: 'stats1' })
+      const sink = await createJsonlFileSink({ dir, sessionId: 'stats1' })
       sink.write(mkEvent('stats1', 'x', 0))
       sink.write(mkEvent('stats1', 'x', 1))
       await sink.flush()

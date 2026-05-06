@@ -42,7 +42,7 @@ const rotateBytesFromEnv = (): number => {
 const DEFAULT_FLUSH_INTERVAL_MS = 1000
 const DEFAULT_QUEUE_CAP = 10_000
 
-export const createJsonlFileSink = (options: JsonlFileSinkOptions): LogSink => {
+export const createJsonlFileSink = async (options: JsonlFileSinkOptions): Promise<LogSink> => {
   const rotateAtBytes = options.rotateAtBytes ?? rotateBytesFromEnv()
   const flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS
   const queueCap = options.queueCap ?? DEFAULT_QUEUE_CAP
@@ -62,15 +62,14 @@ export const createJsonlFileSink = (options: JsonlFileSinkOptions): LogSink => {
   const rolledFilePath = join(options.dir, `${options.sessionId}.1.jsonl`)
 
   // On construction, seed currentFileBytes from any existing file so we
-  // don't over-append past rotation. Fire-and-forget; worst case we rotate
-  // one event late.
-  const seedBytes = async () => {
-    try {
-      const s = await stat(currentFilePath)
-      currentFileBytes = s.size
-    } catch { /* no pre-existing file — fine */ }
-  }
-  void seedBytes()
+  // don't over-append past rotation. Awaited (B1): the previous fire-and-
+  // forget version meant the first batch could land before currentFileBytes
+  // was populated, skipping the rotation check (`currentFileBytes > 0`
+  // short-circuits) and growing the file past the cap.
+  try {
+    const s = await stat(currentFilePath)
+    currentFileBytes = s.size
+  } catch { /* no pre-existing file — fine */ }
 
   // Ensure dir exists before the first write. Cached to avoid per-flush mkdir.
   let dirEnsured = false

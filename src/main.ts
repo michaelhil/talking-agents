@@ -756,7 +756,10 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       if (!next.enabled) return
 
       // Open new sink. Failure bubbles up; caller (REST/MCP) returns 400.
-      const sink = createJsonlFileSink({ dir: next.dir, sessionId: next.sessionId })
+      // B1: awaited so the sink's seedBytes() completes before the first
+      // write — without it, the rotation check skipped on a pre-existing
+      // file and the log grew past the configured cap.
+      const sink = await createJsonlFileSink({ dir: next.dir, sessionId: next.sessionId })
       const filtered = (event: LogEvent) => {
         if (matchesKindFilter(event.kind, next.kinds)) sink.write(event)
       }
