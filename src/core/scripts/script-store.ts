@@ -22,6 +22,7 @@ import { readdir, readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Script } from '../types/script.ts'
 import { parseScriptMd, VALID_NAME } from './script-md-parser.ts'
+import { createSerialiseChain } from '../serialise-chain.ts'
 
 // Hard cap on script source size. Scripts are markdown — the largest realistic
 // hand-written one is a few KB. 256 KB is well above that and small enough
@@ -66,17 +67,11 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
   }
 
   // B2: serialise all store mutations through a single chained promise.
-  // Mirror of M2 (pack-source.ts) and A4 (snapshot.ts). Without this, two
-  // concurrent upsert(name, A) and upsert(name, B) calls interleave: A's
-  // writeFile, B's writeFile (clobbers A), A's reload sees B's content,
-  // A's promise resolves with B's parsed shape — caller thinks they wrote
-  // A but got B.
-  let chain: Promise<unknown> = Promise.resolve()
-  const serialise = <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = chain.then(fn, fn)
-    chain = next.catch(() => undefined)
-    return next
-  }
+  // Without this, two concurrent upsert(name, A) and upsert(name, B) calls
+  // interleave: A's writeFile, B's writeFile (clobbers A), A's reload sees
+  // B's content, A's promise resolves with B's parsed shape — caller
+  // thinks they wrote A but got B.
+  const chain = createSerialiseChain()
 
   const reloadInternal = async (): Promise<ReadonlyArray<string>> => {
     // First-seen wins ONLY if no other directory has the same name. We track
@@ -117,9 +112,9 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
 
   // Public API — every entry serialises. Internal upsert/remove call
   // reloadInternal directly to avoid deadlocking on the chain we already hold.
-  const reload = (): Promise<ReadonlyArray<string>> => serialise(reloadInternal)
+  const reload = (): Promise<ReadonlyArray<string>> => chain.run(reloadInternal)
 
-  const upsert = (name: string, source: string): Promise<Script> => serialise(async () => {
+  const upsert = (name: string, source: string): Promise<Script> => chain.run(async () => {
     if (!VALID_NAME.test(name)) {
       throw new Error(`script name must match ${VALID_NAME} (got "${name}")`)
     }
@@ -136,7 +131,7 @@ export const createScriptStore = (init: ScriptStoreInit): ScriptStore => {
     return reloaded
   })
 
-  const remove = (name: string): Promise<boolean> => serialise(async () => {
+  const remove = (name: string): Promise<boolean> => chain.run(async () => {
     if (!VALID_NAME.test(name)) return false
     const dir = join(baseDir, name)
     const flat = join(baseDir, `${name}.md`)

@@ -35,12 +35,29 @@ import { readManifest, resolveInstallNamespace, stripPackPrefix } from '../../pa
 import { scanPacks } from '../../packs/scanner.ts'
 import { getAvailablePacks, invalidateRegistryCache } from '../../packs/registry.ts'
 import { formatShellError } from '../../core/redact.ts'
+import { createSerialiseChain, type SerialiseChain } from '../../core/serialise-chain.ts'
 import { stat, mkdtemp, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { $ } from 'bun'
 
 // Pack namespaces are directory names — same regex as tool/skill names.
 const VALID_NS = /^[a-zA-Z0-9_-]+$/
+
+// B2: per-namespace serialisation. Concurrent install/update/uninstall on
+// the SAME namespace would otherwise race on `<ns>.prev`, the rename slot,
+// and the registry teardown order. Different namespaces install in
+// parallel — chains are independent.
+//
+// Map cleanup happens on successful uninstall (delete the entry once the
+// pack is gone). Without that, every install/uninstall cycle leaks an
+// entry. Test-seam reset clears the map.
+const packChains = new Map<string, SerialiseChain>()
+const chainFor = (ns: string): SerialiseChain => {
+  let c = packChains.get(ns)
+  if (!c) { c = createSerialiseChain(); packChains.set(ns, c) }
+  return c
+}
+export const __resetPackChains = (): void => { packChains.clear() }
 
 type RefreshAllFn = () => Promise<void>
 
@@ -238,29 +255,34 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
       namespace = derived
     }
 
-    // Refuse to overwrite an existing install — user must uninstall first.
+    // B2: serialise the post-namespace-resolution work for this namespace.
+    // Two concurrent installs of the same pack can't interleave the
+    // stat/rename/loadPack sequence; the second waits for the first to
+    // complete and then either sees "already installed" or proceeds cleanly
+    // if the first rolled back.
     const finalPath = join(deps.packsDir, namespace)
-    try {
-      const s = await stat(finalPath)
-      if (s.isDirectory()) {
+    return chainFor(namespace).run(async () => {
+      try {
+        const s = await stat(finalPath)
+        if (s.isDirectory()) {
+          await cleanup()
+          return { success: false, error: `Pack "${namespace}" is already installed — use update_pack to refresh or uninstall_pack first` }
+        }
+      } catch { /* not present — proceed */ }
+
+      try {
+        await rename(tempDir, finalPath)
+      } catch (err) {
         await cleanup()
-        return { success: false, error: `Pack "${namespace}" is already installed — use update_pack to refresh or uninstall_pack first` }
+        const reason = err instanceof Error ? err.message : String(err)
+        return { success: false, error: `Could not move installed pack into place: ${reason}` }
       }
-    } catch { /* not present — proceed */ }
 
-    try {
-      await rename(tempDir, finalPath)
-    } catch (err) {
-      await cleanup()
-      const reason = err instanceof Error ? err.message : String(err)
-      return { success: false, error: `Could not move installed pack into place: ${reason}` }
-    }
-
-    const result = await loadPack(
-      { namespace, dirPath: finalPath, manifest },
-      deps.toolRegistry,
-      deps.skillStore,
-    )
+      const result = await loadPack(
+        { namespace, dirPath: finalPath, manifest },
+        deps.toolRegistry,
+        deps.skillStore,
+      )
 
     // Transactional contract: if ANY tool or skill failed to load, roll back
     // everything (unregister anything that did register, remove the pack
@@ -292,20 +314,21 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
       tools: result.tools, skills: result.skills,
     })
 
-    // C3: drop the registry cache so the next /api/packs/registry GET shows
-    // this pack with `installed: true` instead of waiting up to 5 min.
-    invalidateRegistryCache()
+      // C3: drop the registry cache so the next /api/packs/registry GET shows
+      // this pack with `installed: true` instead of waiting up to 5 min.
+      invalidateRegistryCache()
 
-    return {
-      success: true,
-      data: {
-        namespace,
-        url: resolved.url,
-        tools: result.tools,
-        skills: result.skills,
-        manifest,
-      },
-    }
+      return {
+        success: true,
+        data: {
+          namespace,
+          url: resolved.url,
+          tools: result.tools,
+          skills: result.skills,
+          manifest,
+        },
+      }
+    })
   },
 })
 
@@ -324,6 +347,9 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
     const namespace = (params.name as string)?.trim() ?? ''
     if (!VALID_NS.test(namespace)) return { success: false, error: `Invalid pack name "${namespace}"` }
 
+    // B2: serialise per namespace so concurrent update_pack calls on the
+    // same pack don't race on `.prev` cp + git pull.
+    return chainFor(namespace).run(async () => {
     const dirPath = join(deps.packsDir, namespace)
     const prevPath = `${dirPath}.prev`
     try {
@@ -444,6 +470,7 @@ export const createUpdatePackTool = (deps: PackToolsDeps): Tool => ({
         stdout: pull.stdout.toString().trim(),
       },
     }
+    })  // chainFor.run
   },
 })
 
@@ -462,6 +489,9 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
     const namespace = (params.name as string)?.trim() ?? ''
     if (!VALID_NS.test(namespace)) return { success: false, error: `Invalid pack name "${namespace}"` }
 
+    // B2: serialise per namespace so concurrent uninstall + install / update
+    // on the same namespace can't interleave.
+    return chainFor(namespace).run(async () => {
     const dirPath = join(deps.packsDir, namespace)
     try {
       const s = await stat(dirPath)
@@ -524,6 +554,10 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
     // this pack with `installed: false` instead of waiting up to 5 min.
     invalidateRegistryCache()
 
+    // B2: cleanup the per-namespace chain entry now that the pack is gone.
+    // Without this, every install/uninstall cycle leaks a chain.
+    packChains.delete(namespace)
+
     return {
       success: true,
       data: {
@@ -536,6 +570,7 @@ export const createUninstallPackTool = (deps: PackToolsDeps): Tool => ({
         scrubbedRooms: scrubbed,
       },
     }
+    })  // chainFor.run
   },
 })
 

@@ -58,6 +58,7 @@ import type { SummaryConfig } from '../types/summary.ts'
 import type { Trigger } from '../triggers/types.ts'
 import { asAIAgent } from '../../agents/shared.ts'
 import { DEFAULT_HOUSE_PROMPT, DEFAULT_RESPONSE_FORMAT } from '../house.ts'
+import { createSerialiseChain } from '../serialise-chain.ts'
 import { mkdir, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
@@ -250,23 +251,15 @@ export const isEmptySnapshot = (snap: SystemSnapshot): boolean => {
 // promise. Both saveSnapshot (auto-saver) and appendPendingScrub (cross-
 // instance pack uninstall) tmp+rename to the same path; without
 // serialisation, B can read → A writes new content → B writes its
-// (stale-base) → A's content is lost. Chain pattern mirrors M2's
-// refreshPackGeodata and adds no new exported primitive.
+// (stale-base) → A's content is lost.
 //
 // Keyed at module level (not per-path) because each Bun process owns
 // one $SAMSINN_HOME and the realistic concurrency is one path's writers
 // fighting each other.
-let writeChain: Promise<unknown> = Promise.resolve()
-const serialiseWrite = <T>(fn: () => Promise<T>): Promise<T> => {
-  const next = writeChain.then(fn, fn)
-  // Catch on the chain reference so a single failed write doesn't poison
-  // subsequent ones. The caller still sees the original rejection.
-  writeChain = next.catch(() => undefined)
-  return next
-}
+const writeChain = createSerialiseChain()
 
 export const saveSnapshot = (snapshot: SystemSnapshot, path: string): Promise<void> =>
-  serialiseWrite(async () => {
+  writeChain.run(async () => {
     const dir = dirname(path)
     await mkdir(dir, { recursive: true })
     const tmpPath = `${path}.tmp`
@@ -290,7 +283,7 @@ export const appendPendingScrub = (
   // A4: serialise via the same chain as saveSnapshot so concurrent
   // saveSnapshot + appendPendingScrub against the same file can't lose
   // each other's writes.
-  serialiseWrite(async () => {
+  writeChain.run(async () => {
     const file = Bun.file(path)
     if (!await file.exists()) return { applied: false, reason: 'no snapshot file' }
     let raw: Record<string, unknown>

@@ -344,6 +344,48 @@ describe('update_pack', () => {
     expect(result.success).toBe(false)
     expect(String(result.error)).toContain('orphan .prev sibling')
   })
+
+  it('B2: concurrent update_pack on the same namespace serialise — no .prev clash', async () => {
+    const env = await makeDeps()
+    parent = env.parent
+    const repoDir = join(env.parent, 'atc-source')
+    await mkdir(join(repoDir, 'tools'), { recursive: true })
+    await writeFile(join(repoDir, 'tools', 'a.ts'), TOOL_SRC('a'))
+    await writeFile(join(repoDir, 'pack.json'), JSON.stringify({ name: 'atc' }))
+    await $`git -C ${repoDir} init -q`.quiet()
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t add .`.quiet()
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t commit -q -m init`.quiet()
+    await $`git -C ${repoDir} branch -M main`.quiet().nothrow()
+
+    const install = createInstallPackTool(env.deps)
+    await install.execute({ source: `file://${repoDir}`, name: 'atc' }, CTX)
+
+    // Add upstream commits between updates so each pull does meaningful work.
+    await writeFile(join(repoDir, 'tools', 'b.ts'), TOOL_SRC('b'))
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t add .`.quiet()
+    await $`git -C ${repoDir} -c user.email=t@t -c user.name=t commit -q -m add-b`.quiet()
+
+    const update = createUpdatePackTool(env.deps)
+    // Three concurrent updates on the same namespace. With per-namespace
+    // chains, they serialise: first does the actual pull + reload, the
+    // next two pull-no-op (already up to date) but never collide on .prev.
+    const results = await Promise.all([
+      update.execute({ name: 'atc' }, CTX),
+      update.execute({ name: 'atc' }, CTX),
+      update.execute({ name: 'atc' }, CTX),
+    ])
+    for (const r of results) {
+      expect(r.success).toBe(true)
+    }
+    // No orphan .prev left behind.
+    const { stat } = await import('node:fs/promises')
+    let prevExists = false
+    try { await stat(join(env.deps.packsDir, 'atc.prev')); prevExists = true } catch { /* expected */ }
+    expect(prevExists).toBe(false)
+    // Both tools registered (the upstream b.ts landed).
+    expect(env.deps.toolRegistry.has('atc_a')).toBe(true)
+    expect(env.deps.toolRegistry.has('atc_b')).toBe(true)
+  })
 })
 
 describe('list_packs', () => {

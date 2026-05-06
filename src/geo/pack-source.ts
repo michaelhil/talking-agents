@@ -18,6 +18,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import { scanPackSubdirs } from '../packs/scanner.ts'
 import { extractCategoryMetaFromFeatures, validateEmbeddedCategoryMeta } from './projection.ts'
+import { createSerialiseChain } from '../core/serialise-chain.ts'
 import type { CategoryMeta, GeoFeature } from './types.ts'
 
 // File-size cap mirrors discovered-cache: 5 MB is generous for hand-
@@ -49,7 +50,7 @@ let state: PackGeoState = EMPTY_STATE
 // N scans in submission order; the last one captures the final disk
 // state. Coalescing was rejected because it has a subtle race where a
 // second caller arriving mid-coalesce-window can miss its target state.
-let chain: Promise<PackGeoState> = Promise.resolve(state)
+const reloadChain = createSerialiseChain()
 
 const isValidGeoFeature = (raw: unknown): boolean => {
   if (!raw || typeof raw !== 'object') return false
@@ -194,14 +195,11 @@ const reload = async (packsDir: string): Promise<PackGeoState> => {
 // Public surface — mirrors discovered-cache shape so consumers can switch
 // between sources cleanly.
 
-export const refreshPackGeodata = async (packsDir: string): Promise<PackGeoState> => {
-  const next = chain.then(
-    async () => { state = await reload(packsDir); return state },
-    async () => { state = await reload(packsDir); return state },
-  )
-  chain = next
-  return next
-}
+export const refreshPackGeodata = (packsDir: string): Promise<PackGeoState> =>
+  reloadChain.run(async () => {
+    state = await reload(packsDir)
+    return state
+  })
 
 export const getPackFeatures = (categoryId: string): ReadonlyArray<GeoFeature> =>
   state.featuresByCategory.get(categoryId) ?? []
@@ -219,5 +217,5 @@ export const getPackGeoState = (): PackGeoState => state
 // Test seam — clears the cached state so the next refresh runs fresh.
 export const __resetPackGeodataCache = (): void => {
   state = EMPTY_STATE
-  chain = Promise.resolve(state)
+  reloadChain.reset()
 }
