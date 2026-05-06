@@ -350,6 +350,23 @@ makes this safe from email/Slack links.
 - Cookie has no `Domain=` (see §10).
 - Headless / MCP-only mode is single-instance; multi-instance only applies
   to HTTP mode.
+- **`?token=X` invitation URLs leak the token via browser history.**
+  The 303 redirect cleans the address bar but not history; anyone with
+  access to a recipient's browser history can recover the token. Rotate
+  `SAMSINN_TOKEN` after onboarding cycles. The cookie remains valid
+  across rotations only if the new token's sha256 matches an existing
+  cookie — rotation is the revocation path for compromised tokens.
+- **Token validation is rate-limited per IP** at both entry points
+  (POST /api/auth and `?token=X`). Defaults: 20 attempts per 5-minute
+  window. Override with `SAMSINN_AUTH_RATE_LIMIT` and
+  `SAMSINN_AUTH_RATE_WINDOW_MS`. Failed attempts log the IP at
+  `warn` level — `journalctl -u samsinn | grep '\[auth\] failed'`
+  shows attack patterns.
+- **Bug submissions are rate-limited** per IP (default 10 per hour) and
+  user-typed descriptions are wrapped in a code fence on GitHub. The
+  fence prevents `@-mentions` and `#-references` in user bug reports
+  from firing on the operator's GitHub repo. Override with
+  `SAMSINN_BUG_RATE_LIMIT` and `SAMSINN_BUG_RATE_WINDOW_MS`.
 - **Pack mutations are deployment-wide, not per-tenant.** Packs live at
   `$SAMSINN_HOME/packs/` shared by every cookie-bound instance in a
   single Bun process. Any authenticated user (anyone past the
