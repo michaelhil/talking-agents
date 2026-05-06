@@ -350,3 +350,17 @@ makes this safe from email/Slack links.
 - Cookie has no `Domain=` (see §10).
 - Headless / MCP-only mode is single-instance; multi-instance only applies
   to HTTP mode.
+- **Pack mutations are deployment-wide, not per-tenant.** Packs live at
+  `$SAMSINN_HOME/packs/` shared by every cookie-bound instance in a
+  single Bun process. Any authenticated user (anyone past the
+  `SAMSINN_TOKEN` gate, plus every cookie-bound tenant in dev) calling
+  `install_pack` / `update_pack` / `uninstall_pack` — via REST or via an
+  AI agent's tool surface — affects every other tenant's tools, skills,
+  geodata and scripts immediately. Per-tenant control is only available
+  via the per-room `activePacks` allowlist (PUT /api/rooms/:name/packs);
+  the underlying pack is global. This is intentional under the
+  single-operator-deploy assumption (one `SAMSINN_TOKEN`, one trust
+  zone). If you need to share a deploy across mutually-untrusting
+  operators, do not enable codegen tools and keep the token to yourself.
+  A future hardening could split mutations behind a separate
+  `SAMSINN_PACK_ADMIN_TOKEN` — not implemented today.
