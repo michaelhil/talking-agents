@@ -18,7 +18,7 @@ knowledge graph.
 
 ## Status
 
-This document specifies **procmd v0.2**. Samsinn-side runtime support
+This document specifies **procmd v0.3**. Samsinn-side runtime support
 (executor tool, agent guardrail traversal, render integration) is out of
 scope for v0.2; see [Deferred](#deferred--out-of-scope-for-v02) at the
 bottom.
@@ -70,7 +70,7 @@ procedures use standard `[[wikilinks]]`.
 ```yaml
 ---
 type: procedure
-procedure-md: 0.2
+procedure-md: 0.3
 procedure-id: E-0
 title: Reactor Trip or Safety Injection
 profile: nuclear-erg
@@ -233,17 +233,22 @@ context. Weighted argumentation is deferred.
 
 ### Edge type labels
 
-A branch may carry an optional **edge type label** as a bracket prefix,
-turning the procedure graph into a typed knowledge graph:
+A branch may carry an optional **edge type label** placed immediately
+after the arrow, before the target. The label modifies the transition
+itself, turning the procedure graph into a typed knowledge graph:
 
 ```markdown
-- [Continue] Verified → #verify-turbine-trip
-- [Escalate] Reactor not tripped → [[FR-S.1]]
-- [Delegate] Symptoms ambiguous → [[ES-0.0]]
-- [Recover] All criteria met → [[ES-1.1]]
-- [Fallback] Cannot stabilize on intact SG → [[FR-H.1]]
-- [Terminate] Stable → END
+- Verified → [Continue] #verify-turbine-trip
+- Reactor not tripped → [Escalate] [[FR-S.1]]
+- Symptoms ambiguous → [Delegate] [[ES-0.0]]
+- All criteria met → [Recover] [[ES-1.1]]
+- Cannot stabilize on intact SG → [Fallback] [[FR-H.1]]
+- Stable → [Terminate] END
 ```
+
+(In v0.2 the label preceded the condition; v0.3 moved it after the
+arrow because the label semantically modifies the transition, not the
+branch. v0.2 syntax is rejected by v0.3 validators.)
 
 Canonical vocabulary (7 labels):
 
@@ -287,7 +292,7 @@ its frontmatter.
 ```yaml
 ---
 type: procedure-profile
-procedure-md: 0.2
+procedure-md: 0.3
 profile-id: nuclear-erg
 title: Nuclear Emergency Response Guidelines profile
 ---
@@ -620,7 +625,7 @@ of features must be announced one minor version before removal.
 ```markdown
 ---
 type: procedure
-procedure-md: 0.2
+procedure-md: 0.3
 procedure-id: example-engine-restart
 title: Engine Restart After In-Flight Shutdown
 profile: aviation-qrh
@@ -632,21 +637,21 @@ category: emergency-checklist
 ## Step 1 [id: confirm-shutdown]
 Check: affected engine N1 < 10% AND throttle at IDLE
 Caution: confirm correct engine before any action
-- [Continue] Confirmed → #attempt-restart
-- [Delegate] Not confirmed → [[engine-fire-checklist]]
+- Confirmed → [Continue] #attempt-restart
+- Not confirmed → [Delegate] [[engine-fire-checklist]]
 
 ## Step 2 [id: attempt-restart]
 Action: ENGINE START switch — IGN/START
 Within: 30s of stable airspeed
-- [Continue] Started (N1 increasing, EGT rising within limits) → #stabilize
-- [Continue] Not started → #abandon-restart
+- Started (N1 increasing, EGT rising within limits) → [Continue] #stabilize
+- Not started → [Continue] #abandon-restart
   Because: continued attempts risk hot start damage
 
 ## Step 3 [id: stabilize]
 Action: monitor N1 to idle, EGT within limits
 Until: stable idle for 60s
-- [Terminate] Stable → END
-- [Fallback] Unstable → #abandon-restart
+- Stable → [Terminate] END
+- Unstable → [Fallback] #abandon-restart
 
 ## Step 4 [id: abandon-restart]
 Action: ENGINE START switch — OFF
@@ -714,4 +719,4 @@ The following are deferred to v0.3 or later:
 
 ---
 
-*procmd v0.2 — last reviewed 2026-05-06.*
+*procmd v0.3 — last reviewed 2026-05-06.*
