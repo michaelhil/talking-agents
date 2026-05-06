@@ -9,9 +9,11 @@
 // If SAMSINN_GH_TOKEN is unset the route returns 503 — the UI surfaces it
 // as "bug reporting not configured on this server."
 //
-// Rate-limited via the shared per-IP limiter from routes/instances.ts (the
-// answer to the design question was "share the limiter" — one map, two
-// consumers).
+// Rate-limited via a dedicated per-IP limiter (10/hour by default) — see
+// getBugLimiter below. Not shared with instance-create: bug submissions
+// are rarer for legitimate users and the abuse path (spam to the
+// operator's public GitHub repo) needs a tighter cap than instance
+// creation does.
 //
 // Auto-context attached to every issue: app version + browser UA, sourced
 // from the request body (the UI fills these from /api/system/info +
@@ -21,10 +23,27 @@
 
 import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
-import { getSharedLimiter } from './instances.ts'
+import { createRateLimiter, type RateLimiter } from '../rate-limit.ts'
 
 const REPO = process.env.SAMSINN_GH_REPO ?? 'michaelhil/samsinn'
 const TOKEN = process.env.SAMSINN_GH_TOKEN ?? ''
+
+// A3: dedicated rate limiter, NOT shared with instance-create. Tighter
+// window — bug submissions are rare for legitimate users (10/hour is
+// generous; a frustrated user retrying still goes through), and the
+// abuse path (an authenticated tester spamming the operator's GitHub
+// repo) is meaningfully expensive to defend against later. Override
+// via SAMSINN_BUG_RATE_LIMIT and SAMSINN_BUG_RATE_WINDOW_MS.
+let bugLimiter: RateLimiter | null = null
+const getBugLimiter = (): RateLimiter => {
+  if (!bugLimiter) {
+    bugLimiter = createRateLimiter({
+      windowMs: Number(process.env.SAMSINN_BUG_RATE_WINDOW_MS) || 3_600_000, // 1 hour
+      max: Number(process.env.SAMSINN_BUG_RATE_LIMIT) || 10,
+    })
+  }
+  return bugLimiter
+}
 
 // Boot log — once at module load, never logs the token itself.
 if (TOKEN) {
@@ -75,7 +94,7 @@ export const bugRoutes: RouteEntry[] = [
     handler: async (req, _match, ctx) => {
       if (!TOKEN) return errorResponse('bug reporting not configured', 503)
 
-      const limit = getSharedLimiter().check(ctx.remoteAddress)
+      const limit = getBugLimiter().check(ctx.remoteAddress)
       if (!limit.ok) {
         const retryS = Math.ceil(limit.retryAfterMs / 1000)
         return new Response(
