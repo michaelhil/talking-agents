@@ -107,3 +107,14 @@ export type WSOutbound =
   | { readonly type: 'summary_run_delta'; readonly roomName: string; readonly target: SummaryTarget; readonly delta: string }
   | { readonly type: 'summary_run_completed'; readonly roomName: string; readonly target: SummaryTarget; readonly text: string }
   | { readonly type: 'summary_run_failed'; readonly roomName: string; readonly target: SummaryTarget; readonly reason: string }
+  // RAG documents — fired on every status transition (pending → indexed/failed)
+  // so the UI can refresh the corpus list without polling.
+  | {
+      readonly type: 'document_status'
+      readonly docId: string
+      readonly filename: string
+      readonly status: 'pending' | 'indexed' | 'failed'
+      readonly errorMessage?: string
+      readonly chunkCount?: number
+      readonly pageCount?: number
+    }

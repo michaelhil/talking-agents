@@ -39,6 +39,7 @@
     "bun": ">=1.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1"
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "unpdf": "^1.6.2"
   }
 }

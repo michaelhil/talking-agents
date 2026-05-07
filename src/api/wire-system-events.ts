@@ -217,6 +217,19 @@ export const wireSystemEvents = (
     broadcast({ type: 'summary_run_failed', roomName, target, reason })
   })
 
+  // === RAG documents — status transitions broadcast to the bound instance ===
+  system.setOnDocumentStatusChange((meta) => {
+    broadcast({
+      type: 'document_status',
+      docId: meta.docId,
+      filename: meta.filename,
+      status: meta.status,
+      ...(meta.errorMessage !== undefined ? { errorMessage: meta.errorMessage } : {}),
+      ...(meta.chunkCount !== undefined ? { chunkCount: meta.chunkCount } : {}),
+      ...(meta.pageCount !== undefined ? { pageCount: meta.pageCount } : {}),
+    })
+  })
+
   // === Ollama gateway health (shared across instances; broadcast unscoped) ===
   // Note: ollama gateway is a shared resource (created in SharedRuntime once).
   // Health changes go to ALL connected clients regardless of instance —

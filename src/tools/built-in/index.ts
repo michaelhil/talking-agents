@@ -8,3 +8,4 @@ export { createWriteSkillTool, createWriteToolTool, createTestToolTool, createLi
 export { createPackTools, type PackToolsDeps } from './pack-tools.ts'
 export { createGeoLookupTool, createGeoAddTool, createGeoRemoveTool, createGeoListCategoriesTool, createGeoListFeaturesTool } from './geo-tools.ts'
 export { createRecallTool, type RecallToolDeps } from './recall-tool.ts'
+export { createQueryDocumentsTool, type QueryDocumentsToolDeps } from './query-documents-tool.ts'

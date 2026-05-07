@@ -54,9 +54,13 @@ import {
   createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool,
   createPostToRoomTool, createGetRoomHistoryTool,
   createRecallTool,
+  createQueryDocumentsTool,
 } from './tools/built-in/index.ts'
 import { createVectorStore, type VectorStore } from './embed/vector-store.ts'
 import { createMemoryIndexer, buildEmbeddingProvidersFromKeys } from './embed/memory-indexer.ts'
+import { createDocumentManager, type DocumentManager } from './documents/manager.ts'
+import type { DocumentMetadata } from './documents/types.ts'
+import { dirname } from 'node:path'
 // Native-only tool calling — no capability probing needed
 import { type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/scripts/script-store.ts'
@@ -177,6 +181,10 @@ export interface System {
   readonly setOnSummaryRunCompleted: (cb: (roomId: string, target: SummaryTarget, text: string) => void) => void
   readonly setOnSummaryRunFailed: (cb: (roomId: string, target: SummaryTarget, reason: string) => void) => void
   readonly setOnSummaryConfigChanged: (cb: OnSummaryConfigChanged) => void
+  // RAG: per-instance document corpus. Present iff options.vectorsFile was
+  // provided (cookie-bound multi-tenant path); undefined in legacy tests.
+  readonly documents?: DocumentManager
+  readonly setOnDocumentStatusChange: (cb: (meta: DocumentMetadata) => void) => void
 
   // --- Observational logging (opt-in; off by default) ---
   // Subscribe an observer to every event kind supported by src/logging.
@@ -389,6 +397,28 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       })
     : undefined
 
+  // RAG: document corpus manager. Lives at <instance>/documents/. The
+  // manager is fire-and-forget on indexing; status transitions are
+  // pushed to subscribers via this late-binding slot (bootstrap wires
+  // it to broadcastToInstance for WS push).
+  const documentLateBinding: { onStatusChange: (m: DocumentMetadata) => void } = {
+    onStatusChange: () => { /* no-op until set */ },
+  }
+  const documents: DocumentManager | undefined = (vectorStore && options.vectorsFile)
+    ? createDocumentManager({
+        // documents/ sits as a sibling of vectors.jsonl under the instance root
+        rootDir: `${dirname(options.vectorsFile)}/documents`,
+        vectorStore,
+        providerKeys,
+        onStatusChange: (meta) => documentLateBinding.onStatusChange(meta),
+      })
+    : undefined
+  // Lazy initial load — scans on-disk metadata + resumes any pending jobs
+  // left behind by a process restart. Fire-and-forget; the upload route is
+  // gated on documents being present, but reads can race with this load
+  // and just see fewer rows until it finishes.
+  if (documents) void documents.load()
+
   const summaryEngine = createSummaryEngine({
     llm: llmService.bound({ source: 'summary' }),
     defaultModel: defaultSummaryModel,
@@ -536,6 +566,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     // legacy paths don't get it; agents see a clean tool list without
     // a non-functional `recall`.
     ...(vectorStore ? [createRecallTool({ vectorStore, providerKeys, house })] : []),
+    ...(vectorStore ? [createQueryDocumentsTool({ vectorStore, providerKeys })] : []),
   ])
 
   // Skill system — file-based behavioral templates with bundled tools.
@@ -865,6 +896,8 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     setOnSummaryRunCompleted: summaryRunCompleted.set,
     setOnSummaryRunFailed: summaryRunFailed.set,
     setOnSummaryConfigChanged: summaryConfigChanged.set,
+    ...(documents ? { documents } : {}),
+    setOnDocumentStatusChange: (cb) => { documentLateBinding.onStatusChange = cb },
     addEventObserver: (observer) => addEventObserver(observer, loggingState.sessionRef),
     logging,
     limitMetrics: shared.limitMetrics,
