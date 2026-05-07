@@ -21,6 +21,7 @@ export interface StoredCloudEntry {
   readonly maxConcurrent?: number   // override default in PROVIDER_PROFILES
   readonly pinnedModels?: ReadonlyArray<string>  // user-pinned model IDs
   readonly baseUrl?: string         // local providers (llamacpp): override the profile baseUrl
+  readonly embeddingModel?: string  // model id for the /embeddings surface (provider-specific)
 }
 
 export interface StoredOllamaEntry {
@@ -113,6 +114,9 @@ const validateShape = (raw: unknown, warnings: string[]): ProvidersFileShape => 
     if (typeof entry.baseUrl === 'string' && entry.baseUrl.trim().length > 0) {
       (out as { baseUrl?: string }).baseUrl = entry.baseUrl.trim()
     }
+    if (typeof entry.embeddingModel === 'string' && entry.embeddingModel.trim().length > 0) {
+      (out as { embeddingModel?: string }).embeddingModel = entry.embeddingModel.trim()
+    }
     cleaned[name] = out
   }
 
@@ -150,6 +154,7 @@ export interface MergedProviderEntry {
   readonly maskedKey: string                    // safe for UI / logs
   readonly pinnedModels: ReadonlyArray<string>  // [] when none
   readonly baseUrl: string | undefined          // local providers: override of profile baseUrl
+  readonly embeddingModel: string | undefined   // model id for /embeddings; '' / undefined → use provider default
 }
 
 export interface MergedProviders {
@@ -210,11 +215,19 @@ export const mergeWithEnv = (
       ? envBaseUrl
       : (stored?.baseUrl?.trim() || undefined)
 
+    // embeddingModel: env var first, then stored, else undefined (consumer
+    // falls through to provider default). Same precedence as other fields.
+    const envEmbeddingModel = env[`${name.toUpperCase()}_EMBEDDING_MODEL`]?.trim()
+    const embeddingModel = (envEmbeddingModel && envEmbeddingModel.length > 0)
+      ? envEmbeddingModel
+      : (stored?.embeddingModel?.trim() || undefined)
+
     cloud[name] = {
       apiKey, source, enabled, maxConcurrent,
       maskedKey: maskKey(apiKey),
       pinnedModels: stored?.pinnedModels ?? [],
       baseUrl,
+      embeddingModel,
     }
   }
 

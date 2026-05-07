@@ -7,7 +7,20 @@
 //
 // Auto-saver: debounced timer (5s default), flushes on SIGINT/SIGTERM.
 //
-// v21: current. Adds top-level `housePrompt` + `responseFormat` —
+// v22: current. Adds RAG-foundation state at the system level:
+//   - `embedderBinding` — once any per-instance embedding ingestion runs
+//     (memory fold or document upload), the instance commits to a
+//     (provider, model, dim) triplet. Mid-life dimension switches are
+//     impossible (vector stores cannot mix dims), so the binding is
+//     persisted and consulted by every subsequent ingestion. Absent on
+//     instances that have never ingested.
+//   - `documents` — uploaded document metadata (filename, size, status,
+//     etc.). The binary + extracted text + vectors live in sidecar files
+//     under instances/<id>/documents/ and instances/<id>/vectors.jsonl;
+//     only metadata is in-snapshot. Absent / empty array on instances
+//     with no uploads.
+// Snapshots from v21 are rejected at load (clean break per project policy).
+// v21: adds top-level `housePrompt` + `responseFormat` —
 // house-level state that has been get/set-able since v0 but was never
 // serialised. Operator customisations (system prompt, response format
 // rules) survived the request that set them but reverted to defaults on
@@ -64,7 +77,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 21
+export const SNAPSHOT_VERSION = 22
 
 // --- Snapshot schema ---
 
@@ -103,8 +116,37 @@ export interface PendingScrub {
   readonly scheduledAt: string  // ISO-8601 — for triage when scrubs accumulate
 }
 
+// Per-instance commitment to a single embedding model. Set on first
+// ingestion (memory fold or document upload), then frozen — vector
+// stores cannot mix dimensions across providers, so this triplet is the
+// per-index identity. Persisted so it survives restart/eviction.
+export interface EmbedderBindingSnapshot {
+  readonly provider: 'openai' | 'gemini'
+  readonly model: string
+  readonly dim: number
+  readonly boundAt: number   // ms since epoch — for telemetry only
+}
+
+// Document-corpus metadata. The binary lives at
+// instances/<id>/documents/<docId>/original.<ext>, the extracted plain
+// text at .../extracted.txt, and the vectors are interleaved into the
+// instance's vectors.jsonl (one record per chunk, namespace='document').
+export type DocumentStatus = 'pending' | 'indexed' | 'failed'
+
+export interface DocumentSnapshot {
+  readonly docId: string
+  readonly filename: string
+  readonly mimetype: string
+  readonly sizeBytes: number
+  readonly uploadTs: number
+  readonly status: DocumentStatus
+  readonly errorMessage?: string  // populated when status='failed'
+  readonly pageCount?: number
+  readonly chunkCount?: number
+}
+
 export interface SystemSnapshot {
-  readonly version: '21'
+  readonly version: '22'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -121,6 +163,9 @@ export interface SystemSnapshot {
   // place if absent. Persisted as v21 (was set/get-able but unsaved before).
   readonly housePrompt?: string
   readonly responseFormat?: string
+  // RAG state (v22). Both absent on instances that have never ingested.
+  readonly embedderBinding?: EmbedderBindingSnapshot
+  readonly documents?: ReadonlyArray<DocumentSnapshot>
 }
 
 // --- Minimal System interface for serialization ---
@@ -196,7 +241,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const responseFormat = system.house.getResponseFormat()
 
   return {
-    version: '21',
+    version: '22',
     timestamp: Date.now(),
     rooms,
     agents,
