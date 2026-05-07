@@ -72,6 +72,9 @@ export interface InstancePaths {
   readonly snapshot: string
   readonly logs: string
   readonly memory: string
+  // Per-instance vector index (RAG). Single JSONL file with header,
+  // vectors, and tombstones. See src/embed/vector-store.ts.
+  readonly vectors: string
 }
 
 export const instancePaths = (id: string): InstancePaths => {
@@ -82,6 +85,7 @@ export const instancePaths = (id: string): InstancePaths => {
     snapshot: join(root, 'snapshot.json'),
     logs: join(root, 'logs'),
     memory: join(root, 'memory'),
+    vectors: join(root, 'vectors.jsonl'),
   }
 }
 

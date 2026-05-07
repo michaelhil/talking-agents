@@ -224,7 +224,11 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
   // dominant source of empty-instance accumulation before Plan A.
   const buildSystem = async (id: string): Promise<{ system: System; autoSaver: AutoSaver }> => {
     const paths = instancePaths(id)
-    const system = createSystem({ shared: opts.shared, instanceLabel: id })
+    const system = createSystem({
+      shared: opts.shared,
+      instanceLabel: id,
+      vectorsFile: paths.vectors,
+    })
 
     // Restore snapshot if file exists. Corrupt snapshots get renamed
     // aside so the next save doesn't silently overwrite recoverable data.

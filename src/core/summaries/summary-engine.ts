@@ -19,6 +19,17 @@ export interface SummaryEngineDeps {
   readonly llm: { readonly stream?: LLMProvider['stream'] }
   // Fallback model when the room config doesn't pin one.
   readonly defaultModel: () => string
+  // Fired right BEFORE Room.replaceCompression is called — i.e. while the
+  // soon-to-be-compressed messages still exist as full Message objects.
+  // Awaited; if it throws, compression aborts (raw messages preserved).
+  // Use this to capture content for downstream indexing (RAG memory).
+  // The compression continues regardless of the handler's success unless
+  // it throws. Optional — older deployments without an indexer omit it.
+  readonly onCompressionStart?: (
+    roomId: string,
+    candidates: ReadonlyArray<Message>,
+    newSummaryText: string,
+  ) => Promise<void>
 }
 
 export interface RunOptions {
@@ -171,6 +182,16 @@ export const createSummaryEngine = (deps: SummaryEngineDeps) => {
     const text = await streamToString(iter, opts.onDelta)
     if (!text) return null
     const compressedIds = candidates.map(m => m.id)
+    // Capture content for indexers BEFORE replaceCompression splices the
+    // messages out of the room (see room.replaceCompression — the raw
+    // messages are gone after this returns). If the handler throws,
+    // compression aborts — the raw messages stay in the room and the
+    // user can retry. Errors that happen INSIDE the handler are the
+    // handler's responsibility to log; we let them propagate so a
+    // misbehaving indexer can't silently corrupt the index.
+    if (deps.onCompressionStart) {
+      await deps.onCompressionStart(room.profile.id, candidates, text)
+    }
     room.replaceCompression(compressedIds, text)
     return { text, compressedIds }
   }

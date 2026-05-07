@@ -53,7 +53,10 @@ import {
   createListAgentsTool, createGetMyContextTool, createSetDeliveryModeTool,
   createPauseRoomTool, createMuteAgentTool, createSetRoomPromptTool,
   createPostToRoomTool, createGetRoomHistoryTool,
+  createRecallTool,
 } from './tools/built-in/index.ts'
+import { createVectorStore, type VectorStore } from './embed/vector-store.ts'
+import { createMemoryIndexer, buildEmbeddingProvidersFromKeys } from './embed/memory-indexer.ts'
 // Native-only tool calling — no capability probing needed
 import { type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/scripts/script-store.ts'
@@ -211,6 +214,10 @@ export interface CreateSystemOptions {
   // Diagnostic label used in unsubscribed-callback warnings (lateBinding).
   // Threaded by the registry; tests/headless paths can omit (becomes "?").
   readonly instanceLabel?: string
+  // Per-instance vector store path (RAG features). When set, createSystem
+  // wires the memory indexer + recall tool. Omitted in tests / single-tenant
+  // paths that don't have an instance ID — RAG features are no-op there.
+  readonly vectorsFile?: string
 }
 
 export const createSystem = (options: CreateSystemOptions = {}): System => {
@@ -368,7 +375,25 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     const model = firstAi ? (firstAi as AIAgent).getModel?.() : undefined
     return model ?? 'llama3.2'
   }
-  const summaryEngine = createSummaryEngine({ llm: llmService.bound({ source: 'summary' }), defaultModel: defaultSummaryModel })
+  // RAG: per-instance vector store + memory indexer. The store is lazy —
+  // first .add() opens / appends to the JSONL file. Without options.vectorsFile
+  // (e.g. legacy single-tenant + tests) the store and tool are not wired.
+  const vectorStore: VectorStore | undefined = options.vectorsFile
+    ? createVectorStore(options.vectorsFile)
+    : undefined
+  const memoryIndexer = vectorStore
+    ? createMemoryIndexer({
+        vectorStore,
+        getProviders: () => buildEmbeddingProvidersFromKeys(providerKeys),
+        getRoomName: (roomId) => house.getRoom(roomId)?.profile.name,
+      })
+    : undefined
+
+  const summaryEngine = createSummaryEngine({
+    llm: llmService.bound({ source: 'summary' }),
+    defaultModel: defaultSummaryModel,
+    ...(memoryIndexer ? { onCompressionStart: memoryIndexer.handleCompressionStart } : {}),
+  })
   const summaryScheduler = createSummaryScheduler({
     engine: summaryEngine,
     getRoom: (id) => house.getRoom(id),
@@ -506,6 +531,11 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     // Utility tools — bound to per-instance house
     createGetRoomHistoryTool(house),
     createPostToRoomTool(house),
+    // RAG: recall tool — only registered when this instance has a vector
+    // store (i.e. options.vectorsFile was provided). Tests + single-tenant
+    // legacy paths don't get it; agents see a clean tool list without
+    // a non-functional `recall`.
+    ...(vectorStore ? [createRecallTool({ vectorStore, providerKeys, house })] : []),
   ])
 
   // Skill system — file-based behavioral templates with bundled tools.
