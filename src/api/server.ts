@@ -99,6 +99,27 @@ const serveStatic = async (pathname: string, uiPath: string, transpiler: Bun.Tra
     }
   }
 
+  // /core/* — UI modules occasionally import shared, browser-safe code from
+  // src/core/ (e.g., the canonical render-validator types live in core
+  // because the eval loop validates them server-side). The server resolves
+  // these to src/core/* and applies the same path-traversal guard. Pure-data
+  // modules only — anything pulling in node:* APIs would explode at runtime.
+  if (pathname.startsWith('/core/') && pathname.endsWith('.ts')) {
+    const corePath = normalize(`${uiPath}/..${pathname}`)
+    const coreRoot = normalize(`${uiPath}/../core`)
+    if (!corePath.startsWith(coreRoot)) {
+      return new Response('Forbidden', { status: 403 })
+    }
+    const file = Bun.file(corePath)
+    if (await file.exists()) {
+      const source = await file.text()
+      const js = transpiler.transformSync(source)
+      return new Response(js, {
+        headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' },
+      })
+    }
+  }
+
   if (pathname === '/dist.css') {
     const file = Bun.file(`${uiPath}/dist.css`)
     if (await file.exists()) {
