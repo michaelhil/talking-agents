@@ -23,29 +23,66 @@ Tips:
 - Mermaid v10 syntax. `flowchart` (not `graph`) is preferred for new diagrams.
 - For sequence diagrams use `sequenceDiagram`. For state machines use `stateDiagram-v2`.
 
-## Maps (geographic visualizations with markers, lines, polygons)
+## Maps (geographic visualizations)
 
-Use a ```map fence containing a JSON envelope:
+Use a ```map fence containing a JSON envelope. **The schema is strict** —
+follow it exactly.
 
 ```map
 {
-  "view": { "center": [60.193, 11.100], "zoom": 8 },
+  "view": { "center": [60.472, 8.469], "zoom": 5 },
   "features": [
-    { "type": "marker", "position": [60.193, 11.100], "title": "Oslo Airport" },
-    { "type": "marker", "position": [59.913, 10.752], "title": "Oslo center" },
-    { "type": "line", "points": [[60.193, 11.100], [59.913, 10.752]], "color": "#1d4ed8" }
+    { "type": "marker", "lat": 59.9139, "lng": 10.7522, "label": "Oslo" },
+    { "type": "marker", "lat": 60.3913, "lng": 5.3221, "label": "Bergen" },
+    { "type": "line", "coords": [[59.9139, 10.7522], [60.3913, 5.3221]], "color": "#1d4ed8" }
   ]
 }
 ```
 
-Schema:
-- `view.center: [lat, lng]` — initial center. `lat` -90..90, `lng` -180..180.
-- `view.zoom: number` — typical 3 (continent) to 15 (street). Default ~10.
-- `features[]` — each is one of:
-  - `{ type: "marker", position: [lat, lng], title?: string, icon?: string }`
-  - `{ type: "line", points: [[lat,lng], ...], color?: string, weight?: number }`
-  - `{ type: "polygon", points: [[lat,lng], ...], color?: string, fillOpacity?: number }`
-- Coordinate aliases the renderer accepts: `lat`/`latitude`, `lng`/`lon`/`longitude`. Stick to `lat`/`lng` when generating.
+### Schema
+
+`view` (optional):
+- `center: [lat, lng]` — tuple. lat ∈ [-90, 90], lng ∈ [-180, 180].
+- `zoom: number` — typical 3 (continent) to 15 (street). Default ~10.
+
+`features[]` (required) — each feature is one of:
+
+**marker** — flat `lat`/`lng` fields, NOT a `position` tuple:
+```json
+{ "type": "marker", "lat": 59.91, "lng": 10.75, "label": "Oslo", "icon": "city" }
+```
+- `lat`, `lng`: required numbers (or `latitude`/`longitude`/`lon` aliases).
+- `label`: optional string shown next to the marker.
+- `tooltip`: optional string shown on hover.
+- `icon`: optional, one of: `pin`, `platform`, `airport`, `plane`, `ship`, `city`, `dot`. Default is `pin`. Unknown icons are rejected.
+- `color`: optional CSS color.
+
+**line** / **track** — `coords` array of `[lat, lng]` tuples:
+```json
+{ "type": "line", "coords": [[59.91, 10.75], [60.39, 5.32]], "color": "#1d4ed8", "weight": 3 }
+```
+- `coords`: required, ≥ 2 `[lat, lng]` pairs.
+- `color`, `weight`: optional.
+
+**polygon** — `coords` array of `[lat, lng]` tuples (≥ 3):
+```json
+{ "type": "polygon", "coords": [[60,5],[60,11],[59,11]], "color": "#000", "fillColor": "#1d4ed8" }
+```
+
+**circle** — flat `lat`/`lng` + `radius` in meters:
+```json
+{ "type": "circle", "lat": 59.91, "lng": 10.75, "radius": 5000, "color": "#dc2626" }
+```
+
+### Common mistakes — DO NOT do these
+
+- ❌ `"position": [lat, lng]` — there is no `position` field. Use flat `lat`/`lng`.
+- ❌ `"title": "..."` — use `label` (or `tooltip` for hover-only).
+- ❌ `"points": [[lat,lng], ...]` — use `coords`.
+- ❌ Mixing `[lng, lat]` (GeoJSON order) — samsinn uses `[lat, lng]` everywhere.
+- ❌ Inventing icon names — only `pin | platform | airport | plane | ship | city | dot` are accepted.
+
+If a map fails to render, the UI shows the validation errors below the fence. Read them, fix the schema, send a new fence.
 
 ## Common refusal you must NOT emit
 
@@ -58,7 +95,7 @@ Instead, just emit the fence and a one-sentence caption.
 
 ## When the request is ambiguous
 
-If the user says "show me X on a map" and you don't have coordinates, either:
+If the user says "show me X on a map" and you don't have coordinates:
 - Use approximate coordinates from your knowledge (and say so in one line below the fence)
 - OR ask one specific question ("Which city — Oslo or Bergen?") then produce the map next turn
 
