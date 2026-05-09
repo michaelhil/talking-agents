@@ -129,6 +129,101 @@ describe('validateMapEnvelope — happy paths', () => {
     }
   })
 
+  // === LLM-tolerance happy paths ===
+  // Common variations on the canonical marker/coords shapes that LLMs
+  // produce. Each of these used to fail validation before the resolveX
+  // helpers landed; now they're silently normalized to the canonical form.
+
+  test('marker accepts position: [lat, lng] tuple', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', position: [59.91, 10.75] }],
+    })
+    const ok = expectOk(r)
+    if (ok.envelope.features[0]?.type === 'marker') {
+      expect(ok.envelope.features[0].lat).toBe(59.91)
+      expect(ok.envelope.features[0].lng).toBe(10.75)
+    }
+  })
+
+  test('marker accepts position: { lat, lng } object', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', position: { lat: 59.91, lng: 10.75 } }],
+    })
+    expectOk(r)
+  })
+
+  test('marker accepts point: [lat, lng]', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', point: [59.91, 10.75] }],
+    })
+    expectOk(r)
+  })
+
+  test('marker accepts coords: [lat, lng] singular', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', coords: [59.91, 10.75] }],
+    })
+    expectOk(r)
+  })
+
+  test('marker accepts title and name as label aliases', () => {
+    const a = validateMapEnvelope({
+      features: [{ type: 'marker', lat: 60, lng: 5, title: 'Oslo' }],
+    })
+    expectOk(a)
+    if (a.ok && a.envelope.features[0]?.type === 'marker') {
+      expect(a.envelope.features[0].label).toBe('Oslo')
+    }
+    const b = validateMapEnvelope({
+      features: [{ type: 'marker', lat: 60, lng: 5, name: 'Oslo' }],
+    })
+    expectOk(b)
+    if (b.ok && b.envelope.features[0]?.type === 'marker') {
+      expect(b.envelope.features[0].label).toBe('Oslo')
+    }
+  })
+
+  test('canonical label wins when both label and title are present', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', lat: 60, lng: 5, label: 'A', title: 'B' }],
+    })
+    expectOk(r)
+    if (r.ok && r.envelope.features[0]?.type === 'marker') {
+      expect(r.envelope.features[0].label).toBe('A')
+    }
+  })
+
+  test('marker icon accepts mixed-case and surrounding whitespace', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', lat: 60, lng: 5, icon: ' Pin ' }],
+    })
+    expectOk(r)
+    if (r.ok && r.envelope.features[0]?.type === 'marker') {
+      expect(r.envelope.features[0].icon).toBe('pin')
+    }
+  })
+
+  test('line accepts points alias for coords', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'line', points: [[60, 5], [61, 6]] }],
+    })
+    expectOk(r)
+  })
+
+  test('line accepts coordinates alias for coords', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'line', coordinates: [[60, 5], [61, 6]] }],
+    })
+    expectOk(r)
+  })
+
+  test('polygon accepts path alias for coords', () => {
+    const r = validateMapEnvelope({
+      features: [{ type: 'polygon', path: [[60, 5], [60, 6], [61, 5]] }],
+    })
+    expectOk(r)
+  })
+
   test('all icon enum values accepted', () => {
     for (const icon of MARKER_ICONS) {
       const r = validateMapEnvelope({ features: [{ type: 'marker', lat: 60, lng: 5, icon }] })
@@ -205,6 +300,19 @@ describe('validateMapEnvelope — structured errors', () => {
     const r = validateMapEnvelope(42)
     const errs = expectErrors(r)
     if (!errs.ok) expect(errs.errors[0]?.path).toBe('')
+  })
+
+  // Negative cases for the LLM-tolerance helpers — these must STILL fail.
+  test('marker with [lng, lat] tuple in position is rejected by lat range check (no auto-flip)', () => {
+    // We deliberately don't auto-detect [lng, lat] order; the range check
+    // catches obviously-wrong values like [13.4, -180] (Berlin in lng, then
+    // -180 lat which is out of range). This pins that we surface a real
+    // error rather than swallowing it.
+    const r = validateMapEnvelope({
+      features: [{ type: 'marker', position: [-180, 60] }],   // intent was [lat, lng] = [60, -180]; we reject
+    })
+    const errs = expectErrors(r)
+    if (!errs.ok) expect(errs.errors[0]?.path).toBe('features[0].lat')
   })
 
   test('multiple errors aggregate', () => {

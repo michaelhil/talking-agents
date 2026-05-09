@@ -107,6 +107,69 @@ const resolveLat = (raw: Record<string, unknown>): number | undefined =>
 const resolveLng = (raw: Record<string, unknown>): number | undefined =>
   resolveCoord(raw, 'lng', 'lon', 'longitude')
 
+// === LLM-tolerance helpers — accept common variations on the canonical
+// shapes without auto-flipping coordinate order. The risk we explicitly
+// don't take: silently interpreting GeoJSON's [lng, lat] order as our
+// [lat, lng] order. Both are 2-tuples of numbers; without a key to
+// disambiguate, accepting either silently would render markers in the
+// wrong hemisphere ~half the time. We surface the value as-is and let
+// the range check catch coordinates outside [-90, 90].
+// ============================================================================
+
+// Accept a label from any of: label, title, name. Canonical: label.
+const resolveLabel = (raw: Record<string, unknown>): string | undefined => {
+  for (const k of ['label', 'title', 'name'] as const) {
+    const v = raw[k]
+    if (typeof v === 'string' && v.length > 0) return v
+  }
+  return undefined
+}
+
+// Accept a marker/circle point from any of: flat lat+lng (canonical),
+// position (tuple OR object), point (tuple OR object), coords (tuple).
+// All tuples are interpreted as [lat, lng].
+const resolveLatLngPoint = (raw: Record<string, unknown>): { lat?: number; lng?: number } => {
+  // Canonical first.
+  const flatLat = resolveLat(raw)
+  const flatLng = resolveLng(raw)
+  if (flatLat !== undefined && flatLng !== undefined) return { lat: flatLat, lng: flatLng }
+  // Fall back to bag-of-aliases. Each alias may be a [lat, lng] tuple OR
+  // a nested {lat, lng} object — we accept both.
+  for (const k of ['position', 'point', 'coords'] as const) {
+    const v = raw[k]
+    if (Array.isArray(v) && v.length === 2) {
+      const lat = typeof v[0] === 'number' ? v[0] : undefined
+      const lng = typeof v[1] === 'number' ? v[1] : undefined
+      if (lat !== undefined && lng !== undefined) return { lat, lng }
+    }
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const inner = v as Record<string, unknown>
+      const lat = resolveLat(inner)
+      const lng = resolveLng(inner)
+      if (lat !== undefined && lng !== undefined) return { lat, lng }
+    }
+  }
+  return { lat: flatLat, lng: flatLng }   // partial — caller's range check fails clearly
+}
+
+// Accept a coordinate path from any of: coords (canonical), points,
+// coordinates, path. Each entry must be a [lat, lng] tuple.
+const resolveCoordsPath = (raw: Record<string, unknown>): unknown => {
+  for (const k of ['coords', 'points', 'coordinates', 'path'] as const) {
+    const v = raw[k]
+    if (Array.isArray(v)) return v
+  }
+  return undefined
+}
+
+// Lowercase-and-trim a marker icon string before checking the closed enum.
+// "Pin" / " pin " → "pin". Returns undefined for non-strings (caller's
+// type guard handles the error).
+const normalizeIconName = (raw: unknown): unknown => {
+  if (typeof raw !== 'string') return raw
+  return raw.trim().toLowerCase()
+}
+
 const validateView = (raw: unknown, errs: MapValidationError[]): MapView | undefined => {
   if (raw === undefined || raw === null) return undefined
   if (typeof raw !== 'object') {
@@ -130,35 +193,38 @@ const validateView = (raw: unknown, errs: MapValidationError[]): MapView | undef
 }
 
 const validateMarker = (raw: Record<string, unknown>, path: string, errs: MapValidationError[]): MapFeature | null => {
-  const lat = resolveLat(raw)
-  const lng = resolveLng(raw)
+  const { lat, lng } = resolveLatLngPoint(raw)
   if (lat === undefined || !inLatRange(lat)) {
-    errs.push({ path: `${path}.lat`, message: 'marker.lat must be a number in [-90, 90] (also accepts: latitude)' })
+    errs.push({ path: `${path}.lat`, message: 'marker.lat must be a number in [-90, 90] (also accepts: latitude, position[0], point[0], coords[0])' })
     return null
   }
   if (lng === undefined || !inLngRange(lng)) {
-    errs.push({ path: `${path}.lng`, message: 'marker.lng must be a number in [-180, 180] (also accepts: lon, longitude)' })
+    errs.push({ path: `${path}.lng`, message: 'marker.lng must be a number in [-180, 180] (also accepts: lon, longitude, position[1], point[1], coords[1])' })
     return null
   }
   // Strict on icon — unknown icon is a structured error, not silent fallback.
-  // The validator surfaces a list of the closed set so the agent can correct.
+  // We DO accept case/whitespace variations ("Pin" / " pin ") before the
+  // enum check because LLMs frequently capitalize labels.
   let icon: MarkerIcon | undefined
   if (raw.icon !== undefined) {
-    if (!isMarkerIcon(raw.icon)) {
+    const normalized = normalizeIconName(raw.icon)
+    if (!isMarkerIcon(normalized)) {
       errs.push({
         path: `${path}.icon`,
         message: `unknown marker icon ${JSON.stringify(raw.icon)}. Valid: ${MARKER_ICONS.join(', ')}.`,
       })
       return null
     }
-    icon = raw.icon
+    icon = normalized
   }
+  const label = resolveLabel(raw)
+  const tooltip = typeof raw.tooltip === 'string' ? raw.tooltip : undefined
   const out: MapFeature = {
     type: 'marker',
     lat,
     lng,
-    ...(typeof raw.label === 'string' ? { label: raw.label } : {}),
-    ...(typeof raw.tooltip === 'string' ? { tooltip: raw.tooltip } : {}),
+    ...(label ? { label } : {}),
+    ...(tooltip ? { tooltip } : {}),
     ...(typeof raw.color === 'string' ? { color: raw.color } : {}),
     ...(icon ? { icon } : {}),
   }
@@ -166,40 +232,41 @@ const validateMarker = (raw: Record<string, unknown>, path: string, errs: MapVal
 }
 
 const validateLine = (raw: Record<string, unknown>, kind: 'line' | 'track', path: string, errs: MapValidationError[]): MapFeature | null => {
-  if (!isLatLngArray(raw.coords) || raw.coords.length < 2) {
-    errs.push({ path: `${path}.coords`, message: `${kind}.coords must be an array of ≥ 2 [lat, lng] pairs` })
+  const path2d = resolveCoordsPath(raw)
+  if (!isLatLngArray(path2d) || path2d.length < 2) {
+    errs.push({ path: `${path}.coords`, message: `${kind}.coords must be an array of ≥ 2 [lat, lng] pairs (also accepts: points, coordinates, path)` })
     return null
   }
   return {
     type: kind,
-    coords: raw.coords,
+    coords: path2d,
     ...(typeof raw.color === 'string' ? { color: raw.color } : {}),
     ...(typeof raw.weight === 'number' ? { weight: raw.weight } : {}),
   }
 }
 
 const validatePolygon = (raw: Record<string, unknown>, path: string, errs: MapValidationError[]): MapFeature | null => {
-  if (!isLatLngArray(raw.coords) || raw.coords.length < 3) {
-    errs.push({ path: `${path}.coords`, message: 'polygon.coords must be an array of ≥ 3 [lat, lng] pairs' })
+  const path2d = resolveCoordsPath(raw)
+  if (!isLatLngArray(path2d) || path2d.length < 3) {
+    errs.push({ path: `${path}.coords`, message: 'polygon.coords must be an array of ≥ 3 [lat, lng] pairs (also accepts: points, coordinates, path)' })
     return null
   }
   return {
     type: 'polygon',
-    coords: raw.coords,
+    coords: path2d,
     ...(typeof raw.color === 'string' ? { color: raw.color } : {}),
     ...(typeof raw.fillColor === 'string' ? { fillColor: raw.fillColor } : {}),
   }
 }
 
 const validateCircle = (raw: Record<string, unknown>, path: string, errs: MapValidationError[]): MapFeature | null => {
-  const lat = resolveLat(raw)
-  const lng = resolveLng(raw)
+  const { lat, lng } = resolveLatLngPoint(raw)
   if (lat === undefined || !inLatRange(lat)) {
-    errs.push({ path: `${path}.lat`, message: 'circle.lat must be a number in [-90, 90] (also accepts: latitude)' })
+    errs.push({ path: `${path}.lat`, message: 'circle.lat must be a number in [-90, 90] (also accepts: latitude, position[0], point[0])' })
     return null
   }
   if (lng === undefined || !inLngRange(lng)) {
-    errs.push({ path: `${path}.lng`, message: 'circle.lng must be a number in [-180, 180] (also accepts: lon, longitude)' })
+    errs.push({ path: `${path}.lng`, message: 'circle.lng must be a number in [-180, 180] (also accepts: lon, longitude, position[1], point[1])' })
     return null
   }
   if (typeof raw.radius !== 'number' || raw.radius <= 0) {

@@ -74,13 +74,24 @@ follow it exactly.
 { "type": "circle", "lat": 59.91, "lng": 10.75, "radius": 5000, "color": "#dc2626" }
 ```
 
-### Common mistakes — DO NOT do these
+### Tolerated variations (the validator accepts these but prefer the canonical form)
 
-- ❌ `"position": [lat, lng]` — there is no `position` field. Use flat `lat`/`lng`.
-- ❌ `"title": "..."` — use `label` (or `tooltip` for hover-only).
-- ❌ `"points": [[lat,lng], ...]` — use `coords`.
-- ❌ Mixing `[lng, lat]` (GeoJSON order) — samsinn uses `[lat, lng]` everywhere.
-- ❌ Inventing icon names — only `pin | platform | airport | plane | ship | city | dot` are accepted.
+The validator silently normalizes a few common LLM variations to the canonical
+shape — you're not required to use them, but if your output drifts, it'll still
+render:
+
+- Marker point: `position: [lat, lng]`, `position: { lat, lng }`, `point: [lat, lng]`, `coords: [lat, lng]` are all accepted as aliases for flat `lat`/`lng`.
+- Marker label: `title: "..."` and `name: "..."` work as aliases for `label`.
+- Line/polygon coords: `points`, `coordinates`, `path` are accepted as aliases for `coords`.
+- Marker icon: case-insensitive with surrounding whitespace stripped (`"Pin"` → `pin`).
+
+### Hard rules — these still fail
+
+- ❌ Coordinate order is ALWAYS `[lat, lng]`. The validator does NOT auto-flip
+  GeoJSON's `[lng, lat]`. If you give it `position: [10.75, 59.91]` thinking
+  it's `[lng, lat]`, it'll try lat=10.75, lng=59.91 — wrong location, no warning.
+- ❌ Icon names are a closed enum: `pin | platform | airport | plane | ship | city | dot`. Inventing names fails with a list of valid options.
+- ❌ Latitudes outside [-90, 90] and longitudes outside [-180, 180] are rejected.
 
 If a map fails to render, the UI shows the validation errors below the fence. Read them, fix the schema, send a new fence.
 
