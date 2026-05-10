@@ -24,6 +24,22 @@ export type MessageErrorCode =
   | 'tools_unavailable'
   | 'unknown'
 
+// === Causality: what subsystem caused this message ===
+//
+// Stamped at message-construction sites in scripts, scenarios, and triggers
+// so the UI can surface "this message exists because step 3 of script X
+// advanced" / "fired by trigger Y". Optional — the vast majority of chat
+// messages have no upstream automation cause.
+//
+// IMPORTANT: this is metadata, not LLM context. The agent's context-builder
+// strips `cause` so it doesn't bleed into the prompt as noise.
+
+export interface MessageCause {
+  readonly kind: 'script' | 'scenario' | 'trigger'
+  readonly name: string                 // script/scenario/trigger name
+  readonly step?: number                // 0-based step index (scripts) or op index (scenarios)
+}
+
 export interface Message {
   readonly id: string
   readonly senderId: string
@@ -34,6 +50,7 @@ export interface Message {
   readonly roomId: string             // every message lives in a room
   readonly correlationId?: string     // shared across multi-target deliveries
   readonly inReplyTo?: ReadonlyArray<string>  // IDs of messages this response is causally derived from
+  readonly cause?: MessageCause       // see MessageCause docstring above
   readonly generationMs?: number
 
   // --- Chat / eval telemetry (set by spawn.onDecision on chat/pass messages) ---

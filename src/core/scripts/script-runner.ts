@@ -117,11 +117,19 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
   const postStageCard = (roomId: string, content: string): void => {
     const room = getSystem().house.getRoom(roomId)
     if (!room) return
+    // Stamp causality so the UI can surface "via script: X step N". Fall
+    // back to room-only context when there's no live run (rare; abort path
+    // posts the final stage card after the run is already cleaned).
+    const run = runs.get(roomId)
+    const cause = run
+      ? { kind: 'script' as const, name: run.script.name, step: run.currentStep }
+      : undefined
     room.post({
       senderId: SYSTEM_SENDER_ID,
       senderName: 'Stage',
       content,
       type: 'chat',
+      ...(cause ? { cause } : {}),
     })
   }
 

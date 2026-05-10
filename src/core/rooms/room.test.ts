@@ -476,5 +476,40 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
     room.post({ senderId: 'a', senderName: 'Alice', content: '[[Bob]] directed msg', type: 'chat' })
     expect(room.getMessageCount()).toBe(before + 1)
   })
+
+  test('cause field round-trips through post → getRecent (Phase E observability)', () => {
+    const room = createRoom({ id: 'r-cause', name: 'cr', createdAt: Date.now(), createdBy: 'sys' })
+    room.post({
+      senderId: 'sys-stage',
+      senderName: 'Stage',
+      content: '[Script "Demo"] Step 1: Greet',
+      type: 'chat',
+      cause: { kind: 'script', name: 'demo', step: 0 },
+    })
+    room.post({
+      senderId: 'sys',
+      content: 'welcome banner',
+      type: 'system',
+      cause: { kind: 'scenario', name: 'welcome-tour', step: 3 },
+    })
+    room.post({
+      senderId: 'reminder',
+      senderName: 'Reminder',
+      content: 'morning briefing',
+      type: 'chat',
+      cause: { kind: 'trigger', name: 'morning briefing' },
+    })
+    const recent = room.getRecent(10)
+    expect(recent).toHaveLength(3)
+    expect(recent[0]!.cause).toEqual({ kind: 'script', name: 'demo', step: 0 })
+    expect(recent[1]!.cause).toEqual({ kind: 'scenario', name: 'welcome-tour', step: 3 })
+    expect(recent[2]!.cause).toEqual({ kind: 'trigger', name: 'morning briefing' })
+  })
+
+  test('messages without cause keep cause undefined (back-compat)', () => {
+    const room = createRoom({ id: 'r-nc', name: 'nc', createdAt: Date.now(), createdBy: 'sys' })
+    room.post({ senderId: 'a', senderName: 'Alice', content: 'just a chat', type: 'chat' })
+    expect(room.getRecent(1)[0]!.cause).toBeUndefined()
+  })
 })
 

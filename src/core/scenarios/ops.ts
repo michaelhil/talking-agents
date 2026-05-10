@@ -111,9 +111,10 @@ export const opHandlers: HandlerMap = {
     }
   },
 
-  'post-message': async (op, { system }) => {
+  'post-message': async (op, { system, state }) => {
     const room = system.house.getRoom(op.room)
     if (!room) throw new Error(`post-message: room "${op.room}" not found`)
+    const cause = { kind: 'scenario' as const, name: state.title, step: state.currentOpIndex }
     if (op.as === 'system') {
       // System-typed posts behave like setup cards (welcome banners, scenario
       // explainers). Dedupe against the most recent 50 messages so re-running
@@ -122,12 +123,12 @@ export const opHandlers: HandlerMap = {
       const recent = room.getRecent(50)
       const dup = recent.find(m => m.type === 'system' && m.content === op.body)
       if (dup) return
-      room.post({ senderId: SYSTEM_SENDER_ID, content: op.body, type: 'system' })
+      room.post({ senderId: SYSTEM_SENDER_ID, content: op.body, type: 'system', cause })
       return
     }
     const sender = system.team.getAgent(op.as)
     if (!sender) throw new Error(`post-message: sender "${op.as}" not found`)
-    room.post({ senderId: sender.id, content: op.body, type: 'chat' })
+    room.post({ senderId: sender.id, content: op.body, type: 'chat', cause })
   },
 
   'start-script': async (op, { system, arrangeExternal }) => {

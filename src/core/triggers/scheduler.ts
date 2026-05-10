@@ -120,6 +120,7 @@ export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler =>
           senderName: agent.name,
           content: trigger.prompt,
           type: 'chat',
+          cause: { kind: 'trigger', name: trigger.name },
         })
       } catch (err) {
         console.error(`[trigger ${trigger.name}] post failed:`, err)
