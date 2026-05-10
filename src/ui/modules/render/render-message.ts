@@ -291,6 +291,20 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     appendWhisperBadge(div, msg.senderName, msg.roomId, msg.id)
   }
 
+  // Causality caption — surfaces "via script: X step N" / "via scenario: Y op M"
+  // / "via trigger: Z" when an automation subsystem produced this message.
+  // Subtle (text-text-subtle, small) so it doesn't compete with the message
+  // body. Tooltip carries the full attribution. See Message.cause docs.
+  if (msg.cause) {
+    const cap = document.createElement('div')
+    cap.className = 'text-[10px] text-text-subtle mt-0.5'
+    const stepFragment = msg.cause.step !== undefined ? ` step ${msg.cause.step + 1}` : ''
+    const label = `via ${msg.cause.kind}: ${msg.cause.name}${stepFragment}`
+    cap.textContent = label
+    cap.title = label
+    div.appendChild(cap)
+  }
+
   container.appendChild(div)
 
   if (isJoinLeave) {

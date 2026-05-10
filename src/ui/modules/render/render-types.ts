@@ -22,6 +22,9 @@ export interface UIMessage {
   // Error telemetry (set when type === 'error')
   errorCode?: string
   errorProvider?: string
+  // Causality: which automation subsystem produced this message. Mirrors
+  // server Message.cause; rendered as a small caption under the bubble.
+  cause?: { kind: 'script' | 'scenario' | 'trigger'; name: string; step?: number }
 }
 
 export interface RoomProfile {
