@@ -13,6 +13,7 @@ import { ensureLeaflet, type LeafletApi, type LeafletMap } from './api.ts'
 import { parseMapSource, collectLatLngs, type ParsedMap, type EnvelopeFeature } from './normalise.ts'
 import { showMapFallback } from './fallback.ts'
 import { buildIconSpec } from './icons.ts'
+import { addPostRenderProcessor } from '../../extensions/post-render-registry.ts'
 
 const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -177,6 +178,10 @@ export const renderMapBlocks = async (container: HTMLElement): Promise<void> => 
     void renderInto(wrapper, source)
   }
 }
+
+// Self-register on module-load. Imported after mermaid in render-message.ts,
+// so it lands second in the registry (preserves the prior const-array order).
+addPostRenderProcessor('map', renderMapBlocks)
 
 export const renderMapSource = async (container: HTMLElement, source: string): Promise<void> => {
   // Artifact path — caller passes the raw source. Make sure the container

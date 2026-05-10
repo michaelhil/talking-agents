@@ -2,17 +2,15 @@
 // Handles markdown rendering via marked+DOMPurify (globals) with graceful fallback.
 
 import type { UIMessage, AgentInfo } from '../render/render-types.ts'
-import { renderMermaidBlocks } from '../mermaid/index.ts'
-import { renderMapBlocks } from '../map/index.ts'
-
-// Post-processors run on the rendered markdown container in order. Each
-// looks for its own fenced-block class and replaces matching <pre><code>
-// nodes with a rendered widget. Adding a new processor (charts, sortable
-// tables, ...) is one push to this array — don't grow the call site.
-const postRenderProcessors: ReadonlyArray<(c: HTMLElement) => Promise<void>> = [
-  renderMermaidBlocks,
-  renderMapBlocks,
-]
+// Import order matters: mermaid first, then map. Each module self-registers
+// its post-render processor at module-load (see ../mermaid/index.ts and
+// ../map/index.ts). Adding a new built-in inline-block type = create a new
+// module that calls addPostRenderProcessor() at top-level and import it
+// here. Pack-gated extensions register/unregister via the extension mount
+// layer (../../extensions/registry.ts), not via static import.
+import '../mermaid/index.ts'
+import '../map/index.ts'
+import { getPostRenderProcessors } from '../../extensions/post-render-registry.ts'
 import { icon } from '../icon.ts'
 import { appendWhisperBadge } from '../whisper-badge.ts'
 import { showToast } from '../toast.ts'
@@ -64,7 +62,7 @@ const renderMarkdownContent = (el: HTMLElement, text: string): void => {
   if (w.marked?.parse && w.DOMPurify?.sanitize) {
     el.className += ' msg-prose'
     el.innerHTML = w.DOMPurify.sanitize(w.marked.parse(text))
-    for (const proc of postRenderProcessors) void proc(el)
+    for (const proc of getPostRenderProcessors()) void proc(el)
   } else {
     el.textContent = text
   }

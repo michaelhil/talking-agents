@@ -25,7 +25,19 @@ export const systemHandlers: SystemHandlers = {
     // A pack was installed / updated / uninstalled. The packs panel listens
     // for this CustomEvent and re-fetches /api/packs. Tool/skill sections
     // refresh lazily on next open (their `loaded` flag is reset here).
+    // Also drives the UI extension reconciler in src/ui/extensions/registry.ts
+    // (subscribed in app.ts).
     window.dispatchEvent(new CustomEvent('packs-changed'))
+  },
+
+  biometric_capture_claimed(msg) {
+    // Server has accepted a tab's claim of this captureId. Other tabs
+    // viewing the same fenced block need to release their MediaStream and
+    // swap to the "active in another tab" placeholder. The widget instance
+    // listens for this event keyed by captureId.
+    window.dispatchEvent(new CustomEvent('biometric:claimed', {
+      detail: { captureId: msg.captureId, claimedBy: msg.claimedBy },
+    }))
   },
 
   pack_activation_changed(msg) {

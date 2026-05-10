@@ -16,6 +16,13 @@ export interface PackManifest {
   readonly name?: string          // display name; defaults to directory basename
   readonly description?: string
   readonly wikis?: ReadonlyArray<WikiRef>   // external wiki links surfaced in the pack panel
+  // Names of UI extensions this pack expects to be mounted in the browser when
+  // the pack is installed. The server propagates this array as-is — it has no
+  // authority on which extension names are recognised. The browser reconciles
+  // declared names against its KNOWN_UI_EXTENSIONS map and silently no-ops on
+  // unknown names (forward-compatible: a pack can declare an extension before
+  // any core release knows it).
+  readonly ui_extensions?: ReadonlyArray<string>
 }
 
 export interface Pack {

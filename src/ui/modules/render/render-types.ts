@@ -1,5 +1,10 @@
 // UI-local view types, shared across render-*.ts modules. Minimal mirror of
 // server-side types — widen to the full server type on the next refactor.
+//
+// MessageCause is imported from the server-side type module so the kind union
+// (script/scenario/trigger/biometric/...) lives in exactly one place.
+
+import type { MessageCause } from '../../../core/types/messaging.ts'
 
 export interface UIMessage {
   id: string
@@ -24,7 +29,7 @@ export interface UIMessage {
   errorProvider?: string
   // Causality: which automation subsystem produced this message. Mirrors
   // server Message.cause; rendered as a small caption under the bubble.
-  cause?: { kind: 'script' | 'scenario' | 'trigger'; name: string; step?: number }
+  cause?: MessageCause
 }
 
 export interface RoomProfile {

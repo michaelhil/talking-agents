@@ -632,6 +632,10 @@ export const createListPacksTool = (deps: PackToolsDeps): Tool => ({
       skills: skills
         .filter(s => s.pack === p.namespace)
         .map(s => s.name),
+      // Surfaced for the browser-side extension reconciler. Empty/absent for
+      // packs that don't declare any. System packs (core/local) cannot
+      // declare extensions.
+      ui_extensions: p.manifest.ui_extensions ?? [],
       system: false as const,
     }))
 

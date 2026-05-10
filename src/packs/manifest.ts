@@ -62,13 +62,20 @@ export const readManifest = async (dirPath: string): Promise<PackManifest> => {
   if (!parsed || typeof parsed !== 'object') return {}
   const obj = parsed as Record<string, unknown>
 
-  const out: { name?: string; description?: string; wikis?: ReadonlyArray<WikiRef> } = {}
+  const out: { name?: string; description?: string; wikis?: ReadonlyArray<WikiRef>; ui_extensions?: ReadonlyArray<string> } = {}
   if (typeof obj.name === 'string' && obj.name.trim().length > 0) out.name = obj.name.trim()
   if (typeof obj.description === 'string' && obj.description.trim().length > 0) {
     out.description = obj.description.trim()
   }
   const wikis = parseWikis(obj.wikis, filePath)
   if (wikis) out.wikis = wikis
+  // ui_extensions: array of strings only. Non-string entries dropped silently
+  // (server has no authority on which extensions exist — that's the browser's
+  // KNOWN_UI_EXTENSIONS map). Forward-compatible by design.
+  if (Array.isArray(obj.ui_extensions)) {
+    const names = obj.ui_extensions.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    if (names.length > 0) out.ui_extensions = names
+  }
   return out
 }
 

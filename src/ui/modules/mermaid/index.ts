@@ -11,6 +11,7 @@
 import { ensureMermaid, getMermaidApi, reinitMermaid } from './api.ts'
 import { normaliseMermaidSource, MAX_MERMAID_SOURCE } from './normalise.ts'
 import { showRenderFallback } from './fallback.ts'
+import { addPostRenderProcessor } from '../../extensions/post-render-registry.ts'
 
 // Size check, single source of truth for "should we bother rendering?"
 const isOversized = (source: string): boolean => source.length > MAX_MERMAID_SOURCE
@@ -67,6 +68,11 @@ export const renderMermaidBlocks = async (container: HTMLElement): Promise<void>
     }
   }
 }
+
+// Self-register at module-load time. Order = first-registered wins; mermaid
+// is imported before map in render-message.ts so it lands first in the
+// registry, preserving the prior const-array order.
+addPostRenderProcessor('mermaid', renderMermaidBlocks)
 
 // Re-render every live mermaid diagram with the current theme. Runs in
 // parallel — serial rendering was noticeable flicker for pages with many
