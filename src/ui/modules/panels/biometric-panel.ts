@@ -8,11 +8,11 @@
 //   - In-memory revocation log (last 20 captures, cleared on reload)
 //
 // The panel mounts only while the samsinn-biometrics pack is installed
-// AND its UI extension is mounted (see src/ui/extensions/biometrics.ts).
+// AND its UI extension is mounted (see src/ui/modules/extensions/biometrics.ts).
 // When the pack is uninstalled, the extension's unmount() calls the panel's
 // unmount which clears the host element.
 
-import type { PanelSpec } from '../../extensions/registry.ts'
+import type { PanelSpec } from '../extensions/registry.ts'
 import { createBiometricSession } from '../../../biometrics/index.ts'
 
 const RESOLUTIONS: ReadonlyArray<{ readonly label: string; readonly width: number; readonly height: number }> = [

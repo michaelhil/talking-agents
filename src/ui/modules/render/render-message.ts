@@ -7,10 +7,10 @@ import type { UIMessage, AgentInfo } from '../render/render-types.ts'
 // ../map/index.ts). Adding a new built-in inline-block type = create a new
 // module that calls addPostRenderProcessor() at top-level and import it
 // here. Pack-gated extensions register/unregister via the extension mount
-// layer (../../extensions/registry.ts), not via static import.
+// layer (../extensions/registry.ts), not via static import.
 import '../mermaid/index.ts'
 import '../map/index.ts'
-import { getPostRenderProcessors } from '../../extensions/post-render-registry.ts'
+import { getPostRenderProcessors } from '../extensions/post-render-registry.ts'
 import { icon } from '../icon.ts'
 import { appendWhisperBadge } from '../whisper-badge.ts'
 import { showToast } from '../toast.ts'

@@ -20,8 +20,8 @@ export const createBiometricsExtension = (): UIExtension => {
   return {
     name: 'biometrics',
     mount: async (api: ExtensionAPI): Promise<void> => {
-      const widget = await import('../modules/biometric/index.ts')
-      const panel = await import('../modules/panels/biometric-panel.ts')
+      const widget = await import('../biometric/index.ts')
+      const panel = await import('../panels/biometric-panel.ts')
       api.addPostRenderProcessor('biometric', widget.renderBiometricBlocks)
       unregisterPanel = api.registerPanel(panel.biometricPanelSpec)
     },

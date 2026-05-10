@@ -11,7 +11,7 @@
 import { ensureMermaid, getMermaidApi, reinitMermaid } from './api.ts'
 import { normaliseMermaidSource, MAX_MERMAID_SOURCE } from './normalise.ts'
 import { showRenderFallback } from './fallback.ts'
-import { addPostRenderProcessor } from '../../extensions/post-render-registry.ts'
+import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
 
 // Size check, single source of truth for "should we bother rendering?"
 const isOversized = (source: string): boolean => source.length > MAX_MERMAID_SOURCE

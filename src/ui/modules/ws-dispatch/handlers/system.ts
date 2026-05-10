@@ -25,7 +25,7 @@ export const systemHandlers: SystemHandlers = {
     // A pack was installed / updated / uninstalled. The packs panel listens
     // for this CustomEvent and re-fetches /api/packs. Tool/skill sections
     // refresh lazily on next open (their `loaded` flag is reset here).
-    // Also drives the UI extension reconciler in src/ui/extensions/registry.ts
+    // Also drives the UI extension reconciler in src/ui/modules/extensions/registry.ts
     // (subscribed in app.ts).
     window.dispatchEvent(new CustomEvent('packs-changed'))
   },

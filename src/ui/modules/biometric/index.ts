@@ -3,7 +3,7 @@
 // post-processor.
 //
 // Note: unlike mermaid/map, biometrics does NOT self-register at module-load
-// time. Registration happens in src/ui/extensions/biometrics.ts inside
+// time. Registration happens in src/ui/modules/extensions/biometrics.ts inside
 // mount(), so the post-processor is only active while the
 // samsinn-biometrics pack is installed. This keeps the pack-gating
 // invariant: an uninstalled pack means the renderer never fires, even if

@@ -120,6 +120,25 @@ const serveStatic = async (pathname: string, uiPath: string, transpiler: Bun.Tra
     }
   }
 
+  // /biometrics/* — browser-only TypeScript package for webcam-based
+  // tracking, lazy-loaded by the biometrics UI extension. Same shape as the
+  // /core/ resolver: path-traversal-guarded mapping into src/biometrics/.
+  if (pathname.startsWith('/biometrics/') && pathname.endsWith('.ts')) {
+    const bioPath = normalize(`${uiPath}/..${pathname}`)
+    const bioRoot = normalize(`${uiPath}/../biometrics`)
+    if (!bioPath.startsWith(bioRoot)) {
+      return new Response('Forbidden', { status: 403 })
+    }
+    const file = Bun.file(bioPath)
+    if (await file.exists()) {
+      const source = await file.text()
+      const js = transpiler.transformSync(source)
+      return new Response(js, {
+        headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' },
+      })
+    }
+  }
+
   if (pathname === '/dist.css') {
     const file = Bun.file(`${uiPath}/dist.css`)
     if (await file.exists()) {

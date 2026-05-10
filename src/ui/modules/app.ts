@@ -861,8 +861,8 @@ void (async () => {
   // packs from /api/packs and mount the matching modules. Re-runs on every
   // packs-changed event (install/uninstall/update) so the extension surface
   // tracks pack lifecycle. Pack-declared but unknown names are silently
-  // ignored (forward-compat — see src/ui/extensions/registry.ts).
-  const { refreshExtensions } = await import('../extensions/registry.ts')
+  // ignored (forward-compat — see src/ui/modules/extensions/registry.ts).
+  const { refreshExtensions } = await import('./extensions/registry.ts')
   void refreshExtensions()
   window.addEventListener('packs-changed', () => { void refreshExtensions() })
 })()
