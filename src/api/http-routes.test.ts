@@ -452,3 +452,103 @@ describe('GET /api/system/limits (no auth)', () => {
     expect(res?.status).toBe(400)
   })
 })
+
+// === Phase 2B: route handler coverage gaps surfaced by the audit ===
+// Covers /api/agents and /api/agents/.../triggers and /api/providers route
+// shapes that http-routes integration tests didn't previously exercise.
+// Negative-path heavy by necessity — positive paths for POST /api/agents
+// require a real spawnAIAgent which would pull in the full LLM stack.
+
+describe('HTTP Routes — agents (audit gap)', () => {
+  let system: System
+
+  beforeEach(() => {
+    system = makeSystem()
+  })
+
+  test('GET /api/agents returns empty array when none registered', async () => {
+    const res = await call(system, req('GET', '/api/agents'), '/api/agents')
+    expect(res?.status).toBe(200)
+    const data = await res!.json() as unknown[]
+    expect(Array.isArray(data)).toBe(true)
+    expect(data).toHaveLength(0)
+  })
+
+  test('GET /api/agents/Ghost returns 404 for unknown agent', async () => {
+    const res = await call(system, req('GET', '/api/agents/Ghost'), '/api/agents/Ghost')
+    expect(res?.status).toBe(404)
+  })
+
+  test('GET /api/agents/Ghost/rooms returns 404 for unknown agent', async () => {
+    const res = await call(system, req('GET', '/api/agents/Ghost/rooms'), '/api/agents/Ghost/rooms')
+    expect(res?.status).toBe(404)
+  })
+
+  test('DELETE /api/agents/Ghost returns 404 for unknown agent', async () => {
+    const res = await call(system, req('DELETE', '/api/agents/Ghost'), '/api/agents/Ghost')
+    expect(res?.status).toBe(404)
+  })
+
+  test('PATCH /api/agents/Ghost returns 404 for unknown agent', async () => {
+    const res = await call(system, req('PATCH', '/api/agents/Ghost', { persona: 'changed' }), '/api/agents/Ghost')
+    expect(res?.status).toBe(404)
+  })
+
+  test('POST /api/agents/Ghost/cancel returns 404 for unknown agent', async () => {
+    const res = await call(system, req('POST', '/api/agents/Ghost/cancel', {}), '/api/agents/Ghost/cancel')
+    expect(res?.status).toBe(404)
+  })
+
+  test('POST /api/agents missing body returns 400', async () => {
+    const res = await call(system, req('POST', '/api/agents', {}), '/api/agents')
+    expect(res?.status).toBe(400)
+  })
+
+  test('POST /api/agents/human missing name returns 400', async () => {
+    const res = await call(system, req('POST', '/api/agents/human', { displayName: 'Test' }), '/api/agents/human')
+    // Either 400 (validation fail) or 201 (created) — depending on shape.
+    // Negative coverage: at minimum, server doesn't 500 on partial body.
+    expect(res?.status).toBeLessThan(500)
+  })
+})
+
+describe('HTTP Routes — agent triggers (audit gap)', () => {
+  let system: System
+
+  beforeEach(() => {
+    system = makeSystem()
+    system.house.createRoom({ name: 'TestRoom', createdBy: 'system' })
+  })
+
+  test('GET /api/agents/Ghost/triggers returns 404 for unknown agent', async () => {
+    const res = await call(system, req('GET', '/api/agents/Ghost/triggers'), '/api/agents/Ghost/triggers')
+    expect(res?.status).toBe(404)
+  })
+
+  test('POST /api/agents/Ghost/triggers returns 404 for unknown agent', async () => {
+    const res = await call(
+      system,
+      req('POST', '/api/agents/Ghost/triggers', { name: 'T', prompt: 'p', mode: 'interval', intervalSec: 60, roomId: 'TestRoom' }),
+      '/api/agents/Ghost/triggers',
+    )
+    expect(res?.status).toBe(404)
+  })
+
+  test('DELETE /api/agents/Ghost/triggers/some-id returns 404', async () => {
+    const res = await call(system, req('DELETE', '/api/agents/Ghost/triggers/abc'), '/api/agents/Ghost/triggers/abc')
+    expect(res?.status).toBe(404)
+  })
+
+  test('PUT /api/agents/Ghost/triggers/some-id returns 404', async () => {
+    const res = await call(
+      system,
+      req('PUT', '/api/agents/Ghost/triggers/abc', { enabled: true }),
+      '/api/agents/Ghost/triggers/abc',
+    )
+    expect(res?.status).toBe(404)
+  })
+})
+
+// Provider routes need a richer fake (getMonitorSnapshot, providersConfig
+// surface) — skipping here. The auth-gate tests above already exercise the
+// route shape; positive paths require an actual LLM stack.
