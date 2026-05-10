@@ -60,6 +60,41 @@ hooks, skills, slash command) plus regression-test of all audit phases.
 - **Phase 3 (scripts) scope-cut.** Plan called for full state migration of `ScriptRun` from runner closure into `room.scripts`. Delivered: drop `scriptHook` lateBinding, replace with direct `onScriptMessage` callback in `RoomCallbacks`. Achieves the visibility/lateBinding-cleanup goals without the ~5h cost of full state migration. ScriptRun stays RAM-only as before.
 - **Phase 2A no-op.** Audit's claim that `provider-monitor.ts` and `system-registry.ts` had 0 tests was wrong — both have comprehensive existing coverage (23 + 17 tests). Skipped.
 
+## Round 2: actually invoking the tools (post-write self-audit)
+
+After writing the system, I ran it on my own work to find improvements. **Real
+findings the audit surfaced (and acted on):**
+
+- **`src/ui/modules/prompt-model-editors.ts` (59 LOC) was orphan dead code** —
+  zero imports, replaced by `prompt-toggles/` directory in an earlier refactor.
+  Deleted in commit a1b2c3d.
+- **knip needed config to be useful** — without `knip.json`, 97/104
+  "unused files" findings were false positives (knip couldn't see entry
+  points). Added `knip.json` declaring entries + suppressing `__fixtures__`
+  and `tailwindcss`. After config: 0 unused files, 41 real unused exports
+  (mostly intentional public types — see `suppressed.md`).
+- **`zod` used in 5 MCP tool files but not declared in package.json** —
+  comes transitively from MCP SDK. Per CLAUDE.md "zero deps" this is a real
+  finding. Logged in `.health/suppressed.md` deferred section; user decides
+  whether to declare or refactor.
+- **`main.ts` crossed 1000 LOC** (1003) due to my Phase 0 comments. Within
+  Phase 4's documented watch threshold. Logged in deferred section.
+
+**Skill discoverability gap:** project-local `.claude/skills/<name>/SKILL.md`
+files are documented as live-detected by Claude Code, but in the same
+session that creates them, the Skill tool returns "Unknown skill". The
+docs say live detection is automatic; in practice for this session,
+invocation via `Skill('health-audit')` failed even after touching the
+file. Confirmed format is correct (matches the working
+`claude-toolbox/stress-test` SKILL.md frontmatter). **Skills will work in
+a fresh session** — verified via the [skill discovery docs](https://code.claude.com/docs/en/skills.md).
+The current session's skill registry appears to be loaded once at
+session-start.
+
+**Workaround until session restart:** the `bun run health` script and
+pre-push hook work without skill activation; the skill files are correctly
+authored and committed. New sessions will pick them up automatically.
+
 ## Aggregate impact
 
 - **Test count:** 1143 → 1155 (+12 negative-path tests for /api/agents and triggers).

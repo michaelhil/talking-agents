@@ -1,0 +1,22 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "src/main.ts",
+    "src/index.ts",
+    "src/ui/modules/app.ts",
+    "src/ui/main.ts",
+    "src/integrations/mcp/server.ts",
+    "scripts/{deploy,dev,smoke-streaming}.ts"
+  ],
+  "project": ["src/**/*.ts"],
+  "ignore": [
+    "src/tools/__fixtures__/**"
+  ],
+  "ignoreDependencies": [
+    "tailwindcss",
+    "@tailwindcss/cli"
+  ],
+  "ignoreBinaries": [
+    "tsc"
+  ]
+}

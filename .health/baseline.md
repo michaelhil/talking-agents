@@ -1,11 +1,11 @@
-# Samsinn health — 2026-05-10 11:29:18
+# Samsinn health — 2026-05-10 11:52:05
 
 ## Summary
 
 - Typecheck: ✅ pass
 - Type coverage: 98.61%
 - Escape hatches (`as any` / `@ts-ignore` etc): 64
-- Dependency-cruiser: x 71 dependency violations (65 errors, 6 warnings). 604 modules, 1434 dependencies cruised.
+- Dependency-cruiser: x 71 dependency violations (65 errors, 6 warnings). 603 modules, 1433 dependencies cruised.
 
 ## 1. Typecheck (bun run check)
 ```
@@ -15,7 +15,7 @@ $ tsc --noEmit && tsc --noEmit -p tsconfig.ui.json
 ## 2. Type coverage
 ```
 Saved lockfile
-(84510 / 85695) 98.61%
+(84659 / 85846) 98.61%
 type-coverage success.
 ```
 
@@ -114,7 +114,7 @@ src/core/triggers/scheduler.test.ts:148:      team: { listAgents: () => [agent a
       src/bootstrap.ts →
       src/api/agent-tracking.ts
 
-x 71 dependency violations (65 errors, 6 warnings). 604 modules, 1434 dependencies cruised.
+x 71 dependency violations (65 errors, 6 warnings). 603 modules, 1433 dependencies cruised.
 
 ```
 
@@ -123,90 +123,90 @@ x 71 dependency violations (65 errors, 6 warnings). 604 modules, 1434 dependenci
 Resolving dependencies
 Resolved, downloaded and extracted [2]
 Saved lockfile
-Unused files (103)
-.dependency-cruiser.cjs: .dependency-cruiser.cjs
-experiments/cli.ts: experiments/cli.ts
-experiments/examples/ablation.ts: experiments/examples/ablation.ts
-experiments/examples/hello-world.ts: experiments/examples/hello-world.ts
-experiments/examples/two-agent-debate.ts: experiments/examples/two-agent-debate.ts
-experiments/examples/zero-agent-reset.ts: experiments/examples/zero-agent-reset.ts
-experiments/examples/zero-agent-subprocess.ts: experiments/examples/zero-agent-subprocess.ts
-experiments/examples/zero-agent.ts: experiments/examples/zero-agent.ts
-scripts/streaming-probe.ts: scripts/streaming-probe.ts
-skills/knowledge-base/tools/kb_ingest.ts: skills/knowledge-base/tools/kb_ingest.ts
-skills/knowledge-base/tools/kb_lint.ts: skills/knowledge-base/tools/kb_lint.ts
-skills/knowledge-base/tools/kb_query.ts: skills/knowledge-base/tools/kb_query.ts
-skills/skill-builder/tools/generate_tool_code.ts: skills/skill-builder/tools/generate_tool_code.ts
-src/tools/__fixtures__/_helper.ts: src/tools/__fixtures__/_helper.ts
-src/tools/__fixtures__/invalid-bad-name.ts: src/tools/__fixtures__/invalid-bad-name.ts
-src/tools/__fixtures__/invalid-no-execute.ts: src/tools/__fixtures__/invalid-no-execute.ts
-src/tools/__fixtures__/multi-tool.ts: src/tools/__fixtures__/multi-tool.ts
-src/tools/__fixtures__/single-tool.ts: src/tools/__fixtures__/single-tool.ts
-src/tools/__fixtures__/throws-on-import.ts: src/tools/__fixtures__/throws-on-import.ts
-src/ui/input.css: src/ui/input.css
-src/ui/lib/format-retry.ts: src/ui/lib/format-retry.ts
-src/ui/modules/agent-inspector.ts: src/ui/modules/agent-inspector.ts
-src/ui/modules/agent-selection.ts: src/ui/modules/agent-selection.ts
-src/ui/modules/app-dom.ts: src/ui/modules/app-dom.ts
-src/ui/modules/app-thinking.ts: src/ui/modules/app-thinking.ts
-src/ui/modules/app.ts: src/ui/modules/app.ts
-src/ui/modules/auth.ts: src/ui/modules/auth.ts
-src/ui/modules/icon.ts: src/ui/modules/icon.ts
-src/ui/modules/identity-lookups.ts: src/ui/modules/identity-lookups.ts
-src/ui/modules/inline-number.ts: src/ui/modules/inline-number.ts
-src/ui/modules/map/api.ts: src/ui/modules/map/api.ts
-src/ui/modules/map/fallback.ts: src/ui/modules/map/fallback.ts
-src/ui/modules/map/icons.ts: src/ui/modules/map/icons.ts
-src/ui/modules/map/index.ts: src/ui/modules/map/index.ts
-src/ui/modules/mermaid/api.ts: src/ui/modules/mermaid/api.ts
-src/ui/modules/mermaid/fallback.ts: src/ui/modules/mermaid/fallback.ts
-src/ui/modules/mermaid/index.ts: src/ui/modules/mermaid/index.ts
-src/ui/modules/message-header-prefs.ts: src/ui/modules/message-header-prefs.ts
-src/ui/modules/modals/agent-detail-modal.ts: src/ui/modules/modals/agent-detail-modal.ts
-src/ui/modules/modals/bug-modal.ts: src/ui/modules/modals/bug-modal.ts
-src/ui/modules/modals/context-modal.ts: src/ui/modules/modals/context-modal.ts
-src/ui/modules/modals/detail-modal.ts: src/ui/modules/modals/detail-modal.ts
-src/ui/modules/modals/geodata-import-modal.ts: src/ui/modules/modals/geodata-import-modal.ts
-src/ui/modules/modals/geodata-modal.ts: src/ui/modules/modals/geodata-modal.ts
-src/ui/modules/modals/instances-modal.ts: src/ui/modules/modals/instances-modal.ts
-src/ui/modules/modals/logging-modal.ts: src/ui/modules/modals/logging-modal.ts
-src/ui/modules/modals/packs-modal.ts: src/ui/modules/modals/packs-modal.ts
-src/ui/modules/modals/providers-modal.ts: src/ui/modules/modals/providers-modal.ts
-src/ui/modules/modals/scenarios-list-modal.ts: src/ui/modules/modals/scenarios-list-modal.ts
-src/ui/modules/modals/scripts-list-modal.ts: src/ui/modules/modals/scripts-list-modal.ts
-src/ui/modules/modals/skill-detail-modal.ts: src/ui/modules/modals/skill-detail-modal.ts
-src/ui/modules/modals/skills-list-modal.ts: src/ui/modules/modals/skills-list-modal.ts
-src/ui/modules/modals/system-prompt-modal.ts: src/ui/modules/modals/system-prompt-modal.ts
-src/ui/modules/modals/tool-detail-modal.ts: src/ui/modules/modals/tool-detail-modal.ts
-src/ui/modules/modals/tools-list-modal.ts: src/ui/modules/modals/tools-list-modal.ts
-src/ui/modules/model-select.ts: src/ui/modules/model-select.ts
-src/ui/modules/models-popover.ts: src/ui/modules/models-popover.ts
-src/ui/modules/ollama-dashboard.ts: src/ui/modules/ollama-dashboard.ts
-src/ui/modules/panels/bookmarks-panel.ts: src/ui/modules/panels/bookmarks-panel.ts
-src/ui/modules/panels/geodata-panel.ts: src/ui/modules/panels/geodata-panel.ts
-src/ui/modules/panels/logging-panel.ts: src/ui/modules/panels/logging-panel.ts
-src/ui/modules/panels/packs-panel.ts: src/ui/modules/panels/packs-panel.ts
-src/ui/modules/panels/providers/api.ts: src/ui/modules/panels/providers/api.ts
-src/ui/modules/panels/providers/index.ts: src/ui/modules/panels/providers/index.ts
-src/ui/modules/panels/providers/row.ts: src/ui/modules/panels/providers/row.ts
-src/ui/modules/panels/script-doc-panel.ts: src/ui/modules/panels/script-doc-panel.ts
-src/ui/modules/panels/script-panel.ts: src/ui/modules/panels/script-panel.ts
-src/ui/modules/panels/summary-panel.ts: src/ui/modules/panels/summary-panel.ts
-src/ui/modules/panels/triggers-panel.ts: src/ui/modules/panels/triggers-panel.ts
-src/ui/modules/prompt-model-editors.ts: src/ui/modules/prompt-model-editors.ts
-src/ui/modules/prompt-toggles.ts: src/ui/modules/prompt-toggles.ts
-src/ui/modules/prompt-toggles/context-group.ts: src/ui/modules/prompt-toggles/context-group.ts
-src/ui/modules/prompt-toggles/index.ts: src/ui/modules/prompt-toggles/index.ts
-src/ui/modules/prompt-toggles/model-group.ts: src/ui/modules/prompt-toggles/model-group.ts
-src/ui/modules/prompt-toggles/prompts-group.ts: src/ui/modules/prompt-toggles/prompts-group.ts
-src/ui/modules/prompt-toggles/shared.ts: src/ui/modules/prompt-toggles/shared.ts
+Unlisted dependencies (5)
+src/integrations/mcp/tools/agent-tools.ts: zod
+src/integrations/mcp/tools/message-tools.ts: zod
+src/integrations/mcp/tools/room-tools.ts: zod
+src/integrations/mcp/tools/system-tools.ts: zod
+src/integrations/mcp/tools/web-tools.ts: zod
+Unlisted binaries (3)
+src/core/migrate-local-pack.ts: tar
+src/tools/built-in/pack-tools.test.ts: init, branch
+src/tools/built-in/pack-tools.ts: pull
+Unused exports (41)
+src/agents/context-builder.ts: getParticipantsForRoom, buildSystemMessage
+src/api/auth.ts: sessionCookieName
+src/api/routes/documents.ts: initDocumentsLimiter
+src/api/routes/instances.ts: getInstanceLimiter
+src/api/ws-handler.ts: SESSION_STALE_MS
+src/core/scenarios/ops.ts: opHandlers
+src/core/scenarios/store.ts: MAX_SCENARIO_SOURCE_BYTES
+src/core/scenarios/yaml-mini.ts: parseInlineValue, splitTopLevel, findUnquotedColon
+src/core/scripts/script-md-parser.ts: VALID_CAST_NAME, RESERVED_CAST_NAMES, __test
+src/core/storage/snapshot.ts: isEmptySnapshot
+src/core/types/messaging.ts: isAgentDecisionMessage
+src/embed/embedder.ts: EmbedError
+src/embed/vector-store.ts: VECTOR_STORE_LINE_VERSION
+src/geo/categories.ts: loadRegistry
+src/geo/pack-source.ts: getPackCategories, getPackGeoState
+src/geo/types.ts: MARKER_ICONS
+src/geo/upstream.ts: __resetUpstreamGates
+src/llm/gateway.ts: createProviderGateway, GATEWAY_DEFAULTS, createLLMGateway
+src/llm/llm-policy-store.ts: POLICY_VERSION, loadPolicy, savePolicy
+src/llm/llm-service.ts: FALLBACKABLE_AGENT_CODES
+src/llm/provider-probe.ts: p95, computeStatus
+src/llm/providers-config.ts: DEFAULT_PROVIDER_ORDER
+src/packs/synthetic-demos/index.ts: DEMOS_PACK_NAMESPACE
+src/packs/synthetic-welcome/index.ts: WELCOME_PACK_NAMESPACE, WELCOME_DEFAULT_SCENARIO
+src/tools/built-in/pack-tools.ts: __resetPackChains, createListAvailablePacksTool
+src/ui/modules/map/api.ts: getLeafletApi
+src/ui/modules/map/normalise.ts: isMarkerIcon, parseMapBody, validateMapEnvelope, formatMapErrors, collectEnvelopeLatLngs
+src/ui/modules/mermaid/api.ts: mermaidThemeForCurrentMode
+src/ui/modules/message-header-prefs.ts: applyPrefs
+src/ui/modules/modals/detail-modal.ts: escapeHtml
+src/ui/modules/modals/skill-detail-modal.ts: openSkillDetailModal
+src/ui/modules/models-popover.ts: closeModelsPopover
+src/ui/modules/ollama-dashboard.ts: updateOllamaMetricsUI, refreshOllamaUrls
+src/ui/modules/panels/providers/index.ts: renderProvidersPanel
+src/ui/modules/panels/summary-panel.ts: toggleSummaryGroup, openSummarySettingsModal, openSummaryInspectModal
+src/ui/modules/panels/triggers-panel.ts: openTriggerForm, openAgentTriggers
+src/ui/modules/prompt-toggles/shared.ts: mkGlass, applyGroupDisabled
+src/ui/modules/send-as-picker.ts: createHumanInline
+src/ui/modules/stores.ts: $myName
+src/ui/modules/theme.ts: getTheme, setTheme, toggleTheme
+src/ui/modules/ws-dispatch/dedup.ts: shouldEmitAllFailed
+Unused exported types (44)
+src/agents/context-builder.ts: SystemSectionKey, ContextStrategy
+src/agents/evaluation.ts: LLMCallMetrics
+src/api/rate-limit.ts: RateLimitOk, RateLimitFail, RateLimitResult
+src/api/routes/types.ts: ResetInstanceOk, ResetInstanceFail, ResetInstanceResult, EvictInstanceResult, InstanceAdmin, DiagnosticsCapability
+src/api/ws-commands/types.ts: CommandHandler
+src/core/instances/system-registry.ts: InstanceMeta, InstanceOnDisk
+src/core/limit-metrics.ts: LimitMetricsSnapshot
+src/core/render-validators/map-schema.ts: MapView
+src/core/scenarios/runner.ts: ScenarioEventName
+src/core/scenarios/types.ts: RunStatus
+src/core/scenarios/waits.ts: ExternalWaitType
+src/core/scripts/script-runner.ts: ScriptEventName
+src/core/storage/snapshot.ts: RoomSnapshot, AgentSnapshot, HumanAgentSnapshot, EmbedderBindingSnapshot, DocumentStatus, DocumentSnapshot
+src/core/summaries/summary-scheduler.ts: TriggerOptions
+src/core/types/agent.ts: ContextPreviewSection, ContextPreview, AgentMemoryStats
+src/core/types/messaging.ts: MessageErrorCode, RoomContext, AgentDeliveryStatus
+src/core/types/summary.ts: SummarySchedule
+src/core/types/tool.ts: ToolLLMRequest, ToolSourceKind
+src/documents/types.ts: DocumentStatus
+src/embed/vector-store.ts: VectorNamespace, EmbedderBinding, SearchHit, SearchOptions
+src/geo/import.ts: ImportError
+src/geo/types.ts: GeoProperties, GeoPoint
+src/integrations/mcp/client.ts: MCPServerConfig
+src/llm/circuit-breaker.ts: CircuitState
 ```
 
 ## 6. Largest source files
 ```
-   45889 total
-     982 src/main.ts
-     876 src/ui/modules/app.ts
+   45876 total
+    1003 src/main.ts
+     860 src/ui/modules/app.ts
      798 src/bootstrap.ts
      793 src/llm/router.ts
      740 src/agents/ai-agent.ts
