@@ -174,6 +174,79 @@ describe('scenario parser — line tracking', () => {
   })
 })
 
+describe('scenario parser — op id (Phase C named labels)', () => {
+  test('accepts op with id label', () => {
+    const src = wrap([
+      '```scenario',
+      '- create-room: { name: Cafe, id: setup-room }',
+      '```',
+    ].join('\n'))
+    const s = parseScenario('p', 'n', src)
+    expect(s.ops[0]!.id).toBe('setup-room')
+  })
+
+  test('rejects malformed id', () => {
+    const src = wrap([
+      '```scenario',
+      '- create-room: { name: Cafe, id: "Bad ID" }',
+      '```',
+    ].join('\n'))
+    expect(() => parseScenario('p', 'n', src)).toThrow(/op id/)
+  })
+
+  test('omitting id leaves it undefined', () => {
+    const src = wrap('```scenario\n- create-room: { name: Cafe }\n```')
+    const s = parseScenario('p', 'n', src)
+    expect(s.ops[0]!.id).toBeUndefined()
+  })
+})
+
+describe('scenario parser — branch-on-llm-decision (Phase C branching)', () => {
+  test('parses with branches + fallback', () => {
+    const src = wrap([
+      '```scenario',
+      '- create-room: { name: Cafe, id: room1 }',
+      '- branch-on-llm-decision:',
+      '    prompt: "Did the user understand?"',
+      '    fallback: room1',
+      '    branches: { yes: room1, no: room1 }',
+      '```',
+    ].join('\n'))
+    const s = parseScenario('p', 'n', src)
+    expect(s.ops[1]!.kind).toBe('branch-on-llm-decision')
+    expect(s.ops[1]).toMatchObject({
+      kind: 'branch-on-llm-decision',
+      prompt: 'Did the user understand?',
+      fallback: 'room1',
+    })
+  })
+
+  test('rejects fewer than 2 branches', () => {
+    const src = wrap([
+      '```scenario',
+      '- create-room: { name: Cafe, id: room1 }',
+      '- branch-on-llm-decision:',
+      '    prompt: "yes only"',
+      '    fallback: room1',
+      '    branches: { yes: room1 }',
+      '```',
+    ].join('\n'))
+    expect(() => parseScenario('p', 'n', src)).toThrow(/at least 2 branches/)
+  })
+
+  test('rejects missing fallback', () => {
+    const src = wrap([
+      '```scenario',
+      '- create-room: { name: Cafe, id: room1 }',
+      '- branch-on-llm-decision:',
+      '    prompt: "ask"',
+      '    branches: { yes: room1, no: room1 }',
+      '```',
+    ].join('\n'))
+    expect(() => parseScenario('p', 'n', src)).toThrow(/fallback/)
+  })
+})
+
 describe('scenario parser — inline-script op', () => {
   test('parses inline-script with block-scalar source', () => {
     const src = wrap([

@@ -212,20 +212,37 @@ export const createScenarioRunner = (deps: ScenarioRunnerDeps): ScenarioRunner =
       totalOps: scenario.ops.length,
     })
 
-    // Async loop. Resolves when the run reaches a terminal status.
+    // Async loop. Driven by state.currentOpIndex so branching ops can mutate
+    // the index in place (Phase C of audit work). Default progression:
+    // increment by 1 after each op.
+    //
+    // Cycle detector: track per-op visit counts. If any single op is
+    // visited 3+ times, abort with a clear reason. This bounds branching
+    // loops without a magic-number "max jumps" cap. Threshold of 3 lets
+    // a branch op fall back legitimately one extra time after a prior
+    // visit (e.g. branch fired, fallback took us away, branch fired again
+    // because the LLM still says go-back).
+    const MAX_VISITS_PER_OP = 3
     void (async () => {
       const ctx = buildOpContext(state, options)
+      const visitCounts = new Map<number, number>()
       try {
-        for (let i = 0; i < scenario.ops.length; i++) {
-          // Status mutation between iterations is the runner's signal that
-          // somebody else (stop(), abandonment timer, eviction) ended the
-          // run. Cast through string so TS doesn't narrow against the
-          // literal assignment we just emitted at the top of the function.
+        while (state.currentOpIndex < scenario.ops.length) {
           const s1 = state.status as string
           if (s1 === 'stopped' || s1 === 'failed') return
-          state.currentOpIndex = i
+          const i = state.currentOpIndex
+          const visits = (visitCounts.get(i) ?? 0) + 1
+          visitCounts.set(i, visits)
+          if (visits > MAX_VISITS_PER_OP) {
+            finishRun(state, 'failed',
+              `cycle detected at op index ${i} (visited ${visits} times); raise MAX_VISITS_PER_OP if this is legitimate replay`)
+            return
+          }
           state.lastTouchedAt = Date.now()
           const op = scenario.ops[i]!
+          // Snapshot the index before executeOp so we can detect a branch
+          // op that mutated state.currentOpIndex during execution.
+          const indexBeforeExec = state.currentOpIndex
           await executeOp(op, ctx)
           fire(runId, 'scenario_op_executed', { opIndex: i, kind: op.kind })
           if ((state.status as string) === 'awaiting') {
@@ -233,6 +250,12 @@ export const createScenarioRunner = (deps: ScenarioRunnerDeps): ScenarioRunner =
             const s2 = state.status as string
             if (s2 === 'stopped' || s2 === 'failed') return
             state.status = 'running'
+          }
+          // If the op didn't explicitly jump (most ops don't), advance
+          // sequentially. A branching op sets state.currentOpIndex to the
+          // target; we leave it alone in that case.
+          if (state.currentOpIndex === indexBeforeExec) {
+            state.currentOpIndex = i + 1
           }
         }
         finishRun(state, 'completed')

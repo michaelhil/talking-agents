@@ -21,6 +21,17 @@ export const buildOp = (
 ): ScenarioOp => {
   const single = (args as { __single?: string }).__single
   const line = absLine
+  // Optional author label (Phase C). Lifted off args before per-kind parsing
+  // so every op variant can carry it uniformly via the post-build merge below.
+  const id = typeof args.id === 'string' && args.id.length > 0 ? args.id : undefined
+  // VALID_NAME (lowercase + dash/underscore + numbers; matches pack/script
+  // naming) keeps labels stable references and prevents YAML-parser quirks.
+  if (id !== undefined && !/^[a-z][a-z0-9_-]*$/.test(id)) {
+    throw new ScenarioParseError(
+      `op id "${id}" must match /^[a-z][a-z0-9_-]*$/ (lowercase, alphanumerics, dashes, underscores)`,
+      absLine,
+    )
+  }
   const requireStr = (k: string): string => {
     const v = args[k]
     if (typeof v !== 'string' || v.length === 0) {
@@ -52,6 +63,7 @@ export const buildOp = (
     throw new ScenarioParseError(`${opName}: waitFor.type must be click|post|timer`, absLine)
   }
 
+  const built = ((): ScenarioOp => {
   switch (opName) {
     case 'install-pack': {
       const source = single ?? requireStr('source')
@@ -118,6 +130,35 @@ export const buildOp = (
         source: requireStr('source'),
       }
     }
+    case 'branch-on-llm-decision': {
+      const branchesRaw = args.branches
+      if (typeof branchesRaw !== 'object' || branchesRaw === null || Array.isArray(branchesRaw)) {
+        throw new ScenarioParseError(`branch-on-llm-decision: "branches" must be an object mapping choice→opId`, absLine)
+      }
+      const branches: Record<string, string> = {}
+      for (const [k, v] of Object.entries(branchesRaw)) {
+        if (typeof v !== 'string' || v.length === 0) {
+          throw new ScenarioParseError(`branch-on-llm-decision: branch "${k}" must map to a non-empty op id string`, absLine)
+        }
+        branches[k] = v
+      }
+      if (Object.keys(branches).length < 2) {
+        throw new ScenarioParseError(`branch-on-llm-decision: need at least 2 branches (got ${Object.keys(branches).length})`, absLine)
+      }
+      const fromRoom = optStr('fromRoom')
+      const model = optStr('model')
+      const base: ScenarioOp = {
+        kind: 'branch-on-llm-decision',
+        line,
+        prompt: requireStr('prompt'),
+        branches,
+        fallback: requireStr('fallback'),
+      }
+      let result: ScenarioOp = base
+      if (fromRoom) result = { ...result, fromRoom } as ScenarioOp
+      if (model) result = { ...result, model } as ScenarioOp
+      return result
+    }
     case 'guide-tooltip': {
       const wait = optWait()
       const base = {
@@ -183,6 +224,8 @@ export const buildOp = (
     default:
       throw new ScenarioParseError(`unknown op "${opName}"`, absLine)
   }
+  })()
+  return id ? ({ ...built, id } as ScenarioOp) : built
 }
 
 // === Parse-time name resolution ===

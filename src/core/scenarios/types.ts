@@ -23,6 +23,10 @@ export interface ScenarioFrontmatter {
 // offending line.
 interface OpBase {
   readonly line: number
+  // Optional author label. Used by `branch-on-llm-decision` (and any future
+  // jump op) to reference jump targets by name instead of by index. Stable
+  // across op-list reordering. Authors only label ops they want to jump to.
+  readonly id?: string
 }
 
 export type ScenarioOp =
@@ -56,6 +60,20 @@ export type ScenarioOp =
   // Bypasses pack-activation gating (the scenario itself is the source of
   // truth). Cleanup on scenario abort/stop is registered automatically.
   | (OpBase & { readonly kind: 'inline-script'; readonly room: string; readonly source: string })
+  // branch-on-llm-decision: asks an LLM to pick among declared branches
+  // (referenced by op `id`). The op-handler whitelist remains the security
+  // boundary — the LLM chooses *order*, not *behavior*. Prompt-injection
+  // limitation: when context (`fromRoom`) includes user-controlled chat,
+  // crafted messages can steer the choice. Suitable for friendly flows;
+  // not adversarially robust.
+  | (OpBase & {
+      readonly kind: 'branch-on-llm-decision'
+      readonly prompt: string                 // system message to the LLM
+      readonly fromRoom?: string              // optional: include last 5 messages from this room as user context
+      readonly branches: Record<string, string> // map: choice-token → target op `id`
+      readonly fallback: string               // op `id` to use when LLM reply doesn't match any branch
+      readonly model?: string                 // optional: model id; defaults to first-AI-agent's model
+    })
   | (OpBase & {
       readonly kind: 'guide-tooltip'
       readonly selector: string              // CSS selector against existing data-*
