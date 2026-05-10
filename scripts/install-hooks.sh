@@ -22,12 +22,20 @@ fi
 
 chmod +x scripts/hooks/*
 
-CURRENT="$(git config --get core.hooksPath || echo '')"
-if [ "$CURRENT" = "scripts/hooks" ]; then
+# Detect worktree: if .git is a file (not a directory), we're in a linked
+# worktree and need --worktree to override the parent's setting.
+SCOPE_FLAG=""
+if [ -f .git ]; then
+  SCOPE_FLAG="--worktree"
+fi
+
+CURRENT="$(git config $SCOPE_FLAG --get core.hooksPath 2>/dev/null || echo '')"
+ABS_TARGET="$ROOT/scripts/hooks"
+if [ "$CURRENT" = "scripts/hooks" ] || [ "$CURRENT" = "$ABS_TARGET" ]; then
   echo "✅ core.hooksPath already set to scripts/hooks (no change)"
 else
-  git config core.hooksPath scripts/hooks
-  echo "✅ git core.hooksPath → scripts/hooks"
+  git config $SCOPE_FLAG core.hooksPath scripts/hooks
+  echo "✅ git config $SCOPE_FLAG core.hooksPath → scripts/hooks"
   if [ -n "$CURRENT" ]; then
     echo "   (was: $CURRENT)"
   fi
