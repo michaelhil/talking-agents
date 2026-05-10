@@ -19,13 +19,14 @@ coverage/
 .claude/projects/
 .claude/worktrees/
 
-# Health audit reports — only baseline + spike artifacts + suppression list
-# commit; daily reports and last-run.txt are ephemeral.
+# Health audit reports — only baseline + spike artifacts + suppression list +
+# the one-time test report commit; daily reports and last-run.txt are ephemeral.
 .health/*
 !.health/baseline.md
 !.health/spike-results.md
 !.health/spike-knip.txt
 !.health/suppressed.md
+!.health/test-report.md
 
 data/
 src/ui/dist.css
