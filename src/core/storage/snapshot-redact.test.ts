@@ -15,11 +15,33 @@ const baseMessage = (overrides: Partial<Message>): Message => ({
 })
 
 describe('redactBiometricMessages', () => {
-  test('replaces content of biometric-caused messages', () => {
+  test('rewrites biometric content as a stopped-state fence', () => {
     const out = redactBiometricMessages([
-      baseMessage({ id: 'a', cause: { kind: 'biometric', name: 'cap_1' } }),
+      baseMessage({ id: 'a', senderName: 'Observer', cause: { kind: 'biometric', name: 'cap_1' } }),
     ])
-    expect(out[0]!.content).toBe('[biometric capture — not persisted]')
+    // Plain landmark/signal JSON is stripped; what remains is a
+    // parseable fenced block that the widget renders as a terminal
+    // "Capture stopped" card on reload.
+    expect(out[0]!.content).toContain('```biometric')
+    const fenceBody = out[0]!.content.match(/```biometric\n([\s\S]*?)\n```/)?.[1] ?? ''
+    const payload = JSON.parse(fenceBody) as Record<string, unknown>
+    expect(payload).toEqual({
+      captureId: 'cap_1',
+      agentName: 'Observer',
+      reason: '(not persisted)',
+      state: 'stopped',
+    })
+  })
+
+  test('handles missing senderName and missing cause.name defensively', () => {
+    const out = redactBiometricMessages([
+      baseMessage({ id: 'a', cause: { kind: 'biometric', name: '' } }),
+    ])
+    const fenceBody = out[0]!.content.match(/```biometric\n([\s\S]*?)\n```/)?.[1] ?? ''
+    const payload = JSON.parse(fenceBody) as Record<string, unknown>
+    expect(payload.captureId).toBe('unknown')
+    expect(payload.agentName).toBe('agent')
+    expect(payload.state).toBe('stopped')
   })
 
   test('preserves cause field and id continuity', () => {

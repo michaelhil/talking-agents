@@ -286,8 +286,17 @@ describe('biometrics capture flow (no mocks)', () => {
     expect(live[0]!.content).toContain(captureId)
 
     // Apply the redactor (the same call snapshot.ts makes on save).
+    // The redactor rewrites the fence as a stopped-state block so on
+    // reload the widget renders a terminal "Capture stopped" card,
+    // not bare placeholder text.
     const redacted = redactBiometricMessages(live)
-    expect(redacted[0]!.content).toBe('[biometric capture — not persisted]')
+    expect(redacted[0]!.content).toContain('```biometric')
+    const fenceBody = redacted[0]!.content.match(/```biometric\n([\s\S]*?)\n```/)?.[1] ?? ''
+    const payload = JSON.parse(fenceBody) as Record<string, unknown>
+    expect(payload.captureId).toBe(captureId)
+    expect(payload.state).toBe('stopped')
+    // Sensitive fields (reason verbatim, future signals/landmarks) are gone.
+    expect(payload.reason).toBe('(not persisted)')
     // Cause is preserved so causality chains stay intact.
     expect(redacted[0]!.cause?.kind).toBe('biometric')
     expect(redacted[0]!.cause?.name).toBe(captureId)
