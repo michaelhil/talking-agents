@@ -369,6 +369,75 @@ describe('createOpenAICompatibleProvider', () => {
     }
   })
 
+  test('gpt-5 family: max_tokens sent as max_completion_tokens (legacy field rejected by API)', async () => {
+    const fx = startFixture(() => ({
+      status: 200,
+      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'openai', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      await provider.chat({ model: 'gpt-5.1', messages: [{ role: 'user', content: 'hi' }], maxTokens: 1024 })
+      expect(fx.last.body).toMatchObject({ model: 'gpt-5.1', max_completion_tokens: 1024 })
+      expect(fx.last.body).not.toHaveProperty('max_tokens')
+    } finally { fx.stop() }
+  })
+
+  test('gpt-5-mini: also uses max_completion_tokens', async () => {
+    const fx = startFixture(() => ({
+      status: 200,
+      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'openai', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      await provider.chat({ model: 'gpt-5-mini', messages: [{ role: 'user', content: 'hi' }], maxTokens: 512 })
+      expect(fx.last.body).toMatchObject({ max_completion_tokens: 512 })
+      expect(fx.last.body).not.toHaveProperty('max_tokens')
+    } finally { fx.stop() }
+  })
+
+  test('o-series reasoning model: max_completion_tokens + temperature stripped', async () => {
+    const fx = startFixture(() => ({
+      status: 200,
+      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'openai', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      await provider.chat({ model: 'o1', messages: [{ role: 'user', content: 'hi' }], maxTokens: 256, temperature: 0.7 })
+      expect(fx.last.body).toMatchObject({ max_completion_tokens: 256 })
+      expect(fx.last.body).not.toHaveProperty('max_tokens')
+      // o-series rejects temperature overrides — adapter must omit it
+      expect(fx.last.body).not.toHaveProperty('temperature')
+    } finally { fx.stop() }
+  })
+
+  test('legacy gpt-4o: still uses max_tokens (regression guard)', async () => {
+    const fx = startFixture(() => ({
+      status: 200,
+      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'openai', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      await provider.chat({ model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }], maxTokens: 800, temperature: 0.5 })
+      expect(fx.last.body).toMatchObject({ max_tokens: 800, temperature: 0.5 })
+      expect(fx.last.body).not.toHaveProperty('max_completion_tokens')
+    } finally { fx.stop() }
+  })
+
+  test('gpt-5.1 with provider-prefixed model ref: still routed to max_completion_tokens', async () => {
+    // System.llm.chat normalises prefixes off, but routes that go through
+    // the gateway with a prefixed ref still hit this adapter. Guard the
+    // matcher against the `openai:` prefix shape.
+    const fx = startFixture(() => ({
+      status: 200,
+      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'openai', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      await provider.chat({ model: 'openai:gpt-5.1', messages: [{ role: 'user', content: 'hi' }], maxTokens: 100 })
+      expect(fx.last.body).toMatchObject({ max_completion_tokens: 100 })
+    } finally { fx.stop() }
+  })
+
   test('failover safety: input ChatRequest.tools reference is unchanged after Anthropic call', async () => {
     const fx = startFixture(() => ({ status: 200, body: okBody }))
     try {

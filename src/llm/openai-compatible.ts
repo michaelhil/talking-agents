@@ -249,6 +249,31 @@ const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[]
   return request.messages.map(m => ({ role: m.role, content: m.content }))
 }
 
+// OpenAI's gpt-5 family AND the o-series reasoning models (o1, o3, o4)
+// rejected the legacy `max_tokens` field in favour of
+// `max_completion_tokens`, and the o-series additionally rejects any
+// `temperature` other than the default. We detect by model prefix so the
+// rule applies on OpenAI, OpenRouter (which proxies these), and any
+// future provider that re-exposes the same models.
+//
+// Match by NORMALISED model id (no provider prefix). Callers pass
+// `request.model` which may include a `<prov>:` prefix — strip it before
+// matching.
+const stripProviderPrefix = (model: string): string => {
+  const idx = model.indexOf(':')
+  return idx >= 0 ? model.slice(idx + 1) : model
+}
+const usesMaxCompletionTokens = (model: string): boolean => {
+  const id = stripProviderPrefix(model).toLowerCase()
+  return id.startsWith('gpt-5') || /^o[1-9]/.test(id)
+}
+const rejectsTemperature = (model: string): boolean => {
+  const id = stripProviderPrefix(model).toLowerCase()
+  // o-series reasoning models reject any temperature override. gpt-5
+  // chat models accept temperature, so we only gate on o\d here.
+  return /^o[1-9]/.test(id)
+}
+
 const buildOAIBody = (request: ChatRequest, stream: boolean, providerName: string): Record<string, unknown> => {
   const body: Record<string, unknown> = {
     model: request.model,
@@ -258,13 +283,21 @@ const buildOAIBody = (request: ChatRequest, stream: boolean, providerName: strin
   // Ask providers to include a final usage frame (supported by OpenAI, Groq,
   // Cerebras, OpenRouter). Providers that don't support it ignore the flag.
   if (stream) body.stream_options = { include_usage: true }
-  if (request.temperature !== undefined) body.temperature = request.temperature
+  if (request.temperature !== undefined && !rejectsTemperature(request.model)) {
+    body.temperature = request.temperature
+  }
   // Seed is emitted to every OpenAI-shape provider. Providers that support it
   // (OpenAI, Groq, Cerebras, OpenRouter, Mistral, SambaNova) honor it; those
   // that don't (Anthropic, Gemini) silently discard unknown fields. Keep the
   // plumbing uniform; document per-provider coverage in the README.
   if (request.seed !== undefined) body.seed = request.seed
-  if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens
+  if (request.maxTokens !== undefined) {
+    if (usesMaxCompletionTokens(request.model)) {
+      body.max_completion_tokens = request.maxTokens
+    } else {
+      body.max_tokens = request.maxTokens
+    }
+  }
   if (request.jsonMode) body.response_format = { type: 'json_object' }
   if (request.tools && request.tools.length > 0) {
     // Anthropic-only: attach `cache_control: ephemeral` (top-level on the
