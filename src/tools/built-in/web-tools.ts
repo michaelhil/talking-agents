@@ -95,15 +95,15 @@ interface SearchResult {
 
 const buildTavilySearchTool = (apiKey: string): Tool => ({
   name: 'web_search',
-  description: 'Searches the web (LLM-optimized via Tavily) and returns ranked results with cleaned content snippets and relevance scores.',
+  description: 'Web search via Tavily — ranked results with LLM-ready snippets. Only call web_fetch if a snippet is insufficient.',
   usage: 'Find current info or sources when you do not have a specific URL. Tavily snippets are LLM-ready; only call web_fetch if a snippet is insufficient.',
   returns: '{ query, provider, results: Array<{ title, url, snippet, score?, publishedAt? }> }. results may be empty if nothing is found.',
   parameters: {
     type: 'object',
     properties: {
-      query: { type: 'string', description: 'The search query' },
-      count: { type: 'number', description: 'Number of results to return (default 5, max 10)' },
-      depth: { type: 'string', description: 'Search depth: "basic" (1 credit, default) or "advanced" (2 credits, deeper crawl)' },
+      query: { type: 'string' },
+      count: { type: 'number', default: 5, minimum: 1, maximum: 10 },
+      depth: { type: 'string', enum: ['basic', 'advanced'], default: 'basic' },
     },
     required: ['query'],
   },
@@ -154,14 +154,14 @@ const buildTavilySearchTool = (apiKey: string): Tool => ({
 
 const buildBraveSearchTool = (apiKey: string): Tool => ({
   name: 'web_search',
-  description: 'Searches the web and returns a ranked list of results (title, URL, snippet) for a query.',
+  description: 'Web search (Brave). Returns snippets; call web_fetch for full content.',
   usage: 'Find pages when you do not have a URL. Returns snippets only — follow up with web_fetch for full content.',
   returns: '{ query, provider, results: Array<{ title, url, snippet, publishedAt? }> }. results may be empty if nothing is found.',
   parameters: {
     type: 'object',
     properties: {
-      query: { type: 'string', description: 'The search query' },
-      count: { type: 'number', description: 'Number of results to return (default 5, max 10)' },
+      query: { type: 'string' },
+      count: { type: 'number', default: 5, minimum: 1, maximum: 10 },
     },
     required: ['query'],
   },
@@ -201,14 +201,14 @@ const buildBraveSearchTool = (apiKey: string): Tool => ({
 
 const buildGoogleSearchTool = (apiKey: string, cseId: string): Tool => ({
   name: 'web_search',
-  description: 'Searches the web and returns a ranked list of results (title, URL, snippet) for a query.',
+  description: 'Web search (Google CSE). Returns snippets; call web_fetch for full content.',
   usage: 'Find pages when you do not have a URL. Returns snippets only — follow up with web_fetch for full content.',
   returns: '{ query, provider, results: Array<{ title, url, snippet }> }. results may be empty if nothing is found.',
   parameters: {
     type: 'object',
     properties: {
-      query: { type: 'string', description: 'The search query' },
-      count: { type: 'number', description: 'Number of results to return (default 5, max 10)' },
+      query: { type: 'string' },
+      count: { type: 'number', default: 5, minimum: 1, maximum: 10 },
     },
     required: ['query'],
   },
@@ -252,14 +252,14 @@ const tryCreateSearchTool = (config: WebToolsConfig): Tool | undefined => {
 
 export const webFetchTool: Tool = {
   name: 'web_fetch',
-  description: 'Fetches a URL and returns its content as clean Markdown text. Handles HTML pages, plain text, and JSON responses.',
+  description: 'Fetch a URL and return its content as clean Markdown. No JS execution; for JSON APIs prefer web_extract_json.',
   usage: 'Read a specific page. No JS execution — JS-rendered pages may be incomplete. For JSON APIs, use web_extract_json.',
   returns: '{ url, title, content, charCount, truncated }. content is cleaned Markdown text.',
   parameters: {
     type: 'object',
     properties: {
-      url: { type: 'string', description: 'Full URL to fetch (must use http or https)' },
-      maxChars: { type: 'number', description: 'Max characters of content to return (default: agent context budget, max 32000)' },
+      url: { type: 'string', description: 'http or https' },
+      maxChars: { type: 'number', maximum: 32000 },
     },
     required: ['url'],
   },
@@ -339,14 +339,14 @@ export const webFetchTool: Tool = {
 
 export const webExtractJsonTool: Tool = {
   name: 'web_extract_json',
-  description: 'Fetches a URL that returns JSON and extracts the data. Optionally navigate to a nested field using dot notation.',
+  description: 'Fetch a JSON endpoint and optionally navigate to a nested field by dot path (e.g. "results.0.title").',
   usage: 'For JSON endpoints (REST APIs, feeds). Prefer over web_fetch for application/json. Path uses dot notation: "results.0.title".',
   returns: '{ url, data, truncated } where data is the parsed JSON or the value at the given path.',
   parameters: {
     type: 'object',
     properties: {
-      url: { type: 'string', description: 'URL of the JSON API endpoint' },
-      path: { type: 'string', description: 'Dot-notation path to a nested value (e.g. "results.0.title"). Omit to return the whole response.' },
+      url: { type: 'string' },
+      path: { type: 'string', description: 'Dot path; omit for whole response.' },
     },
     required: ['url'],
   },

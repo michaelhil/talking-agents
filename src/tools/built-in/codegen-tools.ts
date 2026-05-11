@@ -24,19 +24,19 @@ export const createWriteSkillTool = (
   skillsDir: string,
 ): Tool => ({
   name: 'write_skill',
-  description: 'Creates a new skill — a behavioral prompt template stored as a SKILL.md file. Skills are injected into agent context to shape how agents approach tasks.',
+  description: 'Create a SKILL.md — a behavioural prompt template injected into agent context. Bundled tools come later via write_tool.',
   usage: 'Create reusable behavioural instructions. Body is markdown. Add bundled tools later with write_tool.',
   returns: 'Object with the skill name and directory path.',
   parameters: {
     type: 'object',
     properties: {
-      name: { type: 'string', description: 'Skill name (letters, digits, underscores, hyphens only)' },
+      name: { type: 'string', pattern: '^[a-zA-Z0-9_-]+$' },
       description: { type: 'string', description: 'When this skill should be used' },
-      body: { type: 'string', description: 'Markdown body with behavioral instructions' },
+      body: { type: 'string', description: 'Markdown body' },
       scope: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Room names where this skill is active. Omit for global scope.',
+        description: 'Room names. Omit for global.',
       },
     },
     required: ['name', 'description', 'body'],
@@ -92,15 +92,15 @@ export const createWriteToolTool = (
   refreshAll: RefreshAllFn,
 ): Tool => ({
   name: 'write_tool',
-  description: 'Writes a complete TypeScript tool module into a skill\'s tools/ directory. The tool is imported, validated, and registered immediately.',
+  description: 'Write a TypeScript tool module into a skill\'s tools/ dir. Imported, validated, and registered immediately.',
   usage: 'Use after generate_tool_code has produced the source code. Pass the code string directly — do not modify it. The code must be a complete .ts module that exports a tool object as default.',
   returns: 'Object with the registered tool name, skill, and file path.',
   parameters: {
     type: 'object',
     properties: {
-      skill: { type: 'string', description: 'Name of the skill to bundle this tool with (must exist)' },
-      name: { type: 'string', description: 'Tool name — used as filename (letters, digits, underscores, hyphens only)' },
-      code: { type: 'string', description: 'Complete TypeScript module source that exports a tool as default' },
+      skill: { type: 'string', description: 'Owning skill (must exist).' },
+      name: { type: 'string', pattern: '^[a-zA-Z0-9_-]+$' },
+      code: { type: 'string', description: 'Complete .ts module exporting a Tool as default.' },
     },
     required: ['skill', 'name', 'code'],
   },
@@ -174,13 +174,13 @@ export const createTestToolTool = (
   registry: ToolRegistry,
 ): Tool => ({
   name: 'test_tool',
-  description: 'Runs a registered tool with sample input and returns the result. Use to verify a tool works after creating it.',
+  description: 'Run a registered tool with sample input. Verifies a freshly-authored tool works.',
   returns: 'The tool\'s result — either { success: true, data: ... } or { success: false, error: "..." }.',
   parameters: {
     type: 'object',
     properties: {
-      name: { type: 'string', description: 'Name of the registered tool to test' },
-      input: { type: 'object', description: 'Sample parameters to pass to the tool' },
+      name: { type: 'string' },
+      input: { type: 'object' },
     },
     required: ['name', 'input'],
   },
@@ -203,7 +203,7 @@ export const createTestToolTool = (
 
 export const createListSkillsTool = (store: SkillStore): Tool => ({
   name: 'list_skills',
-  description: 'Lists all loaded skills with their descriptions, scopes, and bundled tools.',
+  description: 'List loaded skills with description, scope, and bundled tools.',
   returns: 'Array of skill objects with name, description, scope, and tools.',
   parameters: {},
   execute: async () => ({

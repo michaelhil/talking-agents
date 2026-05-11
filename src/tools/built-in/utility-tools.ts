@@ -4,7 +4,7 @@ import { resolveRoom } from './resolve.ts'
 
 export const createGetTimeTool = (): Tool => ({
   name: 'get_time',
-  description: 'Returns the current date and time in ISO 8601 format.',
+  description: 'Current ISO-8601 timestamp.',
   usage: 'Call when temporal accuracy matters. Do not guess.',
   returns: 'Object with a "time" field containing the ISO 8601 timestamp, e.g. { "time": "2024-01-15T12:30:00.000Z" }.',
   parameters: {},
@@ -16,14 +16,14 @@ export const createGetTimeTool = (): Tool => ({
 
 export const createPostToRoomTool = (house: House): Tool => ({
   name: 'post_to_room',
-  description: 'Posts a message to a specific room on behalf of the calling agent.',
+  description: 'Post a message to a specific room. For replies in the current room, just write your response.',
   usage: 'Send to a room other than the current one (e.g. reporting back to a coordinator). For normal replies, just write your response.',
   returns: '{ messageId, roomName }.',
   parameters: {
     type: 'object',
     properties: {
-      roomName: { type: 'string', description: 'Name of the room to post into' },
-      content: { type: 'string', description: 'The message content to post' },
+      roomName: { type: 'string' },
+      content: { type: 'string' },
     },
     required: ['roomName', 'content'],
   },
@@ -46,14 +46,14 @@ export const createPostToRoomTool = (house: House): Tool => ({
 
 export const createGetRoomHistoryTool = (house: House): Tool => ({
   name: 'get_room_history',
-  description: 'Returns recent messages from a room.',
+  description: 'Return recent messages from a room. Omit roomName for the current room.',
   usage: 'Catch up on a room or review past decisions. Omit roomName for current room.',
   returns: 'Array of { senderName, content, type, timestamp }.',
   parameters: {
     type: 'object',
     properties: {
-      roomName: { type: 'string', description: 'Name of the room (omit to use current room)' },
-      limit: { type: 'number', description: 'Number of recent messages to return (default 20, max 100)' },
+      roomName: { type: 'string' },
+      limit: { type: 'number', default: 20, maximum: 100 },
     },
     required: [],
   },

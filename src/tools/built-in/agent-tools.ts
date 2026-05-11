@@ -8,7 +8,7 @@ export const createPassTool = (): Tool => ({
   description: 'Decline to respond. Use when the message is not directed at you or has been answered.',
   parameters: {
     type: 'object',
-    properties: { reason: { type: 'string', description: 'Brief reason for passing' } },
+    properties: { reason: { type: 'string' } },
     required: ['reason'],
   },
   execute: async (params) => ({ success: true, result: params.reason as string }),
@@ -16,7 +16,7 @@ export const createPassTool = (): Tool => ({
 
 export const createListAgentsTool = (team: Team): Tool => ({
   name: 'list_agents',
-  description: 'Lists all agents in the system with their name, kind (ai/human), and model.',
+  description: 'List agents with name, kind, and model.',
   usage: 'Discover available agents before add_to_room or [[AgentName]] addressing.',
   returns: 'Array of agent profiles: { name, kind, model? }.',
   parameters: {},
@@ -32,15 +32,15 @@ export const createListAgentsTool = (team: Team): Tool => ({
 
 export const createMuteAgentTool = (team: Team, house: House): Tool => ({
   name: 'mute_agent',
-  description: 'Mutes or unmutes an agent in a room, preventing their responses from being delivered.',
+  description: 'Mute or unmute an agent in a room.',
   usage: 'Silence a misbehaving agent in one room without removing them. Use sparingly.',
   returns: '{ roomName, agentName, muted }.',
   parameters: {
     type: 'object',
     properties: {
-      roomName: { type: 'string', description: 'Name of the room' },
-      agentName: { type: 'string', description: 'Name of the agent to mute or unmute' },
-      muted: { type: 'boolean', description: 'true to mute, false to unmute' },
+      roomName: { type: 'string' },
+      agentName: { type: 'string' },
+      muted: { type: 'boolean' },
     },
     required: ['roomName', 'agentName', 'muted'],
   },
@@ -60,7 +60,7 @@ export const createMuteAgentTool = (team: Team, house: House): Tool => ({
 
 export const createGetMyContextTool = (team: Team, house: House): Tool => ({
   name: 'get_my_context',
-  description: 'Returns your own name, id, kind, and the rooms you are currently in.',
+  description: 'Return your own name, id, kind, and current rooms.',
   usage: 'Use to identify yourself, confirm your current room membership, or orient before taking structural actions.',
   returns: '{ name, id, kind, rooms: string[] }.',
   parameters: {},

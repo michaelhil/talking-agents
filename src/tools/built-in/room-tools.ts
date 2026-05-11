@@ -8,7 +8,7 @@ type RemoveRoomFn = (roomId: string) => boolean
 
 export const createListRoomsTool = (house: House): Tool => ({
   name: 'list_rooms',
-  description: 'Lists all rooms with their names.',
+  description: 'List rooms.',
   usage: 'Use to discover available rooms before joining, posting to, or routing messages. Check here first when you need to know which rooms exist.',
   returns: 'Array of room name strings.',
   parameters: {},
@@ -20,14 +20,14 @@ export const createListRoomsTool = (house: House): Tool => ({
 
 export const createCreateRoomTool = (house: House, addAgentToRoom: AddToRoomFn): Tool => ({
   name: 'create_room',
-  description: 'Creates a new room and automatically adds the calling agent to it.',
+  description: 'Create a room and add yourself to it. Returns the assigned name (may differ on conflict).',
   usage: 'Set up a workspace. The calling agent is added automatically. Optional roomPrompt sets purpose/constraints.',
   returns: 'Object with "name" (assigned, may differ if conflict), "id", and "renamed" (true if the name was adjusted).',
   parameters: {
     type: 'object',
     properties: {
-      name: { type: 'string', description: 'Name for the new room' },
-      roomPrompt: { type: 'string', description: 'Optional system prompt for the room' },
+      name: { type: 'string' },
+      roomPrompt: { type: 'string' },
     },
     required: ['name'],
   },
@@ -54,14 +54,12 @@ export const createCreateRoomTool = (house: House, addAgentToRoom: AddToRoomFn):
 
 export const createDeleteRoomTool = (removeRoom: RemoveRoomFn, house: House): Tool => ({
   name: 'delete_room',
-  description: 'Permanently deletes a room and all its messages.',
+  description: 'Permanently delete a room and its messages. Irreversible — prefer remove_from_room if unsure.',
   usage: 'Use only to remove rooms that are fully finished and no longer needed. This is irreversible — all messages are lost. Prefer leaving a room over deleting it if unsure.',
   returns: 'Confirmation with the name of the removed room.',
   parameters: {
     type: 'object',
-    properties: {
-      roomName: { type: 'string', description: 'Name of the room to delete' },
-    },
+    properties: { roomName: { type: 'string' } },
     required: ['roomName'],
   },
   execute: async (params: Record<string, unknown>) => {
@@ -76,14 +74,14 @@ export const createDeleteRoomTool = (removeRoom: RemoveRoomFn, house: House): To
 
 export const createSetRoomPromptTool = (house: House): Tool => ({
   name: 'set_room_prompt',
-  description: 'Sets or updates the system prompt for a room, which is injected into the context of all agents in that room.',
+  description: 'Set the system prompt for a room; injected into every agent in that room.',
   usage: 'Use to define or update the purpose and rules for a room. All agents in the room will receive this in their context.',
   returns: '{ roomName, prompt }.',
   parameters: {
     type: 'object',
     properties: {
-      roomName: { type: 'string', description: 'Name of the room to update' },
-      prompt: { type: 'string', description: 'The new room prompt text' },
+      roomName: { type: 'string' },
+      prompt: { type: 'string' },
     },
     required: ['roomName', 'prompt'],
   },
@@ -100,14 +98,14 @@ export const createSetRoomPromptTool = (house: House): Tool => ({
 
 export const createPauseRoomTool = (house: House): Tool => ({
   name: 'pause_room',
-  description: 'Pauses or unpauses message delivery in a room.',
+  description: 'Pause or unpause message delivery in a room.',
   usage: 'Use to pause a room temporarily while re-configuring it (adding agents, changing mode), then unpause when ready. Does not affect join/leave messages.',
   returns: '{ roomName, paused }.',
   parameters: {
     type: 'object',
     properties: {
-      roomName: { type: 'string', description: 'Name of the room' },
-      paused: { type: 'boolean', description: 'true to pause, false to unpause' },
+      roomName: { type: 'string' },
+      paused: { type: 'boolean' },
     },
     required: ['roomName', 'paused'],
   },
@@ -124,14 +122,12 @@ export const createPauseRoomTool = (house: House): Tool => ({
 
 export const createSetDeliveryModeTool = (house: House): Tool => ({
   name: 'set_delivery_mode',
-  description: 'Sets the delivery mode of a room to broadcast.',
+  description: 'Switch a room to broadcast delivery.',
   usage: 'Use to switch a room to broadcast mode so all members receive every message.',
   returns: '{ roomName, mode }.',
   parameters: {
     type: 'object',
-    properties: {
-      roomName: { type: 'string', description: 'Name of the room to update' },
-    },
+    properties: { roomName: { type: 'string' } },
     required: ['roomName'],
   },
   execute: async (params: Record<string, unknown>) => {
@@ -146,14 +142,14 @@ export const createSetDeliveryModeTool = (house: House): Tool => ({
 
 export const createAddToRoomTool = (team: Team, house: House, addAgentToRoom: AddToRoomFn): Tool => ({
   name: 'add_to_room',
-  description: 'Adds an agent (yourself or another) to a room.',
+  description: 'Add an agent (yourself or another) to a room. Use your own name to join.',
   usage: 'Use to join a room yourself or invite another agent. Triggers a visible join notification. Use your own name to join a room you are not yet in.',
   returns: 'Confirmation with the agent name and room name.',
   parameters: {
     type: 'object',
     properties: {
-      agentName: { type: 'string', description: 'Name of the agent to add (use own name to join)' },
-      roomName: { type: 'string', description: 'Name of the room to join' },
+      agentName: { type: 'string' },
+      roomName: { type: 'string' },
     },
     required: ['agentName', 'roomName'],
   },
@@ -173,14 +169,14 @@ export const createAddToRoomTool = (team: Team, house: House, addAgentToRoom: Ad
 
 export const createRemoveFromRoomTool = (team: Team, house: House, removeAgentFromRoom: RemoveFromRoomFn): Tool => ({
   name: 'remove_from_room',
-  description: 'Removes an agent (yourself or another) from a room.',
+  description: 'Remove an agent (yourself or another) from a room.',
   usage: 'Use to leave a room when your participation is complete, or to remove another agent. Triggers a visible leave notification. You can still re-join later.',
   returns: 'Confirmation with the agent name and room name.',
   parameters: {
     type: 'object',
     properties: {
-      agentName: { type: 'string', description: 'Name of the agent to remove (use own name to leave)' },
-      roomName: { type: 'string', description: 'Name of the room' },
+      agentName: { type: 'string' },
+      roomName: { type: 'string' },
     },
     required: ['agentName', 'roomName'],
   },

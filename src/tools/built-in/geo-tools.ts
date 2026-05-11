@@ -89,14 +89,14 @@ const renderableFor = (envelope: { view?: unknown; features: ReadonlyArray<unkno
 
 export const createGeoLookupTool = (deps?: GeoToolsDeps): Tool => ({
   name: 'geo_lookup',
-  description: 'Resolves a place name to coordinates via the cascade: local store → Overpass (OSM) → Nominatim (OSM). Use this BEFORE writing any lat/lng yourself. Categories are user-defined — call geo_list_categories first to discover what is available. Maps render INLINE via ```map fences; do NOT use add_artifact for maps.',
+  description: 'Resolve a place name to coordinates via local store → Overpass → Nominatim. Paste `data.renderable` verbatim into your reply to render the map inline.',
   usage: 'Strict-match — pass an exact name or alias. The result includes `data.renderable` — drop that string verbatim into your chat reply to render the map inline. If category is unknown, the call returns an error; ask the user to import the category first.',
   returns: '{ features: [{type:"marker", lat, lng, label, icon}], view?: {center,zoom}, source: "local"|"overpass"|"nominatim", renderable: "```map\\n...\\n```" }, or { features: [] } when nothing matched.',
   parameters: {
     type: 'object',
     properties: {
-      query: { type: 'string', description: 'Place name, alias, or address.' },
-      category: { type: 'string', description: 'A registered category id. List via geo_list_categories.' },
+      query: { type: 'string' },
+      category: { type: 'string', description: 'Registered category id (list via geo_list_categories).' },
     },
     required: ['query', 'category'],
   },
@@ -146,22 +146,22 @@ export const createGeoLookupTool = (deps?: GeoToolsDeps): Tool => ({
 
 export const createGeoAddTool = (): Tool => ({
   name: 'geo_add',
-  description: 'Adds a feature to the user-local geodata store under an existing category. Always written as verified:false (unverified). Curated (verified:true) features with the same canonical name are NOT overwritten.',
+  description: 'Add a feature to the local store under an existing category. Written as unverified; never overwrites curated entries.',
   usage: 'Use after a successful web_search or domain-knowledge claim to persist a place the cascade did not find. The category MUST already exist (call geo_list_categories). To create a new category, ask the user to use Settings → Geodata → Import.',
   returns: '{ added: boolean, replaced: boolean, id: string }. added=false when a curated entry blocked the write.',
   parameters: {
     type: 'object',
     properties: {
-      name:     { type: 'string',  description: 'Display name.' },
-      lat:      { type: 'number',  description: 'Latitude (decimal degrees).' },
-      lng:      { type: 'number',  description: 'Longitude (decimal degrees).' },
-      category: { type: 'string',  description: 'Existing category id (call geo_list_categories).' },
-      aliases:  { type: 'array',   description: 'Alternate display names / codes.', items: { type: 'string' } },
-      country:  { type: 'string',  description: 'ISO-3166-1 alpha-2 country code (optional).' },
-      operator: { type: 'string',  description: 'Operating organisation (optional).' },
-      iata:     { type: 'string',  description: 'IATA code (optional, airports).' },
-      icao:     { type: 'string',  description: 'ICAO code (optional, airports).' },
-      tags:     { type: 'array',   description: 'Free-form tags.', items: { type: 'string' } },
+      name:     { type: 'string' },
+      lat:      { type: 'number',  description: 'decimal degrees' },
+      lng:      { type: 'number',  description: 'decimal degrees' },
+      category: { type: 'string',  description: 'Existing category id.' },
+      aliases:  { type: 'array',   items: { type: 'string' } },
+      country:  { type: 'string',  description: 'ISO-3166-1 alpha-2.' },
+      operator: { type: 'string' },
+      iata:     { type: 'string',  description: 'IATA code (airports).' },
+      icao:     { type: 'string',  description: 'ICAO code (airports).' },
+      tags:     { type: 'array',   items: { type: 'string' } },
     },
     required: ['name', 'lat', 'lng', 'category'],
   },
@@ -212,14 +212,14 @@ export const createGeoAddTool = (): Tool => ({
 
 export const createGeoRemoveTool = (): Tool => ({
   name: 'geo_remove',
-  description: 'Removes a feature from the user-local geodata store. Only removes entries that are local AND unverified. Curated features and entire categories cannot be removed via this tool — that is a user-only action in Settings → Geodata.',
+  description: 'Remove an unverified local feature. Curated and non-local features are immutable from this tool.',
   usage: 'Use to clean up a wrong agent-added entry. Pass the feature id returned by geo_add or surfaced by a previous geo_lookup result.',
   returns: '{ removed: boolean }.',
   parameters: {
     type: 'object',
     properties: {
-      id:       { type: 'string', description: 'Feature id to remove.' },
-      category: { type: 'string', description: 'Category id the feature lives in.' },
+      id:       { type: 'string' },
+      category: { type: 'string' },
     },
     required: ['id', 'category'],
   },
@@ -247,7 +247,7 @@ export const createGeoRemoveTool = (): Tool => ({
 
 export const createGeoListCategoriesTool = (): Tool => ({
   name: 'geo_list_categories',
-  description: 'Lists all registered geodata categories with their id, displayName, icon, and feature count. Categories are user-defined via Settings → Geodata → Import.',
+  description: 'List registered geodata categories with id, displayName, icon, and feature count.',
   usage: 'Call this BEFORE geo_lookup, geo_add, or geo_remove to discover what categories exist. Returns an empty array on a fresh install.',
   returns: 'Array of { id, displayName, icon, featureCount, hasOsmQuery }.',
   parameters: { type: 'object', properties: {}, required: [] },
@@ -355,19 +355,19 @@ const MAX_LIMIT = 1000
 
 export const createGeoListFeaturesTool = (): Tool => ({
   name: 'geo_list_features',
-  description: 'Returns all features in a category, optionally filtered by country / operator / name-substring / tag. Use this when the user wants to see many features at once on a map (e.g. "show all Norwegian oil platforms"). One call replaces the lookup-each-name dance. Maps render INLINE via ```map fences; do NOT use add_artifact for maps.',
+  description: 'List features in a category, optionally filtered by country / operator / name-substring / tag. Paste `data.renderable` verbatim into your reply to render the map inline.',
   usage: 'Pass `category` (exact id) OR `categoryHint` (e.g. "oil platforms"). On ambiguous hint, the call errors with the candidate ids so you can clarify with the user. Filters compose (AND): country=ISO-3166-1-alpha-2, operator=substring, nameContains=substring on name+aliases, tag=exact match. Drop `data.renderable` verbatim into your chat reply to render the map inline.',
   returns: '{ features: [...], view?: {center, zoom}, count, totalMatched, truncated, category, source: "merged", renderable: "```map\\n{...}\\n```" }, or { success:false, error, candidates? } on ambiguity.',
   parameters: {
     type: 'object',
     properties: {
-      category:      { type: 'string', description: 'Exact registered category id.' },
-      categoryHint:  { type: 'string', description: 'Substring against id or displayName when you don\'t know the exact id. Errors with candidates on ambiguity.' },
-      country:       { type: 'string', description: 'ISO-3166-1 alpha-2 country code (e.g. "NO" for Norway).' },
-      operator:      { type: 'string', description: 'Operator substring (case-insensitive).' },
-      nameContains:  { type: 'string', description: 'Substring against feature name + aliases.' },
-      tag:           { type: 'string', description: 'Exact tag match (case-insensitive).' },
-      limit:         { type: 'number', description: `Default ${DEFAULT_LIMIT}, hard cap ${MAX_LIMIT}.` },
+      category:      { type: 'string' },
+      categoryHint:  { type: 'string', description: 'Substring against id or displayName; errors with candidates on ambiguity.' },
+      country:       { type: 'string', description: 'ISO-3166-1 alpha-2.' },
+      operator:      { type: 'string', description: 'Substring, case-insensitive.' },
+      nameContains:  { type: 'string', description: 'Matches name + aliases.' },
+      tag:           { type: 'string' },
+      limit:         { type: 'number', default: DEFAULT_LIMIT, maximum: MAX_LIMIT },
     },
     required: [],
   },
