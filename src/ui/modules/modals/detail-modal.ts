@@ -214,7 +214,27 @@ export const createModal = (config: ModalConfig): ModalElements => {
   // either gone or harmless (returns the inserted button or null).
 
   const scrollBody = document.createElement('div')
-  scrollBody.className = 'px-6 py-4 overflow-y-auto min-h-0 flex-1'
+  scrollBody.className = 'px-6 py-4 overflow-y-auto min-h-0 flex-1 modal-scroll'
+  // Cue that more content lies below — toggled via the .has-overflow-bottom
+  // class on scroll / resize. Invisible when not needed (no always-on
+  // scrollbar); the gradient styling lives in input.css.
+  const updateOverflowState = (): void => {
+    const atBottom = scrollBody.scrollTop + scrollBody.clientHeight >= scrollBody.scrollHeight - 1
+    const hasOverflow = scrollBody.scrollHeight > scrollBody.clientHeight + 1
+    scrollBody.classList.toggle('has-overflow-bottom', hasOverflow && !atBottom)
+    scrollBody.classList.toggle('has-overflow-top', scrollBody.scrollTop > 1)
+  }
+  scrollBody.addEventListener('scroll', updateOverflowState, { passive: true })
+  // ResizeObserver catches content mutations (lazy-loaded lists, etc.) and
+  // viewport resizes. requestAnimationFrame defers until the next paint so
+  // the measurement reflects post-layout state.
+  const overflowRO = new ResizeObserver(() => requestAnimationFrame(updateOverflowState))
+  overflowRO.observe(scrollBody)
+  // Also observe the immediate child set so async list-render causes a
+  // recheck (ResizeObserver alone doesn't fire on inner mutations that
+  // don't change scrollBody's own size).
+  const contentMO = new MutationObserver(() => requestAnimationFrame(updateOverflowState))
+  contentMO.observe(scrollBody, { childList: true, subtree: true })
 
   const footer = document.createElement('div')
   footer.className = 'px-6 py-3 border-t border-border flex-shrink-0'

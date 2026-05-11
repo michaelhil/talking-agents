@@ -82,6 +82,41 @@
     color: var(--text);
   }
 
+  /* Modal scroll body — subtle bottom-edge fade that appears ONLY when
+   * content overflows below the viewport, and disappears when scrolled
+   * to the bottom. Solves the "no scrollbar means I don't know there's
+   * more" UX problem on macOS auto-hide scrollbar setups, without an
+   * always-visible scrollbar. detail-modal.ts toggles the classes via a
+   * scroll + ResizeObserver pair. */
+  .modal-scroll {
+    position: relative;
+  }
+  .modal-scroll::before,
+  .modal-scroll::after {
+    content: '';
+    position: sticky;
+    left: 0;
+    right: 0;
+    height: 16px;
+    display: block;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 120ms ease;
+    z-index: 1;
+  }
+  .modal-scroll::before {
+    top: 0;
+    margin-bottom: -16px;
+    background: linear-gradient(to bottom, var(--surface) 0%, transparent 100%);
+  }
+  .modal-scroll::after {
+    bottom: 0;
+    margin-top: -16px;
+    background: linear-gradient(to top, var(--surface) 0%, transparent 100%);
+  }
+  .modal-scroll.has-overflow-top::before { opacity: 1; }
+  .modal-scroll.has-overflow-bottom::after { opacity: 1; }
+
   dialog input[type="text"],
   dialog input[type="number"],
   dialog input[type="email"],
