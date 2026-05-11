@@ -14,6 +14,7 @@ import { parseMapSource, collectLatLngs, type ParsedMap, type EnvelopeFeature } 
 import { showMapFallback } from './fallback.ts'
 import { buildIconSpec } from './icons.ts'
 import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
+import { mapRegistry, nextMapId } from './map-registry.ts'
 
 const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -158,7 +159,13 @@ const renderInto = async (container: HTMLElement, source: string): Promise<void>
     return
   }
 
-  buildMap(L, container, parsed, source)
+  const result = buildMap(L, container, parsed, source)
+  // Register for lifecycle ownership — sweep + release guarantee map.remove()
+  // runs when the wrapper detaches. Both call sites (chat-fence and the
+  // geodata-panel preview) route through here, so one attach() covers both.
+  if (result) {
+    mapRegistry.attach(nextMapId(), result.map, container)
+  }
 }
 
 export const renderMapBlocks = async (container: HTMLElement): Promise<void> => {

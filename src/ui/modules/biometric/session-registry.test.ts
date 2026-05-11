@@ -1,12 +1,13 @@
-// Pure-TS unit tests for the session registry. No DOM, no MediaPipe, no
-// real getUserMedia — the registry is provider-agnostic (it accepts any
-// CaptureSession). We pass a real factory-function implementation of
-// CaptureSession that records stop() calls. Same "real interface with
-// controlled behavior" pattern as makeStubGateway in biometric-flow.test.ts;
-// not a mock.
+// Tests for the biometric specialisation of the generic wrapper-registry.
+// Acts as a contract test for that consumer — the generic surface itself
+// is covered in src/ui/modules/wrapper-registry/index.test.ts.
 //
-// The "wrapper" only needs an isConnected boolean for the sweeper. We
-// build a minimal object literal that satisfies that surface.
+// We pass a real factory-function CaptureSession (records stop() calls)
+// rather than a mock — per feedback_no_mocks.md.
+//
+// Registry entries expose fields under generic names (id, resource,
+// wrapper); biometric callers map them onto their domain at access time
+// (id ↔ captureId, resource ↔ session).
 
 import { describe, test, expect } from 'bun:test'
 import { createSessionRegistry, type ReleaseReason } from './session-registry.ts'
@@ -55,9 +56,9 @@ describe('session registry', () => {
     reg.attach('cap_1', session, wrapper)
     const entry = reg.get('cap_1')
     expect(entry).toBeTruthy()
-    expect(entry?.captureId).toBe('cap_1')
-    expect(entry?.session).toBe(session)
-    expect(entry?.attachedWrapper).toBe(wrapper)
+    expect(entry?.id).toBe('cap_1')
+    expect(entry?.resource).toBe(session)
+    expect(entry?.wrapper).toBe(wrapper)
   })
 
   test('get returns null for unknown captureId', () => {
@@ -105,7 +106,7 @@ describe('session registry', () => {
     const w2 = makeWrapper(true) as unknown as HTMLElement
     reg.attach('cap_1', session, w1)
     reg.setWrapper('cap_1', w2)
-    expect(reg.get('cap_1')?.attachedWrapper).toBe(w2)
+    expect(reg.get('cap_1')?.wrapper).toBe(w2)
     expect(session.stopCalls()).toBe(0)
   })
 

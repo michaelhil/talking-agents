@@ -245,8 +245,8 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
     // old wrapper's intervals.
     sessionRegistry.setWrapper(payload.captureId, wrapper)
     const ui = renderActive(wrapper, payload)
-    void existing.session.retarget(ui.videoEl, ui.canvasEl)
-    const binding = wireActiveViewWithUI(wrapper, payload, existing.session, performance.now(), ui)
+    void existing.resource.retarget(ui.videoEl, ui.canvasEl)
+    const binding = wireActiveViewWithUI(wrapper, payload, existing.resource, performance.now(), ui)
     sessionRegistry.setViewBinding(payload.captureId, binding)
     return
   }
