@@ -7,9 +7,11 @@
 // implicitly active). Welcome stays separate as the first-boot seed; demos
 // here are user-discoverable capability tours.
 //
-// Phase 1 ships 2 demos:
+// Phase 1 ships 3 demos:
 //   - first-conversation: guided tour of basic UI affordances
 //   - diagram-thinking: agent draws a mermaid flowchart inline
+//   - biometric-awareness: agent observes via webcam (installs the
+//     samsinn-biometrics pack — needs explicit consent in the dialog)
 //
 // Phase 2+ adds: two-agent-debate, aviation-live, research-workspace,
 // triggers-and-summary (each blocked on additional ops or pack installs).
@@ -54,6 +56,11 @@ export const buildDemosExtraSource = (system: System): ExtraSource =>
       {
         name: 'diagram-thinking',
         file: './diagram-thinking.scenario.md',
+        importMetaUrl: import.meta.url,
+      },
+      {
+        name: 'biometric-awareness',
+        file: './biometric-awareness.scenario.md',
         importMetaUrl: import.meta.url,
       },
     ],

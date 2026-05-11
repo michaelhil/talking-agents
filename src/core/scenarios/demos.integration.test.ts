@@ -51,6 +51,7 @@ describe('synthetic-demos pack', () => {
     await system.scenarioStore.reload()
     const ids = system.scenarioStore.list().map(s => s.id).sort()
     expect(ids).toEqual([
+      'demos/biometric-awareness',
       'demos/diagram-thinking',
       'demos/first-conversation',
       'welcome/getting-started',

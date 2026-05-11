@@ -57,7 +57,14 @@ export const opHandlers: HandlerMap = {
     const params: Record<string, unknown> = { source: op.source }
     if (op.name) params.name = op.name
     const res = await tool.execute(params, { callerId: 'scenario', callerName: 'scenario' })
-    if (!res.success) throw new Error(`install-pack ${op.source} failed: ${res.error ?? 'unknown'}`)
+    if (!res.success) {
+      // Idempotent: a pre-installed pack is a successful no-op, not a
+      // scenario failure. install_pack returns the "already installed"
+      // string verbatim — match it tolerantly so a future wording tweak
+      // doesn't silently break this path.
+      if (/already installed/i.test(res.error ?? '')) return
+      throw new Error(`install-pack ${op.source} failed: ${res.error ?? 'unknown'}`)
+    }
   },
 
   'create-room': async (op, { system }) => {
