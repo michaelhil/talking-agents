@@ -34,9 +34,18 @@ export interface ToolContext {
 
 export interface Tool {
   readonly name: string
+  // LLM-facing prose. Single imperative clause; second sentence only for a
+  // non-obvious constraint or cross-tool dependency. If the return shape
+  // carries a contract the LLM must act on (e.g. paste a fence verbatim),
+  // fold that sentence here — `returns` is UI-only. See src/llm/tool-capability.ts
+  // header for the full style contract.
   readonly description: string
-  readonly usage?: string           // when to use / when not to — injected into LLM context
-  readonly returns?: string         // human-readable description of the return value
+  // UI hints rendered in the tool-detail modal for humans inspecting a
+  // tool. NOT sent to the LLM (pre-2026-05 they were appended to
+  // description; cost audit determined the prose duplicated info the
+  // model gets from the first tool result anyway).
+  readonly usage?: string
+  readonly returns?: string
   readonly parameters: Record<string, unknown>  // JSON Schema for LLM
   readonly execute: (params: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>
 }

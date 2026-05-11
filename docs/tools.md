@@ -516,13 +516,13 @@ import type { Tool } from '../src/core/types/tool.ts'
 
 const myTool: Tool = {
   name: 'my_tool',
-  description: 'What this tool does.',
-  usage: 'When to use it and when not to.',
-  returns: 'Description of what it returns.',
+  description: 'Compute the answer.',                       // LLM-facing
+  usage: 'When humans inspect this tool, show them this.',  // UI-only (modal)
+  returns: 'Object with `answer` field.',                   // UI-only (modal)
   parameters: {
     type: 'object',
     properties: {
-      input: { type: 'string', description: 'The input value' },
+      input: { type: 'string', description: 'ISO-8601 date' },  // only when name isn't self-evident
     },
     required: ['input'],
   },
@@ -533,6 +533,13 @@ const myTool: Tool = {
 
 export default myTool
 ```
+
+### What the LLM sees (post-2026-05 cost audit)
+
+- **`description`** — sent to the LLM. Single imperative clause (≤ 200 chars typical). Second sentence ONLY for a non-obvious constraint, side-effect, or cross-tool dependency that the LLM can't infer from the first call's actual result. No "Use to…", "This tool…", "Lists all…" openers. If your return shape carries a contract the LLM must act on (e.g. paste a fence string verbatim), fold that one sentence into `description` proper.
+- **`usage` and `returns`** — *UI hints only.* Rendered in the tool-detail modal for humans inspecting a tool. NOT sent to the LLM. (Pre-2026-05 they were appended to `description`; cost audit determined the prose duplicated info the model gets from the first tool result anyway.)
+- **`parameters`** — JSON Schema. Use `default`, `enum`, `minimum`, `maximum`, `minLength`, `maxLength`, `pattern` instead of prose. All major providers honour them. Per-property `description` only when the property name doesn't self-document — keep for format hints like "ISO-3166-1 alpha-2" or "decimal degrees"; drop "Name of the room", "The X", "X to use".
+- **Cross-tool conventions** (e.g. `` ```map `` rendering, `[[AgentName]]` addressing, the geo cascade) live in the relevant skill markdown, NOT duplicated across every related tool's `description`.
 
 **Rules:**
 - Tool names must match `/^[a-zA-Z0-9_-]+$/` (no spaces; letters, digits, underscores, hyphens only)

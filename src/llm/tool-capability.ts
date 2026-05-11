@@ -13,6 +13,44 @@
 // Gemini and Anthropic don't currently enforce this but probably will.
 // Sanitising here keeps tool authors free to write loose shapes without
 // every adapter independently catching the discrepancy.
+//
+// === LLM-facing contract (post-2026-05 cost audit) ===
+//
+//   tool.description  → goes to the LLM. Single imperative clause; ≤ 200
+//                       chars typical. Second sentence ONLY for a non-
+//                       obvious constraint, side-effect, or cross-tool
+//                       dependency that the LLM can't infer from the
+//                       first call's actual result. No "Use to…",
+//                       "This tool…" openers. If the return shape carries
+//                       a contract the LLM must act on (e.g. paste a
+//                       fence string verbatim), fold that sentence into
+//                       description proper — `returns` is UI-only.
+//
+//   tool.usage        → UI hint, surfaced in the tool-detail modal for
+//   tool.returns        humans inspecting a tool. NOT appended to the
+//                       LLM-facing description.
+//
+//   tool.parameters   → JSON Schema. Use `default`, `enum`, `minimum`,
+//                       `maximum`, `minLength`, `maxLength`, `pattern`
+//                       fields instead of prose. All major providers
+//                       honour them. Per-property `description` only when
+//                       the property name doesn't self-document (e.g.
+//                       format hints like "ISO-3166-1 alpha-2"; not
+//                       "Name of the room").
+//
+//   Cross-tool conventions (e.g. `\`\`\`map` rendering, `[[AgentName]]`
+//   addressing, geo cascade order) live in the relevant skill markdown,
+//   NOT duplicated across every related tool's description.
+//
+//   Drift in the surface size is monitored by eyeballing — a single
+//   maintainer can spot bloat in review. A previous attempt at a runtime
+//   token cap (deleted in de6c0d1) and the alternative of a CI budget
+//   test were both rejected: the cap silently dropped pack tools when
+//   registration order changed, and the CI test creates friction against
+//   every legitimate new tool without solving the real problem
+//   (LLM-correctness regression, which a token count cannot detect).
+//   LLM behaviour is verified by comparing /api/diagnostics/evals/recent
+//   outcome-rates before/after a change.
 // ============================================================================
 
 import type { Tool, ToolDefinition } from '../core/types/tool.ts'
@@ -63,12 +101,13 @@ const normaliseParameters = (
 // === Tool format conversion ===
 
 export const toolsToDefinitions = (tools: ReadonlyArray<Tool>): ReadonlyArray<ToolDefinition> =>
-  tools.map(t => {
-    let description = t.description
-    if (t.usage) description += `\nUsage: ${t.usage}`
-    if (t.returns) description += `\nReturns: ${t.returns}`
-    return {
-      type: 'function' as const,
-      function: { name: t.name, description, parameters: normaliseParameters(t.name, t.parameters) },
-    }
-  })
+  tools.map(t => ({
+    type: 'function' as const,
+    // description is the LLM-facing prose. tool.usage and tool.returns are
+    // UI hints rendered in the tool-detail modal — they're NOT sent to the
+    // LLM. (Pre-2026-05 they were appended; cost audit determined the
+    // prose duplicated information the model gets from the first tool
+    // result. For tools whose return shape carries a contract the LLM
+    // must act on, that sentence goes into `description` proper.)
+    function: { name: t.name, description: t.description, parameters: normaliseParameters(t.name, t.parameters) },
+  }))
