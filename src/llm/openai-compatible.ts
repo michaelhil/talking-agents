@@ -250,29 +250,32 @@ const toOAIMessages = (request: ChatRequest, providerName: string): OAIMessage[]
 }
 
 // OpenAI's gpt-5 family AND the o-series reasoning models (o1, o3, o4)
-// rejected the legacy `max_tokens` field in favour of
-// `max_completion_tokens`, and the o-series additionally rejects any
-// `temperature` other than the default. We detect by model prefix so the
-// rule applies on OpenAI, OpenRouter (which proxies these), and any
-// future provider that re-exposes the same models.
+// require `max_completion_tokens` instead of the legacy `max_tokens`,
+// AND reject any `temperature` other than the default (1.0). We detect
+// by model prefix so the rule applies on OpenAI, OpenRouter (which
+// proxies these), and any future provider that re-exposes the same
+// models.
 //
 // Match by NORMALISED model id (no provider prefix). Callers pass
 // `request.model` which may include a `<prov>:` prefix — strip it before
 // matching.
+//
+// Failure modes prevented:
+//   - HTTP 400 "Unsupported parameter: 'max_tokens' ... Use
+//     'max_completion_tokens' instead." (gpt-5*, o[1-9]*)
+//   - HTTP 400 "Unsupported value: 'temperature' does not support 0
+//     with this model. Only the default (1) value is supported."
+//     (gpt-5*, o[1-9]*)
 const stripProviderPrefix = (model: string): string => {
   const idx = model.indexOf(':')
   return idx >= 0 ? model.slice(idx + 1) : model
 }
-const usesMaxCompletionTokens = (model: string): boolean => {
+const isNewOpenAIFamily = (model: string): boolean => {
   const id = stripProviderPrefix(model).toLowerCase()
   return id.startsWith('gpt-5') || /^o[1-9]/.test(id)
 }
-const rejectsTemperature = (model: string): boolean => {
-  const id = stripProviderPrefix(model).toLowerCase()
-  // o-series reasoning models reject any temperature override. gpt-5
-  // chat models accept temperature, so we only gate on o\d here.
-  return /^o[1-9]/.test(id)
-}
+const usesMaxCompletionTokens = isNewOpenAIFamily
+const rejectsTemperature = isNewOpenAIFamily
 
 const buildOAIBody = (request: ChatRequest, stream: boolean, providerName: string): Record<string, unknown> => {
   const body: Record<string, unknown> = {

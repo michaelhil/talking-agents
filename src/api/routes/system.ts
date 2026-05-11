@@ -12,8 +12,21 @@ import { json, errorResponse, parseBody } from './helpers.ts'
 import type { RouteEntry } from './types.ts'
 import { authEnabled, buildSessionCookie, issueSession, validateToken, getAuthLimiter } from '../auth.ts'
 
-// Cached on first read. package.json doesn't change at runtime.
-let cachedInfo: { version: string; repoUrl: string } | null = null
+// Cached on first read. package.json doesn't change at runtime; the git
+// SHA is captured once from the working tree the process was launched
+// from. Both stable for the lifetime of the process.
+interface SystemInfo {
+  readonly version: string
+  readonly repoUrl: string
+  // Short git SHA of HEAD when the process started. Empty string when
+  // not in a git tree (e.g. release tarball, container without .git).
+  // Used by ops to verify a deploy actually picked up the latest master
+  // — invaluable when prod looks like it should have the fix but the
+  // user sees old behaviour. Without this field, the only way to
+  // verify the running binary's source is to SSH in.
+  readonly gitSha: string
+}
+let cachedInfo: SystemInfo | null = null
 
 const normalizeRepoUrl = (raw: unknown): string => {
   if (typeof raw === 'string') return raw.replace(/^git\+/, '').replace(/\.git$/, '')
@@ -23,7 +36,25 @@ const normalizeRepoUrl = (raw: unknown): string => {
   return ''
 }
 
-const readPackageInfo = async (): Promise<{ version: string; repoUrl: string }> => {
+// Capture the SHA at startup via a one-shot `git rev-parse --short HEAD`.
+// Synchronous Bun spawn keeps boot-time uniform — failure (no git, no .git
+// dir) returns ''. Bun.spawnSync is available since Bun 1.0.
+const readGitSha = (): string => {
+  try {
+    const result = Bun.spawnSync({
+      cmd: ['git', 'rev-parse', '--short', 'HEAD'],
+      cwd: process.cwd(),
+      stdout: 'pipe',
+      stderr: 'ignore',
+    })
+    if (result.exitCode !== 0) return ''
+    return new TextDecoder().decode(result.stdout).trim()
+  } catch {
+    return ''
+  }
+}
+
+const readPackageInfo = async (): Promise<SystemInfo> => {
   if (cachedInfo) return cachedInfo
   try {
     const raw = await readFile(resolve(process.cwd(), 'package.json'), 'utf-8')
@@ -31,9 +62,10 @@ const readPackageInfo = async (): Promise<{ version: string; repoUrl: string }> 
     cachedInfo = {
       version: pkg.version ?? '0.0.0',
       repoUrl: normalizeRepoUrl(pkg.repository),
+      gitSha: readGitSha(),
     }
   } catch {
-    cachedInfo = { version: '0.0.0', repoUrl: '' }
+    cachedInfo = { version: '0.0.0', repoUrl: '', gitSha: readGitSha() }
   }
   return cachedInfo
 }

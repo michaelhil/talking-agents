@@ -12,19 +12,19 @@
 
 import { showToast } from '../toast.ts'
 
-interface SystemInfo { readonly version: string }
+interface SystemInfo { readonly version: string; readonly gitSha?: string }
 
-let cachedVersion: string | null = null
+let cachedInfo: { version: string; gitSha: string } | null = null
 
-const fetchVersion = async (): Promise<string> => {
-  if (cachedVersion !== null) return cachedVersion
+const fetchVersion = async (): Promise<{ version: string; gitSha: string }> => {
+  if (cachedInfo !== null) return cachedInfo
   try {
     const res = await fetch('/api/system/info')
-    if (!res.ok) return ''
+    if (!res.ok) return { version: '', gitSha: '' }
     const info = await res.json() as Partial<SystemInfo>
-    cachedVersion = info.version ?? ''
-    return cachedVersion
-  } catch { return '' }
+    cachedInfo = { version: info.version ?? '', gitSha: info.gitSha ?? '' }
+    return cachedInfo
+  } catch { return { version: '', gitSha: '' } }
 }
 
 export const openBugModal = async (): Promise<void> => {
@@ -42,9 +42,12 @@ export const openBugModal = async (): Promise<void> => {
   descEl.value = ''
   submitBtn.disabled = false
 
-  const version = await fetchVersion()
+  const { version, gitSha } = await fetchVersion()
+  const versionLabel = version
+    ? (gitSha ? `${version} (${gitSha})` : version)
+    : '(version unknown)'
   const ua = navigator.userAgent
-  ctxEl.textContent = `Will include: samsinn ${version || '(version unknown)'} · ${ua}`
+  ctxEl.textContent = `Will include: samsinn ${versionLabel} · ${ua}`
 
   cancelBtn.onclick = () => dlg.close()
   dlg.addEventListener('cancel', () => dlg.close())
@@ -59,7 +62,7 @@ export const openBugModal = async (): Promise<void> => {
       const res = await fetch('/api/bugs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, description, version, userAgent: ua }),
+        body: JSON.stringify({ title, description, version: versionLabel, userAgent: ua }),
       })
       if (res.status === 201) {
         const body = await res.json().catch(() => ({})) as { htmlUrl?: string; number?: number }

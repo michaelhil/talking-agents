@@ -410,6 +410,24 @@ describe('createOpenAICompatibleProvider', () => {
     } finally { fx.stop() }
   })
 
+  test('gpt-5 family: temperature stripped too (gpt-5 only accepts default 1.0)', async () => {
+    // Discovered while debugging prod: after the max_tokens → max_completion_tokens
+    // fix landed, the test-model endpoint's temperature:0 caused the SAME
+    // shape of 400 from gpt-5. The new-family detection applies to BOTH
+    // fields, not just max_tokens.
+    const fx = startFixture(() => ({
+      status: 200,
+      body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }),
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'openai', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      await provider.chat({ model: 'gpt-5.1', messages: [{ role: 'user', content: 'hi' }], maxTokens: 1, temperature: 0 })
+      expect(fx.last.body).toMatchObject({ max_completion_tokens: 1 })
+      expect(fx.last.body).not.toHaveProperty('max_tokens')
+      expect(fx.last.body).not.toHaveProperty('temperature')
+    } finally { fx.stop() }
+  })
+
   test('legacy gpt-4o: still uses max_tokens (regression guard)', async () => {
     const fx = startFixture(() => ({
       status: 200,
