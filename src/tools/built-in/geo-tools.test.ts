@@ -206,6 +206,42 @@ describe('geo_list_features', () => {
     }
   })
 
+  test('country filter accepts adjectival form ("norwegian")', async () => {
+    // LLMs reliably pass adjectival forms instead of ISO codes. Pre-fix,
+    // these returned 0 features and triggered retry loops. Normalisation
+    // maps norwegian → NO so the filter still works.
+    await seedFeature('Statfjord A', 61.25, 1.85, { country: 'NO' })
+    await seedFeature('Brent C', 61.0, 1.7, { country: 'GB' })
+    const r = await tool.execute({ category: 'oil-platforms', country: 'norwegian' }, fakeContext as never)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      const d = r.data as { count: number }
+      expect(d.count).toBe(1)
+    }
+  })
+
+  test('country filter accepts full country name ("Norway")', async () => {
+    await seedFeature('Statfjord A', 61.25, 1.85, { country: 'NO' })
+    await seedFeature('Brent C', 61.0, 1.7, { country: 'GB' })
+    const r = await tool.execute({ category: 'oil-platforms', country: 'Norway' }, fakeContext as never)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      const d = r.data as { count: number }
+      expect(d.count).toBe(1)
+    }
+  })
+
+  test('country filter still works with raw ISO code', async () => {
+    // Regression: alpha-2 short-circuit doesn't break legitimate ISO usage.
+    await seedFeature('Brent C', 61.0, 1.7, { country: 'GB' })
+    const r = await tool.execute({ category: 'oil-platforms', country: 'gb' }, fakeContext as never)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      const d = r.data as { count: number }
+      expect(d.count).toBe(1)
+    }
+  })
+
   test('categoryHint matches by displayName substring', async () => {
     // Seed a feature with explicit category metadata so the projection
     // picks up "Oil Platforms" as the displayName.
