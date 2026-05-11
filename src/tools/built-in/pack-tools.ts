@@ -92,6 +92,16 @@ export interface PackToolsDeps {
   readonly scrubActivePacks?: (packNamespace: string) =>
     Promise<{ roomId: string; activePacks: ReadonlyArray<string> }[]>
     | { roomId: string; activePacks: ReadonlyArray<string> }[]
+  // Optional: auto-activate a freshly-installed pack in every existing
+  // room across every live instance. Mirrors scrubActivePacks but adds
+  // (instead of removing) the namespace. Without this wired, install_pack
+  // just registers the pack but doesn't surface its tools in any room
+  // until the user toggles per-room — a friction point users have called
+  // out. With it wired, "install pack X" means "X is usable everywhere
+  // immediately." Per-room opt-out still works.
+  readonly autoActivateInAllRooms?: (packNamespace: string) =>
+    Promise<{ roomId: string; activePacks: ReadonlyArray<string> }[]>
+    | { roomId: string; activePacks: ReadonlyArray<string> }[]
   // Optional: re-scan <pack>/geodata/*.geojson across all installed
   // packs. Called on install/update/uninstall so newly-bundled (or
   // newly-removed) geodata categories show up in geo_lookup + the
@@ -308,6 +318,19 @@ export const createInstallPackTool = (deps: PackToolsDeps): Tool => ({
       }
     } catch (err) {
       console.error(`[packs] refreshAllAgentTools failed after install "${namespace}":`, err)
+    }
+    // Auto-activate in every existing room across all live instances.
+    // Without this, the pack is registered but its tools are invisible
+    // until the user toggles per-room — friction users have called out.
+    // Per-room opt-out continues to work normally (a room that toggles
+    // OFF after auto-activate keeps the user's choice).
+    try {
+      const activated = (await deps.autoActivateInAllRooms?.(namespace)) ?? []
+      if (activated.length > 0) {
+        console.log(`[packs] auto-activated "${namespace}" in ${activated.length} room${activated.length === 1 ? '' : 's'}`)
+      }
+    } catch (err) {
+      console.error(`[packs] autoActivateInAllRooms failed after install "${namespace}":`, err)
     }
     deps.notifyPacksChanged?.({
       action: 'installed', namespace,

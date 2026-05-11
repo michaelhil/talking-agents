@@ -499,6 +499,47 @@ export const bootstrap = async (): Promise<void> => {
       await refreshPackGeodata(sharedPaths.packs())
     }
 
+    // Cross-instance auto-activate: when a new pack installs, add its
+    // namespace to every room.activePacks across every live instance.
+    // Mirrors crossInstanceScrubActivePacks but adds (not removes). Per-
+    // room opt-out via the panel toggle still works.
+    const crossInstanceAutoActivatePack = async (
+      packNamespace: string,
+    ): Promise<{ roomId: string; activePacks: ReadonlyArray<string> }[]> => {
+      const out: { roomId: string; activePacks: ReadonlyArray<string> }[] = []
+      const dirtyInstances = new Set<string>()
+      for (const meta of registry.list()) {
+        const sys = registry.tryGetLive(meta.id)
+        if (!sys) continue
+        for (const profile of sys.house.listAllRooms()) {
+          const room = sys.house.getRoom(profile.id)
+          if (!room) continue
+          const before = room.getActivePacks()
+          if (before.includes(packNamespace)) continue   // already active in this room
+          const after = [...before, packNamespace]
+          room.setActivePacks(after)
+          out.push({ roomId: profile.id, activePacks: after })
+          dirtyInstances.add(meta.id)
+          try {
+            wsManager?.broadcastToInstance(meta.id, {
+              type: 'pack_activation_changed', roomId: profile.id, activePacks: after,
+            })
+          } catch { /* ignore */ }
+        }
+      }
+      // Force-flush every affected instance's auto-saver so a crash within
+      // the 5s debounce doesn't lose the activation. Same pattern as
+      // crossInstanceScrubActivePacks.
+      for (const id of dirtyInstances) {
+        const saver = registry.autoSaverFor(id)
+        if (!saver) continue
+        saver.flush().catch(err => {
+          console.error(`[packs] post-auto-activate snapshot flush failed for ${id}:`, err)
+        })
+      }
+      return out
+    }
+
     shared.sharedToolRegistry.registerAll(createPackTools({
       packsDir: sharedPaths.packs(),
       toolRegistry: shared.sharedToolRegistry,
@@ -506,6 +547,7 @@ export const bootstrap = async (): Promise<void> => {
       refreshAllAgentTools: crossInstanceRefreshAllAgentTools,
       notifyPacksChanged: crossInstanceNotifyPacksChanged,
       scrubActivePacks: crossInstanceScrubActivePacks,
+      autoActivateInAllRooms: crossInstanceAutoActivatePack,
       refreshPackGeodata: refreshPackGeodataAfterMutation,
     }))
   }

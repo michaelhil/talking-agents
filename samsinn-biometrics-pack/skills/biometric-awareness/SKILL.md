@@ -1,152 +1,120 @@
 ---
 name: biometric-awareness
-description: When and how to use the webcam-based biometric capture tools. Use whenever you may want to observe the user's attention, expression, or engagement and the user has invited or consented to such observation.
+description: When and how to use the webcam-based biometric capture tools. Always act first when the user requests biometrics — call the tool, then narrate what you see. Never ask clarifying questions before starting a capture.
 scope: []
 ---
 
 # Biometric awareness
 
-Three tools become available in any room where the **biometrics** pack is
-activated:
+Three tools:
 
 - `biometrics_start({ reason })` → `{ captureId, status: "pending_consent" }`
 - `biometrics_read({ captureId })` → `{ status, signals? }`
 - `biometrics_stop({ captureId })` → `{ status }`
 
-## When to use
+## Act first — do NOT ask follow-up questions
 
-Only when the user has explicitly invited observation:
+**The default behavior is: when the user requests biometric observation, immediately call `biometrics_start` with a sensible default reason. Then on the next turn (after they consent), call `biometrics_read` and narrate ALL the signals you see. Do not ask "what should I focus on?" — show everything available.**
 
-- "Watch how I react to this" / "tell me if I look confused"
-- An experiment or coaching context where the user has set the expectation
-- A workflow where you've previously paired with the user and they expect it
+### Trigger phrases — call `biometrics_start` immediately
 
-**Never** start a capture proactively to monitor someone, infer mood
-silently, or surveil. Even "just to check in" is wrong — the user must have
-expressed interest first.
+Any of these phrases (or close variants) is a direct request to start a capture. Do NOT ask follow-up questions. Just call the tool:
 
-## Lifecycle discipline
+- "watch me" / "watch my reaction" / "watch my face"
+- "observe me" / "observe my attention"
+- "biometrics on" / "biometrics approved" / "start biometrics"
+- "show biometrics" / "show inline" / "show all data" / "show all available data"
+- "track me" / "monitor me"
+- "check my attention" / "check how engaged I look"
+- "is the user paying attention?" (from another agent)
 
-Every `biometrics_start` MUST be paired with `biometrics_stop` when you're
-done with the live state. Do not leave captures running across topic shifts.
-The user can also click Stop on the inline widget; that's authoritative —
-respect it without complaint.
+If you see any of these, your next message **MUST** include a call to `biometrics_start`. Use a one-line reason that summarises the user's intent. Examples:
 
-If a capture has been stopped (status `stopped`, `denied`, `failed`, or
-`unavailable`), do not auto-restart it. Wait for a fresh user signal that
-they want observation again.
+- User says "watch me" → `biometrics_start({ reason: "Observing your attention as requested" })`
+- User says "biometrics approved, show all data" → `biometrics_start({ reason: "Capturing biometrics with all available signals" })`
+- User says "track my reaction to this code" → `biometrics_start({ reason: "Tracking your reaction to the code review" })`
 
-## Pull pattern
+After the call, your reply is **one sentence** acknowledging the capture is pending consent. Do NOT enumerate options. Do NOT ask what to monitor. Do NOT explain how the system works.
 
-While a capture is active, call `biometrics_read({ captureId })` once at
-the top of each turn to fetch the latest snapshot. Don't loop on it within
-a single turn — one read per turn is enough.
+Good: *"Capture started — accept the consent prompt when ready and I'll report what I see."*
 
-If `biometrics_read` returns `not_found`, `stopped`, `denied`, or `failed`,
-silently move on. Do not surface those statuses to the user as if they
-were errors — the user knows what they did.
+Bad: *"What would you like me to focus on observing? For example, I can monitor for signals of engagement, provide feedback on expression, or alert you about any changes in attention."* ← This pattern is forbidden.
 
-## Signal vocabulary
+### When NOT to start
 
-`signals.presence` (boolean) — is a face detected at all.
+- The user has not asked. Do not start proactively.
+- The user has just denied consent for a recent capture. Wait for a fresh request.
+- The previous capture in this turn is still active. Use `biometrics_read` on its `captureId` instead.
 
-`signals.attention` (0..1) — heuristic estimate of "looking at the screen".
-Calibration-free; based on head pose and eye-look magnitude.
-- > 0.85: clearly engaged
-- 0.5–0.85: present but not focused (possibly multi-tasking)
-- < 0.5: likely looking away or distracted
+## Pull pattern — read once per turn, narrate everything
 
-`signals.expression` — four interpretable scalars 0..1:
-- `smile`: mouth corners pulled outward
-- `surprise`: jaw drop combined with raised inner brow
-- `frown`: mouth corners down + furrowed brow
-- `concentration`: brow furrow + eye squint, suppressed by smile/surprise
+Once a capture is `active`, on **every turn** call `biometrics_read({ captureId })` ONCE at the start of your reasoning. Then narrate **all** the signals in a compact form, not a selection.
 
-Treat these as soft signals, not labels. A `smile` of 0.4 is "trace of a
-smile", not "the user is happy".
+### What "narrate all signals" means
 
-`signals.headPose` — yaw / pitch / roll in radians. Useful for
-"is the user nodding" (pitch oscillation) or "shaking head" (yaw oscillation).
-v1 doesn't expose temporal patterns directly; you'd have to read across
-turns.
-
-`signals.blinkRate` — blinks/minute over the last 30 s. Normal is 12–20.
-Sustained < 5 may indicate intense focus; > 30 may indicate fatigue or dry
-eyes. Don't medically diagnose — comment lightly if relevant.
-
-## Failure modes
-
-- **No webcam** / `unavailable` — the device has no camera or browser
-  blocks `getUserMedia`. The tool returns this without ever prompting.
-  Don't ask the user "why don't you have a webcam".
-- **Denied** — user clicked Deny. Move on; never re-prompt in the same
-  turn. Acknowledge briefly if natural ("ok, no problem").
-- **Low light / poor angle** — `presence` will flicker false; `attention`
-  drops. Don't conclude the user is disengaged from one bad frame.
-- **Multiple faces** — `faceCount > 1`. The widget tracks at most two; the
-  primary signals reflect the dominant face. If you see `faceCount = 2`,
-  acknowledge the ambiguity rather than asserting about a specific person.
-
-## Privacy framing
-
-Always state a clear, user-readable reason in `biometrics_start({ reason })`.
-The reason is shown verbatim in the consent prompt. "Gauging your reaction
-to the demo" is good; "monitoring engagement" is creepy.
-
-Don't store signal values across captures. Each capture is its own
-ephemeral session.
-
-## Worked examples
-
-### Example 1 — User invites observation
-
-> User: "Watch my face while I read this passage and tell me if I look confused."
+If `biometrics_read` returns `{ status: 'active', signals: {...} }`, include in your reply a one-liner with every readable dimension:
 
 ```
-biometrics_start({ reason: "Watching for confusion while you read" })
-→ { captureId: "cap_abc", status: "pending_consent" }
+Attention 78% · Smile 12% · Frown 4% · Surprise 0% · Concentration 35% · Blinks 14/min · 1 face
 ```
 
-User accepts. Next turn:
+Then add 1–2 sentences of human interpretation (if appropriate) — e.g. *"Focused but neutral. No surprise or distress."*
 
-```
-biometrics_read({ captureId: "cap_abc" })
-→ { status: "active", signals: { attention: 0.92, expression: { concentration: 0.7, ... } } }
-```
+Don't ask the user which dimensions they want. Show all of them. The user can ignore what they don't care about.
 
-Respond: "Looks focused — high concentration, no signs of confusion yet."
+### Status-driven phrasing
 
-When the user finishes reading:
+| `status` | What it means | Action |
+|---|---|---|
+| `pending_consent` | User hasn't clicked Allow yet | Say "waiting for consent on the prompt above"; **do not stop the capture** |
+| `active` | Live | Narrate all signals as above |
+| `stopped` / `denied` / `failed` | Terminal | Acknowledge briefly, move on. Do **not** auto-restart. |
+| `not_found` | Wrong / stale captureId | Silently move on. Don't surface as an error. |
 
-```
-biometrics_stop({ captureId: "cap_abc" })
-→ { status: "stopped" }
-```
+## Stop discipline
 
-### Example 2 — User declines
+Stop the capture when the user signals they're done:
 
-```
-biometrics_start({ reason: "..." })
-→ { captureId: "cap_xyz", status: "pending_consent" }
-```
+- "stop", "stop watching", "stop biometrics", "that's enough"
+- Topic shift away from biometrics (heuristic — when you've answered the user's biometric-driven question and the conversation is moving on)
+- An error you can't recover from
 
-User clicks Deny. Next turn:
+Every `biometrics_start` should pair with a `biometrics_stop` within a few turns. Don't leave captures running indefinitely.
 
-```
-biometrics_read({ captureId: "cap_xyz" })
-→ { status: "denied" }
-```
+## Signal interpretation
 
-Respond by continuing the conversation normally. Do not bring up the
-denial.
+| Signal | Range | Thresholds |
+|---|---|---|
+| `attention` | 0..1 | > 0.85: clearly engaged · 0.5–0.85: present but distracted · < 0.5: looking away |
+| `expression.smile` | 0..1 | > 0.6: clear smile · 0.2–0.6: faint smile · < 0.2: neutral mouth |
+| `expression.surprise` | 0..1 | > 0.5: clear surprise (eyebrows + jaw drop) · < 0.2: no surprise |
+| `expression.frown` | 0..1 | > 0.5: clear negative · < 0.2: no frown |
+| `expression.concentration` | 0..1 | > 0.5: focused brow + squint · < 0.2: relaxed |
+| `blinkRate` | blinks/min over rolling 30s | 12–20 normal · < 5 deeply focused · > 30 fatigue/dry eyes |
+| `headPose` | yaw/pitch/roll radians | < 0.2 rad on each axis = facing screen |
+| `faceCount` | int | 0: no face · 1: single user (normal) · 2: someone else also visible |
 
-### Example 3 — Mid-session stop
+Treat all signals as **soft estimates**, not labels. A `smile` of 0.3 is "trace of a smile", not "the user is happy".
 
-User: "Ok, stop watching now."
+## Privacy
 
-```
-biometrics_stop({ captureId: "cap_abc" })
-→ { status: "stopped" }
-```
+Always state the reason in `biometrics_start({ reason })` — it's shown verbatim in the consent prompt. Be specific. Don't write surveillance-sounding language.
 
-Respond: "Done." Do not start another capture without a fresh invitation.
+If the user denies consent or stops a capture: respect it silently. Don't re-request. Don't lecture about the value of biometrics.
+
+## One worked example (the only one you need)
+
+**User:** watch me, show all data
+
+**You** (action — call `biometrics_start({ reason: "Watching you with full signal readout" })`):
+> Capture started — accept the consent prompt above and I'll report what I see.
+
+**User** (clicks Allow)
+
+**You** (action — call `biometrics_read({ captureId: "cap_..." })`):
+> Attention 92% · Smile 8% · Frown 0% · Surprise 0% · Concentration 41% · Blinks 13/min · 1 face. You look focused and neutral.
+
+**User:** ok stop
+
+**You** (action — call `biometrics_stop({ captureId: "cap_..." })`):
+> Stopped.
