@@ -299,11 +299,47 @@ const fuzzyMatchCategory = (
   return { match: null, candidates: matches }
 }
 
+// LLMs reliably pass things like `country: "Norway"` or
+// `country: "norwegian"` instead of the ISO-3166-1 alpha-2 code we
+// store. The tool used to return 0 features in that case, leading to
+// retry loops. Normalise common country names and adjectival forms to
+// their alpha-2 code so the filter Just Works.
+// Kept deliberately small — the 30-odd entries below cover the
+// English-speaking model's likely outputs for the geographies we
+// actually have data for. Add more when a real miss shows up; don't
+// pre-populate every country in the world (token bloat in the eventual
+// description if we ever document this list).
+const COUNTRY_ALIASES: Record<string, string> = {
+  // adjectival forms
+  norwegian: 'NO', swedish: 'SE', danish: 'DK', finnish: 'FI', icelandic: 'IS',
+  british: 'GB', english: 'GB', scottish: 'GB', welsh: 'GB', irish: 'IE',
+  french: 'FR', german: 'DE', dutch: 'NL', belgian: 'BE', spanish: 'ES',
+  italian: 'IT', portuguese: 'PT', polish: 'PL', russian: 'RU', ukrainian: 'UA',
+  american: 'US', canadian: 'CA', mexican: 'MX', brazilian: 'BR',
+  chinese: 'CN', japanese: 'JP', korean: 'KR', australian: 'AU',
+  // full country names (when model gives e.g. "Norway")
+  norway: 'NO', sweden: 'SE', denmark: 'DK', finland: 'FI', iceland: 'IS',
+  'united kingdom': 'GB', uk: 'GB', britain: 'GB', 'great britain': 'GB',
+  ireland: 'IE', france: 'FR', germany: 'DE', netherlands: 'NL', holland: 'NL',
+  belgium: 'BE', spain: 'ES', italy: 'IT', portugal: 'PT', poland: 'PL',
+  russia: 'RU', ukraine: 'UA', 'united states': 'US', usa: 'US', america: 'US',
+  canada: 'CA', mexico: 'MX', brazil: 'BR', china: 'CN', japan: 'JP',
+  'south korea': 'KR', korea: 'KR', australia: 'AU',
+}
+
+const normalizeCountry = (raw: string): string => {
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  // ISO-3166-1 alpha-2 short-circuit: 2 chars, all letters → assume code.
+  if (/^[A-Za-z]{2}$/.test(trimmed)) return trimmed.toUpperCase()
+  return COUNTRY_ALIASES[trimmed.toLowerCase()] ?? trimmed.toUpperCase()
+}
+
 const filterFeatures = (
   features: ReadonlyArray<GeoFeature>,
   filters: { country?: string; operator?: string; nameContains?: string; tag?: string },
 ): ReadonlyArray<GeoFeature> => {
-  const country = filters.country?.toUpperCase()
+  const country = filters.country ? normalizeCountry(filters.country) : undefined
   const operator = filters.operator?.toLowerCase()
   const nameContains = filters.nameContains?.toLowerCase()
   const tag = filters.tag?.toLowerCase()
