@@ -292,7 +292,11 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
 
       sessionRegistry.attach(payload.captureId, session, wrapper)
       sendWS({ type: 'biometric_capture_started', captureId: payload.captureId })
-      wireActiveView(wrapper, payload, session, performance.now())
+      // Wire timers + listeners onto the ALREADY-RENDERED ui — calling
+      // wireActiveView here would re-render the wrapper and destroy the
+      // <video> element that just received the live stream, leaving a
+      // black box despite an active capture.
+      wireActiveViewWithUI(wrapper, payload, session, performance.now(), ui)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       // Make sure no half-started session leaks if start() partly succeeded.
