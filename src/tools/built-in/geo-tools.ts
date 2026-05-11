@@ -355,7 +355,12 @@ const MAX_LIMIT = 1000
 
 export const createGeoListFeaturesTool = (): Tool => ({
   name: 'geo_list_features',
-  description: 'List features in a category, optionally filtered by country / operator / name-substring / tag. Paste `data.renderable` verbatim into your reply to render the map inline.',
+  // The XOR constraint (category OR categoryHint, one required) is NOT
+  // expressible in plain JSON Schema, so it MUST live in the description
+  // — without it, models call with empty args, get an error, and reflect
+  // it back to the user as confusion. The `renderable` paste contract is
+  // also folded in here (per the post-2026-05 style: returns is UI-only).
+  description: 'List features in a category, optionally filtered by country / operator / name-substring / tag. Pass `category` (exact id) OR `categoryHint` (fuzzy) — one required. Paste `data.renderable` verbatim into your reply to render the map inline.',
   usage: 'Pass `category` (exact id) OR `categoryHint` (e.g. "oil platforms"). On ambiguous hint, the call errors with the candidate ids so you can clarify with the user. Filters compose (AND): country=ISO-3166-1-alpha-2, operator=substring, nameContains=substring on name+aliases, tag=exact match. Drop `data.renderable` verbatim into your chat reply to render the map inline.',
   returns: '{ features: [...], view?: {center, zoom}, count, totalMatched, truncated, category, source: "merged", renderable: "```map\\n{...}\\n```" }, or { success:false, error, candidates? } on ambiguity.',
   parameters: {
