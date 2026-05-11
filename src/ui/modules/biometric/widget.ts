@@ -47,27 +47,21 @@ const sessionRegistry = createSessionRegistry({
 })
 
 // Page-level fan-outs. Set up once at module load; cheap to keep live.
-// These trigger registry releases — the registry handles the actual
-// camera teardown.
+// These trigger registry releases — the registry handles camera teardown,
+// view-binding teardown (timers), and subscriber fan-out.
 let pageListenersAttached = false
 const ensurePageListeners = (): void => {
   if (pageListenersAttached) return
   pageListenersAttached = true
 
   document.addEventListener('samsinn:biometric-stop-all', () => {
-    for (const entry of sessionRegistry._entries()) {
-      void sessionRegistry.release(entry.captureId, 'agent')
-    }
+    void sessionRegistry.releaseAll('agent')
   })
   // pagehide covers bfcache + mobile better than beforeunload. Keep both
   // because some browsers fire only one or the other reliably.
-  const releaseAll = (): void => {
-    for (const entry of sessionRegistry._entries()) {
-      void sessionRegistry.release(entry.captureId, 'disconnect')
-    }
-  }
-  window.addEventListener('beforeunload', releaseAll)
-  window.addEventListener('pagehide', releaseAll)
+  const releaseOnUnload = (): void => { void sessionRegistry.releaseAll('disconnect') }
+  window.addEventListener('beforeunload', releaseOnUnload)
+  window.addEventListener('pagehide', releaseOnUnload)
 
   // Agent called biometrics_stop while a widget was still live. The WS
   // dispatcher fans this out as a CustomEvent keyed by captureId.
@@ -189,16 +183,19 @@ const parsePayload = (raw: string): FencedPayload | null => {
 // Wire a wrapper to an already-live session. Used both on fresh-capture
 // success and on widget re-mount for an existing captureId. Sets up the
 // view-side timers and Stop button; the session itself keeps streaming.
-// Internal: same body as wireActiveView but accepts a pre-rendered
-// ActiveUI. Used by the re-mount path so we can render the UI once,
-// retarget the live stream onto it, then wire timers + listeners.
-const wireActiveViewWithUI = (wrapper: HTMLElement, payload: FencedPayload, session: CaptureSession, startedAt: number, ui: ActiveUI): void => {
+// Returns a `teardown` callback that clears both timers — handed to the
+// registry via setViewBinding so release() owns the cleanup. The
+// registry's sweep + release paths are now the ONLY teardown routes; the
+// old `if (!wrapper.isConnected) clearInterval(...)` self-clear inside
+// the tick has been removed (it raced with release ordering).
+const wireActiveViewWithUI = (
+  wrapper: HTMLElement,
+  payload: FencedPayload,
+  session: CaptureSession,
+  startedAt: number,
+  ui: ActiveUI,
+): { teardown: () => void } => {
   const elapsedTimer = setInterval(() => {
-    if (!wrapper.isConnected) {
-      clearInterval(elapsedTimer)
-      clearInterval(pushTimer)
-      return
-    }
     const s = Math.floor((performance.now() - startedAt) / 1000)
     ui.elapsedEl.textContent = `${s}s`
     ui.signalsEl.innerHTML = buildSignalCard(session.read())
@@ -216,14 +213,13 @@ const wireActiveViewWithUI = (wrapper: HTMLElement, payload: FencedPayload, sess
   requestAnimationFrame(() => {
     try { wrapper.scrollIntoView({ block: 'end', behavior: 'smooth' }) } catch { /* ignore */ }
   })
-}
 
-// Convenience wrapper for the fresh-consent path: render the active UI
-// and wire it. Re-mount paths use wireActiveViewWithUI directly so they
-// can retarget the live stream onto the freshly-rendered video element.
-const wireActiveView = (wrapper: HTMLElement, payload: FencedPayload, session: CaptureSession, startedAt: number): void => {
-  const ui = renderActive(wrapper, payload)
-  wireActiveViewWithUI(wrapper, payload, session, startedAt, ui)
+  return {
+    teardown: () => {
+      clearInterval(elapsedTimer)
+      clearInterval(pushTimer)
+    },
+  }
 }
 
 const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
@@ -242,13 +238,16 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
   // (it's no longer the registered one).
   const existing = sessionRegistry.get(payload.captureId)
   if (existing) {
+    // Re-mount ordering (pinned): (1) setWrapper, (2) renderActive,
+    // (3) retarget the live stream onto the new <video>, (4) wire timers
+    // and capture teardown, (5) setViewBinding so the registry owns the
+    // new timers. Step 5 replaces the previous binding, tearing down the
+    // old wrapper's intervals.
     sessionRegistry.setWrapper(payload.captureId, wrapper)
     const ui = renderActive(wrapper, payload)
-    // Re-bind the live stream to the new video/canvas. Without this the
-    // MediaStream keeps painting the old (detached) video element and
-    // the user sees a black box in the new wrapper while REC ticks.
     void existing.session.retarget(ui.videoEl, ui.canvasEl)
-    wireActiveViewWithUI(wrapper, payload, existing.session, performance.now(), ui)
+    const binding = wireActiveViewWithUI(wrapper, payload, existing.session, performance.now(), ui)
+    sessionRegistry.setViewBinding(payload.captureId, binding)
     return
   }
 
@@ -292,11 +291,12 @@ const mountWidget = (wrapper: HTMLElement, payload: FencedPayload): void => {
 
       sessionRegistry.attach(payload.captureId, session, wrapper)
       sendWS({ type: 'biometric_capture_started', captureId: payload.captureId })
-      // Wire timers + listeners onto the ALREADY-RENDERED ui — calling
-      // wireActiveView here would re-render the wrapper and destroy the
-      // <video> element that just received the live stream, leaving a
-      // black box despite an active capture.
-      wireActiveViewWithUI(wrapper, payload, session, performance.now(), ui)
+      // Wire timers + listeners onto the ALREADY-RENDERED ui — re-rendering
+      // here would destroy the <video> element that just received the
+      // live stream, leaving a black box despite an active capture. Hand
+      // the teardown to the registry so release() owns timer cleanup.
+      const binding = wireActiveViewWithUI(wrapper, payload, session, performance.now(), ui)
+      sessionRegistry.setViewBinding(payload.captureId, binding)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       // Make sure no half-started session leaks if start() partly succeeded.

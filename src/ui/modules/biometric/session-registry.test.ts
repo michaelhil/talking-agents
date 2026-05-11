@@ -155,6 +155,97 @@ describe('session registry', () => {
     expect(reg.get('cap_1')).toBeNull()
   })
 
+  test('setViewBinding teardown runs once on release, before session.stop', async () => {
+    const order: string[] = []
+    const session: CaptureSession = {
+      start: async () => {},
+      read: () => null,
+      stop: async () => { order.push('stop') },
+      onError: () => () => {},
+    }
+    const reg = createSessionRegistry()
+    const wrapper = makeWrapper(true) as unknown as HTMLElement
+    reg.attach('cap_1', session, wrapper)
+    reg.setViewBinding('cap_1', { teardown: () => { order.push('teardown') } })
+
+    await reg.release('cap_1', 'user')
+    expect(order).toEqual(['teardown', 'stop'])
+  })
+
+  test('setViewBinding called twice tears down the previous binding', () => {
+    const reg = createSessionRegistry()
+    const session = makeSession()
+    const wrapper = makeWrapper(true) as unknown as HTMLElement
+    reg.attach('cap_1', session, wrapper)
+    let downA = 0, downB = 0
+    reg.setViewBinding('cap_1', { teardown: () => { downA += 1 } })
+    reg.setViewBinding('cap_1', { teardown: () => { downB += 1 } })
+    // First binding torn down by the swap; second still live (release runs it).
+    expect(downA).toBe(1)
+    expect(downB).toBe(0)
+  })
+
+  test('thrown view-binding teardown does not skip session.stop', async () => {
+    const reg = createSessionRegistry()
+    const session = makeSession()
+    const wrapper = makeWrapper(true) as unknown as HTMLElement
+    reg.attach('cap_1', session, wrapper)
+    reg.setViewBinding('cap_1', { teardown: () => { throw new Error('boom') } })
+
+    await reg.release('cap_1', 'user')
+    expect(session.stopCalls()).toBe(1)
+  })
+
+  test('releaseAll releases every entry with the given reason', async () => {
+    const reg = createSessionRegistry()
+    const a = makeSession(), b = makeSession(), c = makeSession()
+    const w = makeWrapper(true) as unknown as HTMLElement
+    reg.attach('a', a, w)
+    reg.attach('b', b, w)
+    reg.attach('c', c, w)
+    const reasons: ReleaseReason[] = []
+    reg.onAllReleased((_id, r) => reasons.push(r))
+
+    await reg.releaseAll('disconnect')
+    expect(a.stopCalls()).toBe(1)
+    expect(b.stopCalls()).toBe(1)
+    expect(c.stopCalls()).toBe(1)
+    expect(reasons).toEqual(['disconnect', 'disconnect', 'disconnect'])
+  })
+
+  test('onAllReleased subscribers fire on each release; unsubscribe stops them', async () => {
+    const reg = createSessionRegistry()
+    const calls: string[] = []
+    const unsub = reg.onAllReleased((id) => calls.push(id))
+
+    const session = makeSession()
+    const wrapper = makeWrapper(true) as unknown as HTMLElement
+    reg.attach('cap_1', session, wrapper)
+    await reg.release('cap_1', 'user')
+    expect(calls).toEqual(['cap_1'])
+
+    unsub()
+    reg.attach('cap_2', makeSession(), wrapper)
+    await reg.release('cap_2', 'user')
+    expect(calls).toEqual(['cap_1'])      // no second push after unsubscribe
+  })
+
+  test('sweepOrphans fires view-binding teardown for the orphaned session', async () => {
+    const reg = createSessionRegistry()
+    const session = makeSession()
+    const wrapper = makeWrapper(true) as unknown as HTMLElement
+    reg.attach('cap_1', session, wrapper)
+    let torn = 0
+    reg.setViewBinding('cap_1', { teardown: () => { torn += 1 } })
+
+    ;(wrapper as unknown as FakeWrapper).isConnected = false
+    await reg.sweepOrphans()
+
+    expect(torn).toBe(1)
+    expect(session.stopCalls()).toBe(1)
+    expect(reg.get('cap_1')).toBeNull()
+  })
+
   test('session.stop() throwing does not stall release', async () => {
     const reg = createSessionRegistry()
     const session: CaptureSession = {
