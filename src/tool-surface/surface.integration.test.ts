@@ -166,7 +166,7 @@ describe('regression: dispatcher round-trip never produces duplicate function de
     for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
     // Simulate previous spawn having registered the dispatcher already.
     const surface1 = createToolSurface({ registry: r, requestedTools: r.list().map(t => t.name) })
-    for (const d of surface1.getDispatchers()) {
+    for (const d of surface1.getRegistryDispatchers()) {
       if (!r.has(d.name)) r.register(d)
     }
     // Second spawn now sees 'geo_tools' in registry.list().
@@ -183,7 +183,7 @@ describe('regression: dispatcher round-trip never produces duplicate function de
     const r = createToolRegistry()
     for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
     const surface1 = createToolSurface({ registry: r, requestedTools: r.list().map(t => t.name) })
-    for (const d of surface1.getDispatchers()) {
+    for (const d of surface1.getRegistryDispatchers()) {
       if (!r.has(d.name)) r.register(d)
     }
     const surface2 = createToolSurface({ registry: r, requestedTools: r.list().map(t => t.name) })
@@ -195,15 +195,19 @@ describe('regression: dispatcher round-trip never produces duplicate function de
   })
 })
 
-describe('getDispatchers', () => {
-  test('returns one dispatcher per compressible family in the full registry', () => {
+describe('getRegistryDispatchers', () => {
+  test('returns one trampoline per family in BUILT_IN_FAMILIES, regardless of current member count', () => {
+    // Pre-trampoline this returned only "compressible-now" families; with
+    // the late-binding shape, every family gets a trampoline so packs
+    // added later become routable through the same registered dispatcher.
     const r = createToolRegistry()
     for (let i = 0; i < 4; i++) r.register(mockTool(`filesystem__t${i}`, 100))
-    for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
+    // geo family is BELOW minMembers (only 1) — trampoline still issued.
+    r.register(mockTool('geo_lookup', 100))
     r.register(createPassTool())
 
-    const surface = createToolSurface({ registry: r, requestedTools: ['pass'] })   // requested set is intentionally narrow
-    const dispatchers = surface.getDispatchers()
-    expect(dispatchers.map(d => d.name).sort()).toEqual(['fs', 'geo_tools'])
+    const surface = createToolSurface({ registry: r, requestedTools: ['pass'] })
+    const dispatchers = surface.getRegistryDispatchers()
+    expect(dispatchers.map(d => d.name).sort()).toEqual(['codegen_tools', 'fs', 'geo_tools', 'pack_admin'])
   })
 })

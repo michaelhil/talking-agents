@@ -26,10 +26,17 @@
 // Stateless except for the registered synthetic dispatcher tools (one-time
 // registration at boot). No per-agent state. No snapshot impact.
 
-import type { Tool, ToolDefinition, ToolRegistry, ToolRegistryEntry } from '../core/types/tool.ts'
+import type { Tool, ToolDefinition, ToolRegistry } from '../core/types/tool.ts'
+import { packNameFor } from '../core/types/tool-pack.ts'
 import { toolsToDefinitions } from '../llm/tool-capability.ts'
 import { effectiveActivePackSet } from '../packs/activation.ts'
-import { compressFamilies, BUILT_IN_FAMILIES, FAMILY_DISPATCHER_NAMES, type ToolFamily } from './families.ts'
+import {
+  compressFamilies,
+  createFamilyDispatcherTrampoline,
+  BUILT_IN_FAMILIES,
+  FAMILY_DISPATCHER_NAMES,
+  type ToolFamily,
+} from './families.ts'
 import { isStrictProvider } from './strict-providers.ts'
 
 // Same shape as GetRoomActivation in spawn.ts — duplicated here to avoid an
@@ -39,30 +46,26 @@ export interface RoomActivation {
 }
 export type GetRoomActivation = (roomId: string) => RoomActivation | undefined
 
-// Identical to packForToolEntry in spawn.ts — duplicated here for the same
-// reason. Family dispatchers (kind: 'built-in') map to 'core' so they're
-// always pack-active. The dispatcher's own visibility-when-empty check
-// already excludes it when no member is in the active set.
-const packForToolEntry = (entry: ToolRegistryEntry): string => {
-  switch (entry.source.kind) {
-    case 'built-in': return 'core'
-    case 'external': return 'local'
-    case 'pack-bundled': return entry.source.pack ?? 'local'
-    case 'skill-bundled': return entry.source.pack ?? 'local'
-  }
-}
-
 export interface ToolSurface {
   // Project the registered tools down to the LLM-facing definition list,
-  // applying family compression (unless provider is strict), per-room pack
-  // activation, and budget cap. Pass the resolved `providerName` if known;
-  // pass undefined to conservatively skip compression.
+  // applying family compression (unless provider is strict) and per-room
+  // pack activation. Pass the resolved `providerName` if known; pass
+  // undefined to conservatively skip compression.
   readonly project: (roomId: string | undefined, providerName: string | undefined) => ReadonlyArray<ToolDefinition>
 
-  // Family dispatcher tools that need to be registered into the tool
-  // registry so the executor can route subcommand calls. Idempotent — the
-  // same dispatcher names are reused across surfaces.
-  readonly getDispatchers: () => ReadonlyArray<Tool>
+  // Late-binding dispatcher trampolines for one-time registration into
+  // the tool registry. The executor routes by registry lookup; the
+  // trampoline re-resolves the family's current members at every call,
+  // so packs installed AFTER registration become routable without
+  // re-registering. One trampoline per BUILT_IN_FAMILIES entry, regardless
+  // of current member count (the trampoline's own minMembers check
+  // handles the disabled case).
+  readonly getRegistryDispatchers: () => ReadonlyArray<Tool>
+
+  // Test/diagnostic seam: the same candidate-set construction used inside
+  // project(). Exposed so the introspection endpoint can report the exact
+  // afterActivationCount without re-implementing the rules.
+  readonly buildCandidates: (roomId: string | undefined) => ReadonlySet<string>
 }
 
 export interface CreateToolSurfaceDeps {
@@ -107,7 +110,7 @@ export const createToolSurface = (deps: CreateToolSurfaceDeps): ToolSurface => {
       if (!entry) return false
       if (FAMILY_DISPATCHER_NAMES.has(name)) return false
       if (!activeSet) return true                                    // no room → no filter
-      return activeSet.has(packForToolEntry(entry))
+      return activeSet.has(packNameFor(entry))
     }
 
     const candidates = new Set<string>()
@@ -122,7 +125,7 @@ export const createToolSurface = (deps: CreateToolSurfaceDeps): ToolSurface => {
       for (const entry of deps.registry.listEntries()) {
         const name = entry.tool.name
         if (FAMILY_DISPATCHER_NAMES.has(name)) continue
-        if (activeSet.has(packForToolEntry(entry))) candidates.add(name)
+        if (activeSet.has(packNameFor(entry))) candidates.add(name)
       }
     }
     return candidates
@@ -150,19 +153,20 @@ export const createToolSurface = (deps: CreateToolSurfaceDeps): ToolSurface => {
         ? projectFlat(candidates)
         : projectCompressed(candidates)
     },
-    getDispatchers: () => {
-      // For boot-time registration: produce dispatchers for every family
-      // whose membership currently has ≥ minMembers, regardless of the
-      // requested set. The executor needs to route any subcommand call,
-      // even if a specific agent's projection wouldn't have shown the
-      // dispatcher (e.g. the dispatcher was visible in another agent's
-      // projection and that agent called a tool by family name).
+    getRegistryDispatchers: () => {
+      // One trampoline per family in the family table — regardless of
+      // current member count. The trampoline's execute() re-resolves
+      // members at call time and enforces minMembers itself.
       //
-      // Resolved against the full registry, not the requested set.
-      const allNames = new Set(deps.registry.list().map(t => t.name))
-      const { dispatchers } = compressFamilies(deps.registry, allNames, families)
-      return dispatchers
+      // Returning all families (not just compressible-now ones) is
+      // critical: a pack installed AFTER spawn that bumps a family's
+      // membership over minMembers must be routable through the
+      // already-registered trampoline. Pre-trampoline, the boot-time
+      // snapshot omitted the dispatcher entirely if the family was
+      // below threshold, and packs added later were silently unroutable.
+      return families.map(f => createFamilyDispatcherTrampoline(f, deps.registry))
     },
+    buildCandidates,
   }
 }
 

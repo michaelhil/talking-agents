@@ -9,6 +9,7 @@ import {
   ENUM_MAX_MEMBERS,
   compressFamilies,
   createFamilyDispatcher,
+  createFamilyDispatcherTrampoline,
   resolveFamilyMembers,
 } from './families.ts'
 
@@ -165,6 +166,106 @@ describe('createFamilyDispatcher', () => {
 
     await dispatcher.execute(
       { subcommand: 'probe', args: {} },
+      { callerId: 'agent-X', callerName: 'X' },
+    )
+    expect(receivedCallerId).toBe('agent-X')
+  })
+})
+
+describe('createFamilyDispatcherTrampoline (late binding)', () => {
+  const ctx = { callerId: 'test', callerName: 'Test' }
+  const family = BUILT_IN_FAMILIES.find(f => f.name === 'geo_tools')!
+
+  test('routes to a member added to the registry AFTER trampoline creation', async () => {
+    // The bug this fixes: pre-trampoline, the dispatcher captured a
+    // memberMap at registration time. Members added later were
+    // advertised by the (per-projection) LLM-facing dispatcher but the
+    // executor's registry.get() returned the stale closure → "unknown
+    // subcommand" for the new member.
+    const r = createToolRegistry()
+    r.register(tool('geo_lookup'))
+    r.register(tool('geo_add'))
+    r.register(tool('geo_remove'))
+    const dispatcher = createFamilyDispatcherTrampoline(family, r)
+
+    // Add a new family member AFTER the trampoline exists.
+    r.register(tool('geo_list_categories'))
+
+    const result = await dispatcher.execute(
+      { subcommand: 'list_categories', args: { path: '/x' } },
+      ctx,
+    )
+    expect(result.success).toBe(true)
+  })
+
+  test('returns "family disabled" when member count drops below minMembers', async () => {
+    // User-answered behaviour: an LLM that cached the family name from a
+    // prior turn could still call it after a pack uninstall. The
+    // trampoline returns a coherent refusal rather than routing into a
+    // degenerate state.
+    const r = createToolRegistry()
+    r.register(tool('geo_lookup'))
+    r.register(tool('geo_add'))
+    r.register(tool('geo_remove'))
+    const dispatcher = createFamilyDispatcherTrampoline(family, r)
+
+    // Drop two members → only 1 remains, below minMembers (3).
+    r.unregister('geo_add')
+    r.unregister('geo_remove')
+
+    const result = await dispatcher.execute(
+      { subcommand: 'lookup', args: { path: '/x' } },
+      ctx,
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('family disabled')
+    expect(result.error).toContain('1 of 3')
+  })
+
+  test('returns unknown subcommand with current-valid list (not stale)', async () => {
+    const r = createToolRegistry()
+    r.register(tool('geo_lookup'))
+    r.register(tool('geo_add'))
+    r.register(tool('geo_remove'))
+    const dispatcher = createFamilyDispatcherTrampoline(family, r)
+
+    // Add a member; the error message should include it as a valid name.
+    r.register(tool('geo_list_categories'))
+
+    const result = await dispatcher.execute(
+      { subcommand: 'nope', args: {} },
+      ctx,
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('unknown subcommand "nope"')
+    expect(result.error).toContain('list_categories')
+  })
+
+  test('rejects missing subcommand parameter', async () => {
+    const r = createToolRegistry()
+    for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(tool(n))
+    const dispatcher = createFamilyDispatcherTrampoline(family, r)
+    const result = await dispatcher.execute({ args: {} }, ctx)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('missing required `subcommand`')
+  })
+
+  test('forwards ToolContext to the routed member', async () => {
+    let receivedCallerId = ''
+    const probeTool: Tool = {
+      name: 'geo_lookup',
+      description: 'probe',
+      parameters: { type: 'object', properties: {} },
+      execute: async (_p, c) => { receivedCallerId = c.callerId; return { success: true } },
+    }
+    const r = createToolRegistry()
+    r.register(probeTool)
+    r.register(tool('geo_add'))
+    r.register(tool('geo_remove'))
+    const dispatcher = createFamilyDispatcherTrampoline(family, r)
+
+    await dispatcher.execute(
+      { subcommand: 'lookup', args: {} },
       { callerId: 'agent-X', callerName: 'X' },
     )
     expect(receivedCallerId).toBe('agent-X')

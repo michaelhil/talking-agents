@@ -13,6 +13,7 @@ import type { LLMProvider } from '../core/types/llm.ts'
 import type { LLMService } from '../llm/llm-service.ts'
 import type { MessageTarget } from '../core/types/messaging.ts'
 import type { Tool, ToolCall, ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult } from '../core/types/tool.ts'
+import { packNameFor } from '../core/types/tool-pack.ts'
 import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import { callLLM, streamLLM } from './evaluation.ts'
@@ -68,10 +69,7 @@ const createToolExecutor = (
     if (!room) return false
     const entry = registry.getEntry(toolName)
     if (!entry) return false
-    const pack = entry.source.kind === 'pack-bundled' ? entry.source.pack ?? 'local'
-      : entry.source.kind === 'skill-bundled' ? entry.source.pack ?? 'local'
-      : entry.source.kind === 'built-in' ? 'core'
-      : 'local'
+    const pack = packNameFor(entry)
     return new Set(['core', 'local', 'welcome', 'demos', ...room.getActivePacks()]).has(pack)
   }
 
@@ -205,22 +203,22 @@ export const buildToolSupport = async (
     }),
     maxResultChars,
   }
-  // Family dispatchers registered into the global registry once — getDispatchers()
-  // is idempotent and returns the same dispatcher shapes across calls. We
-  // register here (not at bootstrap) because the surface is what knows the
-  // family rules; bootstrap shouldn't depend on tool-surface internals.
+  // Family dispatcher trampolines registered into the global registry
+  // once. Each trampoline re-resolves its family's members at execute
+  // time, so packs installed AFTER this spawn become routable without
+  // re-registering. Idempotent across spawns via the has-name guard.
   const surface = createToolSurface({
     registry,
     requestedTools: allToolNames,
     getRoomActivation,
   })
-  for (const dispatcher of surface.getDispatchers()) {
+  for (const dispatcher of surface.getRegistryDispatchers()) {
     if (!registry.has(dispatcher.name)) registry.register(dispatcher)
   }
 
   // The executor must accept family-dispatcher names too — they aren't in
   // allToolNames, but they're real tools in the registry. Inject them.
-  const dispatcherNames = surface.getDispatchers().map(d => d.name)
+  const dispatcherNames = surface.getRegistryDispatchers().map(d => d.name)
   const executorAllowedNames = [...allToolNames, ...dispatcherNames.filter(n => !allToolNames.includes(n))]
   const executor = createToolExecutor(registry, executorAllowedNames, lazyContext, getAllowedToolsForRoom, getRoomActivation)
 

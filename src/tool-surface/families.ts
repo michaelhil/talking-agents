@@ -38,14 +38,6 @@ export interface ToolFamily {
 // scales). Tuned for the OpenAI cost-per-enum-value vs description prose.
 export const ENUM_MAX_MEMBERS = 10
 
-// Always reserved as dispatcher names regardless of the family table; the
-// surface refuses to compress if a real tool collides with one of these
-// names (see assertNoNameCollisions). Listed here so the registration step
-// can refuse early rather than at runtime.
-export const FAMILY_DISPATCHER_NAMES: ReadonlySet<string> = new Set([
-  'fs', 'geo_tools', 'pack_admin', 'codegen_tools',
-])
-
 export const BUILT_IN_FAMILIES: ReadonlyArray<ToolFamily> = [
   {
     name: 'fs',
@@ -76,6 +68,14 @@ export const BUILT_IN_FAMILIES: ReadonlyArray<ToolFamily> = [
     minMembers: 2,
   },
 ]
+
+// Reserved dispatcher names — derived from BUILT_IN_FAMILIES so the two
+// can never drift. Used by the projection candidate filter to exclude
+// any previously-registered dispatcher (the projection re-synthesises
+// dispatchers fresh; including the stored copy caused Gemini "Duplicate
+// function declaration" failures).
+export const FAMILY_DISPATCHER_NAMES: ReadonlySet<string> =
+  new Set(BUILT_IN_FAMILIES.map(f => f.name))
 
 // Single source of truth for which tools are always retained regardless of
 // any pruning/budget logic. Layer 4 (budget cap) imports this; future
@@ -181,6 +181,76 @@ export const createFamilyDispatcher = (
           success: false,
           error: `${family.name}: unknown subcommand "${sub}". Valid: ${subcommandNames.join(', ')}`,
         }
+      }
+      const args = (params.args && typeof params.args === 'object')
+        ? (params.args as Record<string, unknown>)
+        : {}
+      try {
+        return await target.tool.execute(args, context)
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  }
+}
+
+// Late-binding dispatcher: registered ONCE into the global registry at
+// agent spawn time, this Tool's execute() re-resolves the family's
+// members from the registry on every call. The previous shape
+// (createFamilyDispatcher) captured a memberMap snapshot at registration
+// time — combined with the `if (!registry.has(name)) register` guard in
+// spawn.ts, that meant a pack installed AFTER the dispatcher was first
+// registered would never become routable: the LLM-facing projection
+// (re-synthesised per-eval) advertised the new subcommand, but the
+// executor's registry.get(name) returned the stale closure.
+//
+// This trampoline closes the gap: members are resolved at execute time
+// against current registry state. Cost: one filter pass per dispatcher
+// call (registry.listEntries() is in-memory, N is small). Snapshot:
+// none — dispatcher is built-in, doesn't persist.
+//
+// minMembers is enforced at execute time too: if a pack uninstall has
+// dropped membership below threshold, the projection hides the
+// dispatcher, but a model that cached the name from a prior turn could
+// still call it. Return a coherent "family disabled" error instead of
+// routing into a degenerate state.
+export const createFamilyDispatcherTrampoline = (
+  family: ToolFamily,
+  registry: ToolRegistry,
+): Tool => {
+  return {
+    name: family.name,
+    // Description here is static — the LLM never sees this one; it sees
+    // the per-projection dispatcher built by createFamilyDispatcher from
+    // current members. This description is only visible if some tool
+    // happens to introspect the registry for help text.
+    description: `${family.description} (trampoline — late-binds to current registry members)`,
+    parameters: {
+      type: 'object',
+      properties: {
+        subcommand: { type: 'string' },
+        args: { type: 'object', additionalProperties: true },
+      },
+      required: ['subcommand', 'args'],
+    },
+    execute: async (params: Record<string, unknown>, context: ToolContext): Promise<ToolResult> => {
+      const sub = typeof params.subcommand === 'string' ? params.subcommand : ''
+      if (!sub) {
+        return { success: false, error: `${family.name}: missing required \`subcommand\` parameter` }
+      }
+      const members = registry.listEntries().filter(e => family.match(e))
+      if (members.length < family.minMembers) {
+        return {
+          success: false,
+          error: `${family.name}: family disabled — only ${members.length} of ${family.minMembers} required members registered`,
+        }
+      }
+      const memberMap = new Map<string, ToolRegistryEntry>()
+      for (const m of members) memberMap.set(family.subcommandName(m), m)
+      const target = memberMap.get(sub)
+      if (!target) {
+        const valid = [...memberMap.keys()].join(', ')
+        return { success: false, error: `${family.name}: unknown subcommand "${sub}". Valid: ${valid}` }
       }
       const args = (params.args && typeof params.args === 'object')
         ? (params.args as Record<string, unknown>)
