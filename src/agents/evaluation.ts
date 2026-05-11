@@ -326,13 +326,16 @@ export const evaluate = async (
           })
         }
 
-        for (const call of calls) onEvent?.({ kind: 'tool_start', tool: call.tool })
+        for (let i = 0; i < calls.length; i++) {
+          const call = calls[i]!
+          onEvent?.({ kind: 'tool_start', tool: call.tool, callId: String(i) })
+        }
         const results = await toolExecutor(calls, triggerRoomId)
         for (let i = 0; i < results.length; i++) {
           const call = calls[i]
           const result = results[i]
           if (!call || !result) continue
-          onEvent?.({ kind: 'tool_result', tool: call.tool, success: result.success, preview: result.success ? undefined : result.error })
+          onEvent?.({ kind: 'tool_result', tool: call.tool, callId: String(i), success: result.success, preview: result.success ? undefined : result.error })
           toolTrace.push({
             tool: call.tool,
             arguments: call.arguments,
