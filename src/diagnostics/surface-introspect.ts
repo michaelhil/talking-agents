@@ -7,10 +7,11 @@
 // rollup. Lives in src/diagnostics/ so the tool-surface module stays a
 // leaf (no diagnostic-shaped state seeping in).
 
-import type { ToolDefinition, ToolRegistry } from '../core/types/tool.ts'
+import type { ToolDefinition } from '../core/types/tool.ts'
 import type { System } from '../main.ts'
 import { asAIAgent } from '../agents/shared.ts'
 import { createToolSurface, inferProviderFromModelRef, type GetRoomActivation } from '../tool-surface/index.ts'
+import { packNameFor } from '../core/types/tool-pack.ts'
 import { effectiveActivePackSet } from '../packs/activation.ts'
 import { estimateTokens } from '../agents/context-builder.ts'
 import { CURATED_MODELS } from '../llm/models/catalog.ts'
@@ -31,7 +32,17 @@ export interface AgentSurface {
   readonly agent: string
   readonly agentId: string
   readonly model: string
-  readonly provider: string | null
+  // The provider the agent's model is configured under (catalog lookup).
+  // This may differ from the provider actually used at eval time after
+  // router failover — see activeProvider below.
+  readonly configuredProvider: string | null
+  // The provider observed on the most recent eval for this agent
+  // (from the eval ring buffer), or null if no recent eval recorded.
+  // During failover this diverges from configuredProvider; the surface
+  // projection rules (compressed vs flat) follow configuredProvider,
+  // so a mismatch means recent evals went through a different shape
+  // than the diagnostic shows.
+  readonly activeProvider: string | null
   readonly roomId: string
   readonly roomName: string
   readonly activePacks: ReadonlyArray<string>
@@ -41,17 +52,6 @@ export interface AgentSurface {
   readonly tools: ReadonlyArray<ToolSurfaceTool>
   readonly packs: ReadonlyArray<PackRollup>
   readonly totalTokens: number
-}
-
-const packForEntry = (registry: ToolRegistry, name: string): string => {
-  const entry = registry.getEntry(name)
-  if (!entry) return 'unknown'
-  switch (entry.source.kind) {
-    case 'built-in': return 'core'
-    case 'external': return 'local'
-    case 'pack-bundled': return entry.source.pack ?? 'local'
-    case 'skill-bundled': return entry.source.pack ?? 'local'
-  }
 }
 
 export const introspectAgentSurface = (
@@ -69,7 +69,7 @@ export const introspectAgentSurface = (
 
   const config = ai.getConfig()
   const model = ai.getModel()
-  const provider = inferProviderFromModelRef(model, CURATED_MODELS) ?? null
+  const configuredProvider = inferProviderFromModelRef(model, CURATED_MODELS) ?? null
   const activePacks = effectiveActivePackSet(room)
 
   const registry = system.toolRegistry
@@ -79,11 +79,16 @@ export const introspectAgentSurface = (
   // would actually compute.
   const getRoomActivation: GetRoomActivation = (id) => system.house.getRoom(id)
   const surface = createToolSurface({ registry, requestedTools, getRoomActivation })
-  const defs: ReadonlyArray<ToolDefinition> = surface.project(roomId, provider ?? undefined)
+  const defs: ReadonlyArray<ToolDefinition> = surface.project(roomId, configuredProvider ?? undefined)
+
+  const packForName = (name: string): string => {
+    const entry = registry.getEntry(name)
+    return entry ? packNameFor(entry) : 'unknown'
+  }
 
   const tools: ToolSurfaceTool[] = defs.map(d => ({
     name: d.function.name,
-    pack: packForEntry(registry, d.function.name),
+    pack: packForName(d.function.name),
     tokens: estimateTokens(JSON.stringify(d)),
   }))
 
@@ -97,29 +102,26 @@ export const introspectAgentSurface = (
   const packs: PackRollup[] = [...packBuckets].map(([pack, b]) => ({ pack, ...b }))
     .sort((a, b) => b.tokens - a.tokens)
 
-  // Diagnostic counts: how many tools survived each stage. afterActivation
-  // is the candidate set BEFORE family compression (so users see the raw
-  // pack-filtered count vs the final dispatcher-compressed count).
-  const requestedSet = new Set(requestedTools)
-  let afterActivation = 0
-  for (const entry of registry.listEntries()) {
-    const name = entry.tool.name
-    if (!activePacks.has(packForEntry(registry, name))) continue
-    // UNION with requestedTools (matches buildCandidates).
-    afterActivation += 1
-  }
-  // Add any requestedTools that are registered but not in active-pack set
-  // (shouldn't happen with narrowed defaults, but include for completeness).
-  for (const name of requestedSet) {
-    const entry = registry.getEntry(name)
-    if (entry && !activePacks.has(packForEntry(registry, name))) afterActivation += 1
-  }
+  // afterActivation is the candidate set size BEFORE family compression —
+  // computed by the surface itself (one source of truth, no parallel
+  // re-implementation that can drift).
+  const afterActivation = surface.buildCandidates(roomId).size
+
+  // Active provider: pulled from the most recent eval for this agent. If
+  // no recent eval is recorded, null. During router failover this
+  // diverges from configuredProvider.
+  const recent = system.evalBuffer.listRecent({ limit: 1, agent: agent.name })
+  const recentModel = recent[0]?.model
+  const activeProvider = recentModel
+    ? (inferProviderFromModelRef(recentModel, CURATED_MODELS) ?? null)
+    : null
 
   return {
     agent: agent.name,
     agentId: agent.id,
     model,
-    provider,
+    configuredProvider,
+    activeProvider,
     roomId: room.profile.id,
     roomName: room.profile.name,
     activePacks: [...activePacks].sort(),
