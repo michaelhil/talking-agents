@@ -19,6 +19,7 @@ import type { EvalEvent, OnEvalEvent } from '../core/types/agent-eval.ts'
 
 export interface ToolCallTrace {
   readonly tool: string
+  readonly callId: string
   readonly success?: boolean
   readonly preview?: string
 }
@@ -104,20 +105,21 @@ export const createEvalBuffer = (config: EvalBufferConfig = {}): EvalBuffer => {
         rec.messages = event.messages
         return
       case 'tool_start':
-        rec.toolCalls.push({ tool: event.tool })
+        rec.toolCalls.push({ tool: event.tool, callId: event.callId })
         return
       case 'tool_result': {
-        // Match the most recent open call for this tool name; pragmatic
-        // since calls within one eval are sequential.
-        for (let i = rec.toolCalls.length - 1; i >= 0; i--) {
+        // Match by callId — robust against out-of-order results when
+        // parallel tool-call execution lands. Linear scan is fine; N is
+        // small (one eval's tool calls).
+        for (let i = 0; i < rec.toolCalls.length; i++) {
           const tc = rec.toolCalls[i]
-          if (tc && tc.tool === event.tool && tc.success === undefined) {
-            rec.toolCalls[i] = { tool: event.tool, success: event.success, ...(event.preview ? { preview: event.preview } : {}) }
+          if (tc && tc.callId === event.callId && tc.success === undefined) {
+            rec.toolCalls[i] = { tool: event.tool, callId: event.callId, success: event.success, ...(event.preview ? { preview: event.preview } : {}) }
             return
           }
         }
         // Lost the corresponding start — record the result as its own entry.
-        rec.toolCalls.push({ tool: event.tool, success: event.success, ...(event.preview ? { preview: event.preview } : {}) })
+        rec.toolCalls.push({ tool: event.tool, callId: event.callId, success: event.success, ...(event.preview ? { preview: event.preview } : {}) })
         return
       }
       case 'warning':

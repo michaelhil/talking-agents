@@ -49,14 +49,14 @@ describe('eval-buffer', () => {
     buf.attach(addListener)
 
     fire('AI', evt({ traceId: 'tr_2', kind: 'context_ready', messages: [{ role: 'system', content: 'hi' }], model: 'gpt-4o', toolCount: 3 }))
-    fire('AI', evt({ traceId: 'tr_2', kind: 'tool_start', tool: 'biometrics_start' }))
-    fire('AI', evt({ traceId: 'tr_2', kind: 'tool_result', tool: 'biometrics_start', success: true }))
+    fire('AI', evt({ traceId: 'tr_2', kind: 'tool_start', tool: 'biometrics_start', callId: '0' }))
+    fire('AI', evt({ traceId: 'tr_2', kind: 'tool_result', tool: 'biometrics_start', callId: '0', success: true }))
     fire('AI', evt({ traceId: 'tr_2', kind: 'warning', message: 'slow start' }))
     fire('AI', evt({ traceId: 'tr_2', kind: 'eval_completed', outcome: 'respond' }))
 
     const rec = buf.getByTraceId('tr_2')
     expect(rec).toBeTruthy()
-    expect(rec?.toolCalls).toEqual([{ tool: 'biometrics_start', success: true }])
+    expect(rec?.toolCalls).toEqual([{ tool: 'biometrics_start', callId: '0', success: true }])
     expect(rec?.warnings).toEqual(['slow start'])
     expect(rec?.outcome).toBe('respond')
     expect(rec?.messages?.length).toBe(1)
@@ -78,8 +78,8 @@ describe('eval-buffer', () => {
     const { addListener, fire } = makeAddListener()
     buf.attach(addListener)
 
-    fire('AI', evt({ traceId: 'tr_a', kind: 'tool_start', tool: 'pass' }))
-    fire('Observer', evt({ traceId: 'tr_b', kind: 'tool_start', tool: 'biometrics_start' }))
+    fire('AI', evt({ traceId: 'tr_a', kind: 'tool_start', tool: 'pass', callId: '0' }))
+    fire('Observer', evt({ traceId: 'tr_b', kind: 'tool_start', tool: 'biometrics_start', callId: '0' }))
     fire('AI', evt({ traceId: 'tr_a', kind: 'eval_completed', outcome: 'pass' }))
     fire('Observer', evt({ traceId: 'tr_b', kind: 'eval_completed', outcome: 'respond' }))
 
@@ -168,11 +168,37 @@ describe('eval-buffer', () => {
     const { addListener, fire } = makeAddListener()
     buf.attach(addListener)
 
-    fire('AI', evt({ traceId: 'tr_unmatched', kind: 'tool_start', tool: 'biometrics_start' }))
+    fire('AI', evt({ traceId: 'tr_unmatched', kind: 'tool_start', tool: 'biometrics_start', callId: '0' }))
     fire('AI', evt({ traceId: 'tr_unmatched', kind: 'eval_completed', outcome: 'error' }))
 
     const rec = buf.getByTraceId('tr_unmatched')
-    expect(rec?.toolCalls).toEqual([{ tool: 'biometrics_start' }])
+    expect(rec?.toolCalls).toEqual([{ tool: 'biometrics_start', callId: '0' }])
     expect(rec?.outcome).toBe('error')
+  })
+
+  test('out-of-order results attach to the correct call by callId', () => {
+    // Forward-compat for parallel tool calls: two starts for the same tool
+    // name, results delivered second-then-first. Pre-callId code matched
+    // positionally and would mis-attribute. With callId both results land
+    // on their correct entries.
+    const buf = createEvalBuffer()
+    const { addListener, fire } = makeAddListener()
+    buf.attach(addListener)
+
+    fire('AI', evt({ traceId: 'tr_par', kind: 'tool_start', tool: 'web_search', callId: '0' }))
+    fire('AI', evt({ traceId: 'tr_par', kind: 'tool_start', tool: 'web_search', callId: '1' }))
+    // Result for the SECOND call arrives first.
+    fire('AI', evt({ traceId: 'tr_par', kind: 'tool_result', tool: 'web_search', callId: '1', success: true }))
+    fire('AI', evt({ traceId: 'tr_par', kind: 'tool_result', tool: 'web_search', callId: '0', success: false, preview: 'rate limit' }))
+    fire('AI', evt({ traceId: 'tr_par', kind: 'eval_completed', outcome: 'respond' }))
+
+    const rec = buf.getByTraceId('tr_par')
+    expect(rec?.toolCalls.length).toBe(2)
+    // Call 0 → failure with preview. Call 1 → success.
+    const c0 = rec?.toolCalls.find(t => t.callId === '0')
+    const c1 = rec?.toolCalls.find(t => t.callId === '1')
+    expect(c0?.success).toBe(false)
+    expect(c0?.preview).toBe('rate limit')
+    expect(c1?.success).toBe(true)
   })
 })

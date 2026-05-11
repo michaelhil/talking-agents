@@ -20,8 +20,14 @@
 export type EvalEventCore =
   | { readonly kind: 'chunk'; readonly delta: string }
   | { readonly kind: 'thinking'; readonly delta: string }
-  | { readonly kind: 'tool_start'; readonly tool: string }
-  | { readonly kind: 'tool_result'; readonly tool: string; readonly success: boolean; readonly preview?: string }
+  // callId is REQUIRED on tool_start/tool_result. Unlike traceId (optional
+  // because some events are out-of-band, e.g. spawn.ts's model_fallback),
+  // tool events are emitted only from evaluation.ts's tool loop — no
+  // out-of-band sources exist. Making the field required is the
+  // compile-error forcing function that prevents a future parallel-call
+  // emit site from silently shipping without correlation.
+  | { readonly kind: 'tool_start'; readonly tool: string; readonly callId: string }
+  | { readonly kind: 'tool_result'; readonly tool: string; readonly callId: string; readonly success: boolean; readonly preview?: string }
   | { readonly kind: 'context_ready'; readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>; readonly model: string; readonly temperature?: number; readonly toolCount: number }
   | { readonly kind: 'warning'; readonly message: string }
   | { readonly kind: 'model_fallback'; readonly preferred: string; readonly effective: string; readonly reason: string }
