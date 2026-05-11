@@ -27,6 +27,25 @@ const CLOUD_TABLE: Record<string, Record<string, number>> = {
     'gpt-4o':       128_000,
     'gpt-4.1-mini': 1_047_576,
     'gpt-4.1':      1_047_576,
+    // gpt-5 family + o-series. Exact-match on the family head; dated
+    // snapshots (e.g. 'gpt-5.4-mini-2026-03-17') fall through to the
+    // prefix matcher below.
+    'gpt-5':        400_000,
+    'gpt-5-mini':   400_000,
+    'gpt-5-nano':   200_000,
+    'gpt-5-pro':    400_000,
+    'gpt-5.1':      400_000,
+    'gpt-5.1-mini': 400_000,
+    'gpt-5.1-pro':  400_000,
+    'gpt-5.4':      400_000,
+    'gpt-5.4-mini': 400_000,
+    'gpt-5.4-nano': 200_000,
+    'gpt-5.4-pro':  400_000,
+    'o1':           200_000,
+    'o1-mini':      128_000,
+    'o3':           200_000,
+    'o3-mini':      200_000,
+    'o4-mini':      200_000,
   },
   gemini: {
     'gemini-2.5-flash-lite': 1_048_576,
@@ -127,10 +146,28 @@ export const getContextWindow = async (
   if (info.source === 'unknown') {
     const hard = CLOUD_TABLE[providerName]?.[modelId]
     if (hard) info = { contextMax: hard, source: 'known_table' }
+    else if (providerName === 'openai') {
+      const prefix = findOpenAIPrefixMatch(modelId)
+      if (prefix) info = { contextMax: prefix, source: 'known_table' }
+    }
   }
 
   cache.set(key, info)
   return info
+}
+
+// Longest-prefix fallback for OpenAI dated/minor variants. OpenAI ships
+// dated snapshots like `gpt-5.4-mini-2026-03-17` constantly; without a
+// prefix match they'd all show '?%' until someone hand-curates each one.
+// Sorted descending by length so the most specific match wins.
+const findOpenAIPrefixMatch = (modelId: string): number | undefined => {
+  const openai = CLOUD_TABLE['openai']
+  if (!openai) return undefined
+  const candidates = Object.keys(openai).sort((a, b) => b.length - a.length)
+  for (const key of candidates) {
+    if (modelId === key || modelId.startsWith(`${key}-`)) return openai[key]
+  }
+  return undefined
 }
 
 // Synchronous best-effort lookup — hits the in-process cache and the curated
@@ -143,5 +180,12 @@ export const getContextWindowSync = (providerName: string, modelId: string): Con
   if (cached) return cached
   const hard = CLOUD_TABLE[providerName]?.[modelId]
   if (hard) return { contextMax: hard, source: 'known_table' }
+  // OpenAI-only longest-prefix fallback for dated variants. Other providers
+  // either expose context via API (Ollama, OpenRouter) or have stable model
+  // names that don't churn.
+  if (providerName === 'openai') {
+    const prefix = findOpenAIPrefixMatch(modelId)
+    if (prefix) return { contextMax: prefix, source: 'known_table' }
+  }
   return { contextMax: 0, source: 'unknown' }
 }
