@@ -142,7 +142,14 @@ export const providersTestRoutes: RouteEntry[] = [
 
       const t0 = performance.now()
       try {
-        const resp = await provider.chat({ model, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1, temperature: 0 })
+        // maxTokens=1024 covers gpt-5 reasoning floor (~1024 tokens of
+        // internal reasoning before any output). Legacy chat models still
+        // respond in 5-10 tokens, so this only costs more for new-family
+        // pings. User-clicked test → cost is negligible (~$0.001 max).
+        // temperature is omitted; the adapter strips it for new-family
+        // models anyway (gpt-5 only accepts default 1.0), and legacy
+        // models will use their default which is fine for a ping.
+        const resp = await provider.chat({ model, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1024 })
         system.monitors[name]?.recordHeartbeat(true)
         return json({
           ok: true, elapsedMs: Math.round(performance.now() - t0),
@@ -202,7 +209,7 @@ export const providersTestRoutes: RouteEntry[] = [
         const target = Math.max(1, system.providerConfig.ollamaMaxConcurrent || 2)
         const raw = createOllamaProvider(system.providerConfig.ollamaUrl)
         const probe = await runProbe(
-          async (m) => { await raw.chat({ model: m, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1, temperature: 0 }) },
+          async (m) => { await raw.chat({ model: m, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1024 }) },
           model, target, TEST_TIMEOUT_MS,
         )
 
@@ -302,7 +309,7 @@ export const providersTestRoutes: RouteEntry[] = [
       if (model) {
         const target = Math.max(1, mergedAgain.cloud[name]?.maxConcurrent ?? PROVIDER_PROFILES[name].defaultMaxConcurrent)
         concurrency = await runProbe(
-          async (m) => { await provider.chat({ model: m, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1, temperature: 0 }) },
+          async (m) => { await provider.chat({ model: m, messages: [{ role: 'user', content: 'ping' }], maxTokens: 1024 }) },
           model, target, TEST_TIMEOUT_MS,
         )
       }
