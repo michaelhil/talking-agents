@@ -670,6 +670,24 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     return visible.map(s => `[${s.name}] ${s.description}\n${s.body}`).join('\n\n---\n\n')
   }
 
+  // Structured access to the same filtered skill set — drives the
+  // pre-LLM coherence check in ai-agent.ts. Each skill's `allowed-tools`
+  // frontmatter declarations are surfaced as `declaredTools` so the
+  // agent can compare against the actual tool surface and emit a
+  // coherence warning when the prompt promises a tool that isn't there.
+  const getActiveSkillsDeclarationsForRoom = (roomId: string): ReadonlyArray<{
+    readonly name: string
+    readonly declaredTools: ReadonlyArray<string>
+  }> => {
+    const room = house.getRoom(roomId)
+    if (!room) return []
+    const active = effectiveActivePackSet(room)
+    return skillStore.forScope(room.profile.name)
+      .filter(s => active.has(s.pack ?? 'local'))
+      .filter(s => s.allowedToolNames.length > 0)
+      .map(s => ({ name: s.name, declaredTools: s.allowedToolNames }))
+  }
+
   // Per-room allowed-tools whitelist. Resolves from skillStore at every
   // tool call (executor invokes it with the room ID) — agents that span
   // multiple rooms see different whitelists per room.
@@ -817,6 +835,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     spawnAIAgent(config, llmService, house, team, routeMessage, toolRegistry, {
       ...options,
       getSkills: getSkillsForRoom,
+      getActiveSkillsDeclarations: getActiveSkillsDeclarationsForRoom,
       getScriptContext: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
       getAllowedToolsForRoom,
       // Pack-aware tool surface filter — the LLM only sees tools owned by

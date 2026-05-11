@@ -77,6 +77,14 @@ export interface AIAgentOptions {
   // whose messages it has already observed.
   readonly getRoomMembers?: (roomId: string) => ReadonlyArray<import('../core/types/messaging.ts').AgentProfile>
   readonly getSkills?: (roomName: string) => string
+  // Structured access to the same skill set getSkills() formats, so the
+  // pre-LLM coherence check can compare declared tools against the actual
+  // surface. Returns active skills (after scope + pack-activation filter)
+  // with their `allowed-tools` frontmatter declarations.
+  readonly getActiveSkillsDeclarations?: (roomId: string) => ReadonlyArray<{
+    readonly name: string
+    readonly declaredTools: ReadonlyArray<string>
+  }>
   readonly getScriptContext?: (roomId: string, agentName: string) =>
     | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
     | undefined
@@ -164,6 +172,7 @@ export const createAIAgent = (
   const getCompressedIds = options?.getCompressedIds
   const getRoomMembers = options?.getRoomMembers
   const getSkills = options?.getSkills
+  const getActiveSkillsDeclarations = options?.getActiveSkillsDeclarations
   const getScriptContext = options?.getScriptContext
   const onEvalEvent = options?.onEvalEvent
   const resolveEffective = options?.resolveEffectiveModel
@@ -336,6 +345,27 @@ export const createAIAgent = (
       })
       for (const w of contextResult.warnings) {
         emit({ kind: 'warning', message: w })
+      }
+      // Skill / tool surface coherence check: if an active skill declares
+      // `allowed-tools: [...]` in its frontmatter, every tool it lists
+      // should be in the LLM-facing surface — otherwise the prompt and
+      // tool list contradict each other and models rationalise refusal
+      // (the prod biometrics symptom). Coherence warnings show up in the
+      // diagnostic API immediately. Not a hard gate — the skill text
+      // wins as a recommendation, but the agent may still call other
+      // tools. The warning makes the mismatch visible.
+      if (getActiveSkillsDeclarations && effectiveToolDefs) {
+        const surfaceNames = new Set(effectiveToolDefs.map(d => d.function.name))
+        const skills = getActiveSkillsDeclarations(triggerRoomId)
+        for (const skill of skills) {
+          const missing = skill.declaredTools.filter(t => !surfaceNames.has(t))
+          if (missing.length > 0) {
+            emit({
+              kind: 'warning',
+              message: `Skill "${skill.name}" declares tools not in the LLM surface: ${missing.join(', ')}. Check pack activation in this room.`,
+            })
+          }
+        }
       }
     }
     // epoch guards: each cancelGeneration() increments generationEpoch so stale

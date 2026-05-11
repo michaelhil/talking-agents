@@ -314,6 +314,10 @@ const resolveAgentTools = async (
 export interface SpawnOptions {
   readonly overrideId?: string
   readonly getSkills?: (roomName: string) => string
+  readonly getActiveSkillsDeclarations?: (roomId: string) => ReadonlyArray<{
+    readonly name: string
+    readonly declaredTools: ReadonlyArray<string>
+  }>
   readonly getScriptContext?: (roomId: string, agentName: string) =>
     | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
     | undefined
@@ -463,6 +467,7 @@ export const spawnAIAgent = async (
       return profiles
     },
     getSkills: spawnOptions?.getSkills,
+    ...(spawnOptions?.getActiveSkillsDeclarations ? { getActiveSkillsDeclarations: spawnOptions.getActiveSkillsDeclarations } : {}),
     getScriptContext: spawnOptions?.getScriptContext,
     onEvalEvent: spawnOptions?.onEvalEvent,
     ...(spawnOptions?.resolveEffectiveModel ? { resolveEffectiveModel: spawnOptions.resolveEffectiveModel } : {}),

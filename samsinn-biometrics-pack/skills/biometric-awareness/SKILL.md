@@ -2,6 +2,7 @@
 name: biometric-awareness
 description: When and how to use the webcam-based biometric capture tools. Always act first when the user requests biometrics — call the tool, then narrate what you see. Never ask clarifying questions before starting a capture.
 scope: []
+allowed-tools: [biometrics_start, biometrics_read, biometrics_stop]
 ---
 
 # Biometric awareness
