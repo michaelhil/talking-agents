@@ -76,6 +76,32 @@ jobs:
             exit 1
           '
 
+      - name: Caddy drift check (CSP hosts)
+        # The auto-deploy pipeline intentionally does NOT replace
+        # /etc/caddy/Caddyfile (per CLAUDE.md: deploy/Caddyfile is a
+        # TEMPLATE; prod has tuned values). But that lets CSP / header
+        # changes shipped in the repo silently never reach the edge —
+        # exactly how the storage.googleapis.com fix sat undeployed for
+        # days while the biometrics feature was broken.
+        #
+        # This step catches the gap: every host the template's
+        # connect-src declares must also be in the live Caddyfile.
+        # When this fails, run the "caddy-patch" workflow (named, idempotent
+        # SSH patches) to reconcile, then re-run Deploy.
+        run: |
+          REPO_HOSTS=$(grep -oE 'connect-src[^"]*' deploy/Caddyfile | grep -oE 'https://[a-zA-Z0-9.-]+' | sort -u)
+          LIVE_HOSTS=$(ssh -i ~/.ssh/deploy_key root@${{ secrets.DEPLOY_HOST }} \
+            "grep -oE 'connect-src[^\"]*' /etc/caddy/Caddyfile | grep -oE 'https://[a-zA-Z0-9.-]+' | sort -u")
+          MISSING=$(comm -23 <(echo "$REPO_HOSTS") <(echo "$LIVE_HOSTS"))
+          if [ -n "$MISSING" ]; then
+            echo "::error::Caddyfile drift detected — hosts present in repo template but missing on prod:" >&2
+            echo "$MISSING" >&2
+            echo "" >&2
+            echo "Run the 'Caddy patch' workflow to reconcile, then re-run Deploy." >&2
+            exit 1
+          fi
+          echo "Caddyfile connect-src in sync: $(echo $LIVE_HOSTS | tr '\n' ' ')"
+
       - name: Streaming probe (real eval + evict→reload)
         # Subsumes the older smoke-streaming.ts: this probe runs an actual
         # LLM eval through a fresh probe-instance, evicts that instance,

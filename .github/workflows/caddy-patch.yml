@@ -1,0 +1,105 @@
+# ============================================================================
+# Caddy patch — surgical, idempotent edits to the live /etc/caddy/Caddyfile.
+#
+# The auto-deploy workflow syncs CODE; it intentionally does NOT replace
+# /etc/caddy/Caddyfile (per CLAUDE.md project rule: the repo template
+# carries placeholders and may diverge from prod's tuned config). That
+# leaves a real gap: CSP / header / proxy changes shipped in
+# deploy/Caddyfile sit "deployed" in git but never reach the edge.
+#
+# This workflow is the bridge. Each job is a NAMED, EXPLICIT patch the
+# operator triggers via workflow_dispatch. Patches are idempotent
+# (grep-then-sed) so re-runs are safe. Nothing copies the whole file.
+#
+# Trigger: GitHub Actions → "Caddy patch" → Run workflow → pick patch.
+#
+# Adding a new patch:
+#   1. Add a job below with a unique key.
+#   2. Run it once on prod, verify with `curl -sI https://samsinn.app/ |
+#      grep -i content-security-policy`.
+#   3. Mirror the change into deploy/Caddyfile so the repo template
+#      stays accurate for fresh installs.
+# ============================================================================
+
+name: Caddy patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch:
+        description: 'Which patch to apply'
+        required: true
+        type: choice
+        options:
+          - csp-add-storage-googleapis
+          - reload-only
+
+concurrency:
+  group: caddy-patch
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: SSH key + known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Apply patch
+        run: |
+          PATCH="${{ inputs.patch }}"
+          case "$PATCH" in
+            csp-add-storage-googleapis)
+              # Add https://storage.googleapis.com to connect-src if not
+              # already present. Idempotent: grep-then-sed; bail if
+              # already patched.
+              ssh -i ~/.ssh/deploy_key root@${{ secrets.DEPLOY_HOST }} '
+                set -e
+                CADDY=/etc/caddy/Caddyfile
+                if grep -q "connect-src .* https://storage.googleapis.com" "$CADDY"; then
+                  echo "Already patched."
+                  exit 0
+                fi
+                cp "$CADDY" "$CADDY.bak.$(date +%Y%m%d%H%M%S)"
+                sed -i "s|\(connect-src '"'"'self'"'"' wss: ws: https://cdn.jsdelivr.net\)|\1 https://storage.googleapis.com|" "$CADDY"
+                if ! grep -q "https://storage.googleapis.com" "$CADDY"; then
+                  echo "Patch FAILED — connect-src pattern not found. Edit manually." >&2
+                  exit 1
+                fi
+                caddy validate --config "$CADDY"
+                systemctl reload caddy
+                echo "Patched + reloaded."
+                grep "Content-Security-Policy" "$CADDY" | head -1
+              '
+              ;;
+            reload-only)
+              ssh -i ~/.ssh/deploy_key root@${{ secrets.DEPLOY_HOST }} '
+                caddy validate --config /etc/caddy/Caddyfile
+                systemctl reload caddy
+              '
+              ;;
+            *)
+              echo "Unknown patch: $PATCH" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Verify CSP from outside
+        run: |
+          sleep 2
+          CSP=$(curl -sI https://samsinn.app/ | tr -d '\r' | grep -i '^content-security-policy:' | head -1)
+          echo "$CSP"
+          if [ "${{ inputs.patch }}" = "csp-add-storage-googleapis" ]; then
+            if echo "$CSP" | grep -q 'storage.googleapis.com'; then
+              echo "OK: storage.googleapis.com present in live CSP."
+            else
+              echo "FAIL: storage.googleapis.com missing from live CSP." >&2
+              exit 1
+            fi
+          fi
