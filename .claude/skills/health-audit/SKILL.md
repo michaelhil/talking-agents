@@ -46,6 +46,8 @@ For each delta, check `.health/suppressed.md`:
 
 Also check `CLAUDE.md` `## Rejected refactors` — if a finding's "natural fix" lands in rejected territory (replace lateBinding, split createSystem, MCP/REST parity, revive artifacts), flag it as `rejected-territory` and do NOT propose it.
 
+**Audit-the-audit reminder.** If you find yourself ignoring or routinely suppressing a *class* of findings, that's a signal the check itself may be wrong — the grep too broad, the baseline stale, the categorisation off. The right response is to propose an improvement to `scripts/health.sh` or to the suppression structure, not to silently route more findings into `## known-noise`. The audit machinery is part of the codebase and gets the same scrutiny as the code it scans.
+
 ### 5. Produce the report
 
 Print a finding-disposition table. Categories: `real-drift`, `rejected-territory`, `deferred`, `known-noise` (omit known-noise unless user asks for full output).

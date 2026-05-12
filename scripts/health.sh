@@ -39,6 +39,23 @@ run_escape_hatches() {
   wc -l <"$TMPDIR_HEALTH/escape.txt" | tr -d ' '
 }
 
+# Split escape-hatches into prod vs test counters. Test files use deliberate
+# fixture patterns (`as unknown as HTMLElement` for FakeWrapper, etc.) — the
+# combined count drowns out real prod-code regressions. Tracked separately
+# the prod count is the one to defend against; test count grows with test
+# coverage and is bounded by the suppression list shape.
+run_escape_hatches_prod() {
+  grep -v -E '\.test\.ts:' "$TMPDIR_HEALTH/escape.txt" \
+    >"$TMPDIR_HEALTH/escape_prod.txt" 2>&1 || true
+  wc -l <"$TMPDIR_HEALTH/escape_prod.txt" | tr -d ' '
+}
+
+run_escape_hatches_test() {
+  grep -E '\.test\.ts:' "$TMPDIR_HEALTH/escape.txt" \
+    >"$TMPDIR_HEALTH/escape_test.txt" 2>&1 || true
+  wc -l <"$TMPDIR_HEALTH/escape_test.txt" | tr -d ' '
+}
+
 # --- Anti-pattern grep counters ---
 #
 # Counters for failure-mode patterns documented in .health/suppressed.md's
@@ -89,6 +106,8 @@ echo "Running health audit (~30-60s)..."
 TSC_RC=$(run_tsc)
 TYPECOV_RC=$(run_typecov)
 ESCAPE_COUNT=$(run_escape_hatches)
+ESCAPE_COUNT_PROD=$(run_escape_hatches_prod)
+ESCAPE_COUNT_TEST=$(run_escape_hatches_test)
 SILENT_CATCH_COUNT=$(run_silent_catches)
 STALE_PHRASE_COUNT=$(run_stale_doc_phrases)
 DC_RC=$(run_depcruise)
@@ -111,7 +130,7 @@ KNIP_TOTALS=$(grep -E 'Unused (files|exports|dependencies|types)' "$TMPDIR_HEALT
   echo
   echo "- Typecheck: $([ "$TSC_RC" = 0 ] && echo '✅ pass' || echo '❌ fail')"
   echo "- Type coverage: ${TYPECOV_LINE:-unknown}"
-  echo "- Escape hatches (\`as any\` / \`@ts-ignore\` etc): $ESCAPE_COUNT"
+  echo "- Escape hatches total: $ESCAPE_COUNT (prod: $ESCAPE_COUNT_PROD · test: $ESCAPE_COUNT_TEST)"
   echo "- Silent-catch swallows in production: $SILENT_CATCH_COUNT"
   echo "- Stale documentation phrases: $STALE_PHRASE_COUNT"
   echo "- Dependency-cruiser: ${DC_SUMMARY:-no violations}"
@@ -127,10 +146,25 @@ KNIP_TOTALS=$(grep -E 'Unused (files|exports|dependencies|types)' "$TMPDIR_HEALT
   echo '```'
   echo
   echo "## 3. Escape hatches"
+  echo
+  echo "Split: prod $ESCAPE_COUNT_PROD · test $ESCAPE_COUNT_TEST · total $ESCAPE_COUNT."
+  echo "Prod is the count to defend against; test count grows with coverage."
+  echo
+  echo "### Prod ($ESCAPE_COUNT_PROD)"
   echo '```'
-  if [ "$ESCAPE_COUNT" -gt 0 ]; then
-    head -30 "$TMPDIR_HEALTH/escape.txt"
-    [ "$ESCAPE_COUNT" -gt 30 ] && echo "... ($ESCAPE_COUNT total)"
+  if [ "$ESCAPE_COUNT_PROD" -gt 0 ]; then
+    head -30 "$TMPDIR_HEALTH/escape_prod.txt"
+    [ "$ESCAPE_COUNT_PROD" -gt 30 ] && echo "... ($ESCAPE_COUNT_PROD total prod)"
+  else
+    echo "clean"
+  fi
+  echo '```'
+  echo
+  echo "### Test ($ESCAPE_COUNT_TEST)"
+  echo '```'
+  if [ "$ESCAPE_COUNT_TEST" -gt 0 ]; then
+    head -20 "$TMPDIR_HEALTH/escape_test.txt"
+    [ "$ESCAPE_COUNT_TEST" -gt 20 ] && echo "... ($ESCAPE_COUNT_TEST total test)"
   else
     echo "clean"
   fi
@@ -177,7 +211,7 @@ KNIP_TOTALS=$(grep -E 'Unused (files|exports|dependencies|types)' "$TMPDIR_HEALT
 # --- Update last-run.txt (one-line summary for SessionStart hook) ---
 {
   echo "$TS"
-  echo "tsc: $([ "$TSC_RC" = 0 ] && echo pass || echo FAIL) · type-cov: ${TYPECOV_LINE:-?} · escape-hatches: $ESCAPE_COUNT · silent-catches: $SILENT_CATCH_COUNT · stale-phrases: $STALE_PHRASE_COUNT · dep-cruiser: ${DC_SUMMARY:-clean}"
+  echo "tsc: $([ "$TSC_RC" = 0 ] && echo pass || echo FAIL) · type-cov: ${TYPECOV_LINE:-?} · escape-hatches: $ESCAPE_COUNT (prod $ESCAPE_COUNT_PROD / test $ESCAPE_COUNT_TEST) · silent-catches: $SILENT_CATCH_COUNT · stale-phrases: $STALE_PHRASE_COUNT · dep-cruiser: ${DC_SUMMARY:-clean}"
   echo "Full report: $OUT"
 } >.health/last-run.txt
 

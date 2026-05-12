@@ -4,7 +4,7 @@
 
 - Typecheck: ✅ pass
 - Type coverage: 98.61%
-- Escape hatches (`as any` / `@ts-ignore` etc): 64
+- Escape hatches (`as any` / `@ts-ignore` etc): prod 19 / test 112 / total 131 (re-baselined 2026-05-12 with prod/test split — the prod count is the one to defend against; test count grows with coverage and is bounded by the FakeWrapper fixture pattern)
 - Silent-catch swallows in production: 119 (baseline captured 2026-05-12 with the new check; most are legitimate cleanup-on-shutdown paths — see `.health/suppressed.md` `## anti-patterns`)
 - Stale documentation phrases: 1 (the suppressed README.md:171 "Pack-namespaced resolution is not yet implemented" — legitimate documented limitation)
 - Dependency-cruiser: x 71 dependency violations (65 errors, 6 warnings). 603 modules, 1433 dependencies cruised.
