@@ -16,7 +16,7 @@ Apply this skill for periodic state-of-the-codebase audits. NOT for plan critiqu
 - `.health/last-run.txt` — when was the last full audit?
 - Latest `.health/YYYY-MM-DD.md` — the most recent report.
 - `.health/baseline.md` — the anchor.
-- `.health/suppressed.md` — known-noise + deferred sections.
+- `.health/suppressed.md` — known-noise + deferred + anti-patterns sections.
 - `CLAUDE.md` — read the `## Rejected refactors` section (grep for that exact heading; if missing, warn the user that suppressions might miss rejected-territory findings).
 
 ### 2. Decide whether to re-run
@@ -30,6 +30,8 @@ Compare the current report against `.health/baseline.md`:
 
 - Type-coverage % — is it higher or lower than baseline?
 - Escape-hatch count — any change?
+- Silent-catch count — any change? (See `## anti-patterns` for known-FP exemptions.)
+- Stale-doc-phrase count — any change?
 - Dep-cruiser violations — any new rule names? Any new file paths?
 - Knip unused exports — any new file path entries?
 - Largest-files list — any file that crossed 600 LOC since baseline?
@@ -39,6 +41,7 @@ Compare the current report against `.health/baseline.md`:
 For each delta, check `.health/suppressed.md`:
 - If the entry matches a `## known-noise` line → skip silently.
 - If it matches a `## deferred` line → skip with a one-line note ("deferred until X").
+- If it matches the `## anti-patterns` known-FP list → skip silently (the false positive is documented; the baseline count is the signal).
 - Otherwise → carry forward as a real finding.
 
 Also check `CLAUDE.md` `## Rejected refactors` — if a finding's "natural fix" lands in rejected territory (replace lateBinding, split createSystem, MCP/REST parity, revive artifacts), flag it as `rejected-territory` and do NOT propose it.

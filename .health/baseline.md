@@ -5,6 +5,8 @@
 - Typecheck: ✅ pass
 - Type coverage: 98.61%
 - Escape hatches (`as any` / `@ts-ignore` etc): 64
+- Silent-catch swallows in production: 119 (baseline captured 2026-05-12 with the new check; most are legitimate cleanup-on-shutdown paths — see `.health/suppressed.md` `## anti-patterns`)
+- Stale documentation phrases: 1 (the suppressed README.md:171 "Pack-namespaced resolution is not yet implemented" — legitimate documented limitation)
 - Dependency-cruiser: x 71 dependency violations (65 errors, 6 warnings). 603 modules, 1433 dependencies cruised.
 
 ## 1. Typecheck (bun run check)

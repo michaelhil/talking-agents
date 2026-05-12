@@ -39,6 +39,40 @@ run_escape_hatches() {
   wc -l <"$TMPDIR_HEALTH/escape.txt" | tr -d ' '
 }
 
+# --- Anti-pattern grep counters ---
+#
+# Counters for failure-mode patterns documented in .health/suppressed.md's
+# `## anti-patterns` section. Same shape as run_escape_hatches: grep, write
+# to temp, return count. The dated report shows each count + the top
+# offenders so drift above baseline is obvious.
+#
+# Each counter EXCLUDES test files — that's where deliberate noise lives
+# (mocks, stub error handlers, "trigger the catch" assertions). New
+# patterns added here MUST come with a paired suppression entry in
+# .health/suppressed.md naming the known false-positives.
+
+run_silent_catches() {
+  # `catch {}` or `catch (...) {}` or `catch (...) { /* ignore */ }` in
+  # production. Eyeball-grep for the swallow shape; tighter AST analysis
+  # would catch more but would also be a separate tool surface to maintain.
+  grep -rnE 'catch[[:space:]]*(\([^)]*\))?[[:space:]]*\{[[:space:]]*(/\*[^*]*\*+/[[:space:]]*)?\}' src/ \
+    | grep -vE '\.test\.ts:' \
+    >"$TMPDIR_HEALTH/silent_catches.txt" 2>&1 || true
+  wc -l <"$TMPDIR_HEALTH/silent_catches.txt" | tr -d ' '
+}
+
+run_stale_doc_phrases() {
+  # Phrases that often outlive their truth. Scope: src/ + README.md only.
+  # Excludes .health/ (entries here use these phrases historically and
+  # legitimately) and docs/ (changelog-style content has these by design).
+  {
+    grep -rnE "today'?s behavior|in the current pass|not yet implemented|for now we|FIXME|HACK" src/ 2>/dev/null
+    grep -nE "today'?s behavior|in the current pass|not yet implemented|for now we|FIXME|HACK" README.md 2>/dev/null \
+      | sed 's|^|README.md:|'
+  } >"$TMPDIR_HEALTH/stale_phrases.txt" 2>&1 || true
+  wc -l <"$TMPDIR_HEALTH/stale_phrases.txt" | tr -d ' '
+}
+
 run_depcruise() {
   bunx -y dependency-cruiser@latest "src/**/*.ts" --output-type err \
     >"$TMPDIR_HEALTH/depcruise.txt" 2>&1
@@ -55,6 +89,8 @@ echo "Running health audit (~30-60s)..."
 TSC_RC=$(run_tsc)
 TYPECOV_RC=$(run_typecov)
 ESCAPE_COUNT=$(run_escape_hatches)
+SILENT_CATCH_COUNT=$(run_silent_catches)
+STALE_PHRASE_COUNT=$(run_stale_doc_phrases)
 DC_RC=$(run_depcruise)
 run_knip
 
@@ -76,6 +112,8 @@ KNIP_TOTALS=$(grep -E 'Unused (files|exports|dependencies|types)' "$TMPDIR_HEALT
   echo "- Typecheck: $([ "$TSC_RC" = 0 ] && echo '✅ pass' || echo '❌ fail')"
   echo "- Type coverage: ${TYPECOV_LINE:-unknown}"
   echo "- Escape hatches (\`as any\` / \`@ts-ignore\` etc): $ESCAPE_COUNT"
+  echo "- Silent-catch swallows in production: $SILENT_CATCH_COUNT"
+  echo "- Stale documentation phrases: $STALE_PHRASE_COUNT"
   echo "- Dependency-cruiser: ${DC_SUMMARY:-no violations}"
   echo
   echo "## 1. Typecheck (bun run check)"
@@ -93,6 +131,28 @@ KNIP_TOTALS=$(grep -E 'Unused (files|exports|dependencies|types)' "$TMPDIR_HEALT
   if [ "$ESCAPE_COUNT" -gt 0 ]; then
     head -30 "$TMPDIR_HEALTH/escape.txt"
     [ "$ESCAPE_COUNT" -gt 30 ] && echo "... ($ESCAPE_COUNT total)"
+  else
+    echo "clean"
+  fi
+  echo '```'
+  echo
+  echo "## 3b. Anti-patterns (see .health/suppressed.md \`## anti-patterns\`)"
+  echo
+  echo "### Silent-catch swallows in production ($SILENT_CATCH_COUNT)"
+  echo '```'
+  if [ "$SILENT_CATCH_COUNT" -gt 0 ]; then
+    head -30 "$TMPDIR_HEALTH/silent_catches.txt"
+    [ "$SILENT_CATCH_COUNT" -gt 30 ] && echo "... ($SILENT_CATCH_COUNT total)"
+  else
+    echo "clean"
+  fi
+  echo '```'
+  echo
+  echo "### Stale documentation phrases ($STALE_PHRASE_COUNT)"
+  echo '```'
+  if [ "$STALE_PHRASE_COUNT" -gt 0 ]; then
+    head -30 "$TMPDIR_HEALTH/stale_phrases.txt"
+    [ "$STALE_PHRASE_COUNT" -gt 30 ] && echo "... ($STALE_PHRASE_COUNT total)"
   else
     echo "clean"
   fi
@@ -117,7 +177,7 @@ KNIP_TOTALS=$(grep -E 'Unused (files|exports|dependencies|types)' "$TMPDIR_HEALT
 # --- Update last-run.txt (one-line summary for SessionStart hook) ---
 {
   echo "$TS"
-  echo "tsc: $([ "$TSC_RC" = 0 ] && echo pass || echo FAIL) · type-cov: ${TYPECOV_LINE:-?} · escape-hatches: $ESCAPE_COUNT · dep-cruiser: ${DC_SUMMARY:-clean}"
+  echo "tsc: $([ "$TSC_RC" = 0 ] && echo pass || echo FAIL) · type-cov: ${TYPECOV_LINE:-?} · escape-hatches: $ESCAPE_COUNT · silent-catches: $SILENT_CATCH_COUNT · stale-phrases: $STALE_PHRASE_COUNT · dep-cruiser: ${DC_SUMMARY:-clean}"
   echo "Full report: $OUT"
 } >.health/last-run.txt
 
