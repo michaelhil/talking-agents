@@ -48,6 +48,33 @@ export const buildDemosExtraSource = (system: System): ExtraSource =>
   buildBundledExtraSource({
     pack: DEMOS_PACK_NAMESPACE,
     scenarios: [
+      // Showcase demos (category: demo) — one-click, hands-free.
+      {
+        name: 'norway-platforms',
+        file: './norway-platforms.scenario.md',
+        importMetaUrl: import.meta.url,
+      },
+      {
+        name: 'vatsim-heathrow',
+        file: './vatsim-heathrow.scenario.md',
+        importMetaUrl: import.meta.url,
+      },
+      {
+        name: 'diagram',
+        file: './diagram.scenario.md',
+        importMetaUrl: import.meta.url,
+      },
+      {
+        name: 'pwr-eop',
+        file: './pwr-eop.scenario.md',
+        importMetaUrl: import.meta.url,
+      },
+      {
+        name: 'biometric-awareness',
+        file: './biometric-awareness.scenario.md',
+        importMetaUrl: import.meta.url,
+      },
+      // Tutorials (category: tutorial) — guided, user-driven.
       {
         name: 'first-conversation',
         file: './first-conversation.scenario.md',
@@ -56,11 +83,6 @@ export const buildDemosExtraSource = (system: System): ExtraSource =>
       {
         name: 'diagram-thinking',
         file: './diagram-thinking.scenario.md',
-        importMetaUrl: import.meta.url,
-      },
-      {
-        name: 'biometric-awareness',
-        file: './biometric-awareness.scenario.md',
         importMetaUrl: import.meta.url,
       },
     ],

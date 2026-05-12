@@ -32,6 +32,9 @@ export const scenarioRoutes: ReadonlyArray<RouteEntry> = [
           name: s.name,
           title: s.title,
           description: s.description ?? '',
+          // 'tutorial' is the conservative default for uncategorized entries.
+          // Demos panel uses this to group cards (Demos / Tutorials / Onboarding).
+          category: s.category ?? 'tutorial',
           opCount: s.ops.length,
           // De-duplicated list of op kinds present in the scenario. The
           // share-link consent dialog uses this to decide whether to surface

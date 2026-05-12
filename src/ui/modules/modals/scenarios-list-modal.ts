@@ -12,12 +12,15 @@ import { showToast } from '../toast.ts'
 import { confirmRunWithConsent, type ScenarioConsentMeta } from '../scenario-consent.ts'
 import { safeFetch } from '../fetch-helpers.ts'
 
+type ScenarioCategory = 'demo' | 'tutorial' | 'onboarding'
+
 interface CatalogScenario {
   readonly id: string
   readonly pack: string
   readonly name: string
   readonly title: string
   readonly description: string
+  readonly category: ScenarioCategory
   readonly opCount: number
   readonly opKinds: ReadonlyArray<string>
 }
@@ -60,11 +63,21 @@ const fetchActiveRun = async (): Promise<ActiveRun | null> => {
   return null
 }
 
-const groupByPack = (items: CatalogScenario[]): Record<string, CatalogScenario[]> => {
-  const out: Record<string, CatalogScenario[]> = {}
+// Ordered display sections. Demos lead — they're the showcase. Tutorials
+// next (guided, user-driven). Onboarding stays at the bottom because it
+// reappears on first boot rather than being a thing users browse to.
+const CATEGORY_ORDER: ReadonlyArray<{ key: ScenarioCategory; label: string }> = [
+  { key: 'demo',       label: 'Demos' },
+  { key: 'tutorial',   label: 'Tutorials' },
+  { key: 'onboarding', label: 'Onboarding' },
+]
+
+const groupByCategory = (items: CatalogScenario[]): Map<ScenarioCategory, CatalogScenario[]> => {
+  const out = new Map<ScenarioCategory, CatalogScenario[]>()
   for (const s of items) {
-    if (!out[s.pack]) out[s.pack] = []
-    out[s.pack]!.push(s)
+    const arr = out.get(s.category) ?? []
+    arr.push(s)
+    out.set(s.category, arr)
   }
   return out
 }
@@ -187,16 +200,21 @@ export const openScenariosListModal = async (): Promise<void> => {
       return
     }
 
-    const groups = groupByPack(catalog)
-    for (const pack of Object.keys(groups).sort()) {
+    const groups = groupByCategory(catalog)
+    for (const { key, label } of CATEGORY_ORDER) {
+      const entries = groups.get(key)
+      if (!entries || entries.length === 0) continue
+
       const header = document.createElement('div')
       header.className = 'text-xs uppercase tracking-wide text-text-subtle mt-3 mb-2 first:mt-0'
-      header.textContent = pack
+      header.textContent = label
       root.appendChild(header)
 
       const grid = document.createElement('div')
       grid.className = 'grid grid-cols-1 md:grid-cols-2 gap-2'
-      for (const scenario of groups[pack]!) {
+      // Stable ordering within a category: by title.
+      const sorted = [...entries].sort((a, b) => a.title.localeCompare(b.title))
+      for (const scenario of sorted) {
         grid.appendChild(renderCard(scenario, !!active, () => { void render() }))
       }
       root.appendChild(grid)

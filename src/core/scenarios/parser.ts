@@ -56,6 +56,7 @@ export const parseScenario = (
     name,
     title: frontmatter.title,
     ...(frontmatter.description ? { description: frontmatter.description } : {}),
+    ...(frontmatter.category ? { category: frontmatter.category } : {}),
     source,
     narration,
     ops,
@@ -77,6 +78,7 @@ const parseFrontmatter = (
   }
   let title: string | undefined
   let description: string | undefined
+  let category: 'demo' | 'tutorial' | 'onboarding' | undefined
   for (let i = 1; i < endIdx; i++) {
     const line = lines[i] ?? ''
     if (line.trim() === '') continue
@@ -86,12 +88,23 @@ const parseFrontmatter = (
     const val = unquote(m[2]!.trim())
     if (key === 'title') title = val
     else if (key === 'description') description = val
+    else if (key === 'category') {
+      if (val !== 'demo' && val !== 'tutorial' && val !== 'onboarding') {
+        throw new ScenarioParseError(`invalid category "${val}" — must be demo, tutorial, or onboarding`, i + 1)
+      }
+      category = val
+    }
     // Unknown keys are silently ignored — forwards-compatible.
   }
   if (!title) throw new ScenarioParseError('frontmatter must declare title', 1)
   const body = lines.slice(endIdx + 1).join('\n')
+  const frontmatter: ScenarioFrontmatter = {
+    title,
+    ...(description ? { description } : {}),
+    ...(category ? { category } : {}),
+  }
   return {
-    frontmatter: description ? { title, description } : { title },
+    frontmatter,
     body,
     frontmatterEndLine: endIdx + 1,
   }

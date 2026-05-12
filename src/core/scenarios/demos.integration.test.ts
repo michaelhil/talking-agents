@@ -42,7 +42,7 @@ describe('synthetic-demos pack', () => {
     await rm(homeDir, { recursive: true, force: true })
   })
 
-  it('catalog lists welcome + first-conversation + diagram-thinking', async () => {
+  it('catalog lists welcome + all bundled demos + tutorials', async () => {
     const id = generateInstanceId()
     const system = await registry.getOrLoad(id)
     // SAMSINN_SEED_EXAMPLE=0 skips the registry's explicit await of
@@ -50,12 +50,39 @@ describe('synthetic-demos pack', () => {
     // not have completed yet, so await it here.
     await system.scenarioStore.reload()
     const ids = system.scenarioStore.list().map(s => s.id).sort()
+    // Note: .sort() is alphabetical, so tutorials interleave with demos.
+    // The UI grouping uses the `category` field on each entry; this test
+    // just asserts the catalog membership.
     expect(ids).toEqual([
       'demos/biometric-awareness',
+      'demos/diagram',
       'demos/diagram-thinking',
       'demos/first-conversation',
+      'demos/norway-platforms',
+      'demos/pwr-eop',
+      'demos/vatsim-heathrow',
       'welcome/getting-started',
     ])
+  })
+
+  it('all category: demo scenarios are hands-free (no waitFor: click)', async () => {
+    const id = generateInstanceId()
+    const system = await registry.getOrLoad(id)
+    await system.scenarioStore.reload()
+    const demos = system.scenarioStore.list().filter(s => s.category === 'demo')
+    expect(demos.length).toBeGreaterThanOrEqual(5)
+    // The store would have refused to load any scenario tagged demo with a
+    // click-wait (assertDemoIsHandsFree throws at parse time). Reaching
+    // this point with N demos loaded is itself the assertion — but be
+    // explicit so a regression to the assertion site fails loud here too.
+    for (const s of demos) {
+      for (const op of s.ops) {
+        if (op.kind !== 'guide-tooltip' && op.kind !== 'guide-modal') continue
+        if (op.waitFor && op.waitFor.type === 'click') {
+          throw new Error(`Demo "${s.id}" op at line ${op.line} uses waitFor: click — must be hands-free`)
+        }
+      }
+    }
   })
 
   it('first-conversation creates the room and agents on run', async () => {

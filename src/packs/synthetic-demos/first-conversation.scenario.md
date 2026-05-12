@@ -1,6 +1,7 @@
 ---
 title: First conversation
 description: A guided tour of the basics — sending a message, addressing an agent, and inspecting their persona.
+category: tutorial
 ---
 
 This 90-second tutorial walks through the four things every new user needs

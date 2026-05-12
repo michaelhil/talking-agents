@@ -154,6 +154,18 @@ export const bootstrap = async (): Promise<void> => {
   await loadSkills(sharedPaths.skills(), shared.sharedSkillStore, shared.sharedToolRegistry)
   await loadAllPacks(sharedPaths.packs(), shared.sharedToolRegistry, shared.sharedSkillStore)
 
+  // Bundled demo tools — register into the shared registry once at boot,
+  // marked as built-in (compiled into the binary, no filesystem path).
+  // These back the showcase scenarios in synthetic-demos. Keeping them
+  // in-binary avoids the rate-limit / offline failure mode of registry-
+  // pack installs and means demos work end-to-end on first boot.
+  {
+    const { BUNDLED_DEMO_TOOLS } = await import('./packs/synthetic-demos/tools/index.ts')
+    for (const tool of BUNDLED_DEMO_TOOLS) {
+      shared.sharedToolRegistry.registerWithSource(tool, { kind: 'built-in' })
+    }
+  }
+
   // Pack-bundled geodata: scan ~/.samsinn/packs/<ns>/geodata/*.geojson and
   // load into the in-memory pack-source cache. Features are tagged
   // source='pack', pack=<ns> so the room-aware filter can gate them per

@@ -22,6 +22,7 @@ import { writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Scenario } from './types.ts'
 import { parseScenario, VALID_NAME } from './parser.ts'
+import { assertDemoIsHandsFree } from './assertions.ts'
 import { scanMarkdownDir } from '../markdown-fs.ts'
 import { createSerialiseChain } from '../serialise-chain.ts'
 
@@ -85,6 +86,7 @@ export const createScenarioStore = (init: ScenarioStoreInit): ScenarioStore => {
       for (const { name, source } of src.scenarios) {
         try {
           const parsed = parseScenario(src.pack, name, source)
+          assertDemoIsHandsFree(parsed)
           if (merged.has(parsed.id)) {
             console.warn(`[scenarios] duplicate id "${parsed.id}" — second occurrence wins`)
           }
@@ -194,7 +196,11 @@ const scanPackScenarios = async (pack: string, dir: string): Promise<ReadonlyArr
     validNameRe: VALID_NAME,
     logPrefix: 'scenarios',
     maxBytes: MAX_SCENARIO_SOURCE_BYTES,
-    parse: (name, raw) => parseScenario(pack, name, raw),
+    parse: (name, raw) => {
+      const parsed = parseScenario(pack, name, raw)
+      assertDemoIsHandsFree(parsed)
+      return parsed
+    },
   })
   return results.map(r => r.value)
 }

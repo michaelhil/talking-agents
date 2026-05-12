@@ -29,7 +29,10 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5 (balanced)'   },
   ],
   openai: [
-    // Mini-tier first: best price/perf for chat + tool use; Gemini-Flash class.
+    // gpt-5.4 first: curated default for the showcase demos. The gpt-5 family
+    // detection in openai-compatible.ts (`startsWith('gpt-5')`) already routes
+    // it through max_completion_tokens + temperature-rejection branches.
+    { id: 'gpt-5.4',      label: '5.4 (default)' },
     { id: 'gpt-4o-mini',  label: '4o-mini (cheap, fast)' },
     { id: 'gpt-4.1-mini', label: '4.1-mini (better tool discipline)' },
     { id: 'gpt-4o',       label: '4o (premium)' },
@@ -69,12 +72,13 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
 // Preferred default picks for a fresh system, in order. Used by /api/models
 // when no last-used model is available, and by the seed flow.
 //
-// Gemini first because its free tier is the most generous of the major
-// providers — a developer who only has a Gemini key gets a working default
-// instead of a broken Anthropic-flavoured one. Anthropic and the rest stay
-// as fallbacks if Gemini isn't keyed.
+// OpenAI first because gpt-5.4 is the curated showcase model — operators
+// who ship a Samsinn instance with an OpenAI key get the demos running
+// on gpt-5.4 out of the box. Gemini stays prioritized above Anthropic
+// because its free tier remains the most generous fallback for developers
+// without an OpenAI key.
 export const DEFAULT_PREFERENCE_ORDER: ReadonlyArray<CloudProviderName | 'ollama'> = [
-  'gemini', 'anthropic', 'groq', 'cerebras',
+  'openai', 'gemini', 'anthropic', 'groq', 'cerebras',
 ]
 
 export const isCuratedModel = (provider: string, modelId: string): boolean => {

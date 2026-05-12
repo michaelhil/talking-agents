@@ -9,9 +9,19 @@
 // current room/agent state. Re-runs reuse existing entities by name.
 // ============================================================================
 
+// Scenario category. Drives UI grouping in the scenarios list, and the
+// load-time `assertDemoIsHandsFree` check: scenarios tagged `demo` must
+// run end-to-end with no `waitFor: { type: 'click' }` guide ops. `tutorial`
+// scenarios may use blocking clicks (they're intentionally interactive).
+// `onboarding` is reserved for the first-boot welcome flow. Default is
+// `tutorial` — conservative: anything not explicitly marked a hands-free
+// demo escapes the assertion.
+export type ScenarioCategory = 'demo' | 'tutorial' | 'onboarding'
+
 export interface ScenarioFrontmatter {
   readonly title: string
   readonly description?: string
+  readonly category?: ScenarioCategory
 }
 
 // === Op union ===
@@ -122,6 +132,7 @@ export interface Scenario {
   readonly name: string
   readonly title: string
   readonly description?: string
+  readonly category?: ScenarioCategory
   readonly source: string              // raw markdown
   readonly narration: string           // body with ```scenario blocks stripped
   readonly ops: ReadonlyArray<ScenarioOp>

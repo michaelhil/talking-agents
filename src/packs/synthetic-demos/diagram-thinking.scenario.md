@@ -1,6 +1,7 @@
 ---
-title: Diagram thinking
-description: An agent draws a flowchart in mermaid — the UI renders it inline.
+title: Diagram thinking (extended)
+description: A two-message conversation showing the mermaid-rendering pipeline. Try the simpler "Diagram" demo first.
+category: tutorial
 ---
 
 Highlights how agents can produce structured outputs that the UI renders
