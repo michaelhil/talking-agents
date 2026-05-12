@@ -13,11 +13,61 @@
 // ============================================================================
 
 import type { System } from '../../main.ts'
+import type { AIAgent } from '../types/agent.ts'
 import type { ScenarioOp, ScenarioRun, RunOptions, GuideWait } from './types.ts'
+import { CURRENT_ROOM_PLACEHOLDER, DEFAULT_MODEL_PLACEHOLDER } from './types.ts'
 import type { ScenarioEventName } from './runner-types.ts'
 import type { ExternalWaitArgs } from './waits.ts'
 import { SYSTEM_SENDER_ID } from '../types/constants.ts'
 import { parseScriptMd } from '../scripts/script-md-parser.ts'
+import { CURATED_MODELS } from '../../llm/models/catalog.ts'
+import { resolveDefaultModel, type ProviderSnapshot } from '../../llm/models/default-resolver.ts'
+
+// Resolve `__DEFAULT_MODEL__` to a concrete model id:
+//   1. options.model — user picked one in the run dialog. Wins.
+//   2. resolveDefaultModel(system providers) — current curated default
+//      computed from live provider state (key presence, cooldown, etc).
+//   3. Hard fallback string — only hit when no providers are configured
+//      at all. Lets the agent spawn so the scenario doesn't fail noisily;
+//      the eval call will surface the real "no providers" error.
+//
+// Non-placeholder values pass through unchanged.
+const resolveModel = (raw: string, system: System, options: RunOptions): string => {
+  if (raw !== DEFAULT_MODEL_PLACEHOLDER) return raw
+  if (options.model && options.model.trim()) return options.model.trim()
+  const names = new Set<string>([...Object.keys(CURATED_MODELS), 'ollama'])
+  const snapshots: ProviderSnapshot[] = [...names].map(name => {
+    const enabled = name === 'ollama'
+      ? !!system.ollama
+      : system.providerKeys.isEnabled(name)
+    return {
+      name,
+      status: enabled ? 'ok' : 'no_key',
+      models: (CURATED_MODELS[name] ?? []).map(m => ({ id: m.id })),
+    }
+  })
+  return resolveDefaultModel(snapshots) || 'gpt-5.4'
+}
+
+// Resolve `__CURRENT_ROOM__` to the room the user has open at run-start
+// (passed via RunOptions.currentRoom). When currentRoom is unset or names
+// a non-existent room, fall back to the first existing room — demos should
+// "just work" against the user's typical Cafe-seeded session rather than
+// failing on a placeholder. Throws only when there are literally zero
+// rooms in the instance, in which case the demo cannot proceed anyway.
+//
+// For non-placeholder names, this is identity.
+const resolveRoomName = (raw: string, system: System, options: RunOptions): string => {
+  if (raw !== CURRENT_ROOM_PLACEHOLDER) return raw
+  if (options.currentRoom && system.house.getRoom(options.currentRoom)) {
+    return options.currentRoom
+  }
+  const rooms = system.house.listAllRooms()
+  if (rooms.length > 0) return rooms[0]!.name
+  throw new Error(
+    `${CURRENT_ROOM_PLACEHOLDER} could not resolve: no room is open and the instance has no rooms. Create a room first.`,
+  )
+}
 
 export interface OpContext {
   readonly system: System
@@ -67,7 +117,16 @@ export const opHandlers: HandlerMap = {
     }
   },
 
-  'create-room': async (op, { system }) => {
+  'create-room': async (op, { system, options }) => {
+    // __CURRENT_ROOM__ in create-room means "don't create — adopt the
+    // user's open room." Skip the op entirely; downstream room: lookups
+    // resolve the same placeholder identically.
+    if (op.name === CURRENT_ROOM_PLACEHOLDER) {
+      // Validate that something will resolve. If not, fail loud here so
+      // the rest of the scenario's room: refs don't cascade unhelpful errors.
+      resolveRoomName(op.name, system, options)
+      return
+    }
     const existing = system.house.getRoom(op.name)
     if (existing) {
       if (op.roomPrompt) existing.setRoomPrompt(op.roomPrompt)
@@ -80,35 +139,46 @@ export const opHandlers: HandlerMap = {
     })
   },
 
-  'activate-pack': async (op, { system }) => {
-    const room = system.house.getRoom(op.room)
-    if (!room) throw new Error(`activate-pack: room "${op.room}" not found`)
+  'activate-pack': async (op, { system, options }) => {
+    const roomName = resolveRoomName(op.room, system, options)
+    const room = system.house.getRoom(roomName)
+    if (!room) throw new Error(`activate-pack: room "${roomName}" not found`)
     const current = room.getActivePacks()
     if (current.includes(op.pack)) return
     room.setActivePacks([...current, op.pack])
   },
 
-  'spawn-agent': async (op, { system }) => {
-    const room = system.house.getRoom(op.room)
-    if (!room) throw new Error(`spawn-agent: room "${op.room}" not found`)
+  'spawn-agent': async (op, { system, options }) => {
+    const roomName = resolveRoomName(op.room, system, options)
+    const room = system.house.getRoom(roomName)
+    if (!room) throw new Error(`spawn-agent: room "${roomName}" not found`)
+    const model = resolveModel(op.model, system, options)
     let agent = system.team.getAgent(op.name)
     if (!agent) {
       const config = {
         name: op.name,
-        model: op.model,
+        model,
         persona: op.persona,
         ...(op.tools ? { tools: op.tools } : {}),
       }
       agent = await system.spawnAIAgent(config)
+    } else if (agent.kind === 'ai') {
+      // Idempotent path: agent already exists from a prior run. Re-apply
+      // the resolved model so the user's latest dialog choice (or curated
+      // default after a provider-key change) takes effect rather than
+      // sticking with whatever was picked the first time.
+      const ai = agent as AIAgent
+      if (ai.getModel() !== model) ai.updateModel(model)
     }
     if (!room.hasMember(agent.id)) {
       await system.addAgentToRoom(agent.id, room.profile.id, 'scenario')
     }
   },
 
-  'spawn-human': async (op, { system }) => {
-    const room = system.house.getRoom(op.room)
-    if (!room) throw new Error(`spawn-human: room "${op.room}" not found`)
+  'spawn-human': async (op, { system, options }) => {
+    const roomName = resolveRoomName(op.room, system, options)
+    const room = system.house.getRoom(roomName)
+    if (!room) throw new Error(`spawn-human: room "${roomName}" not found`)
     let agent = system.team.getAgent(op.name)
     if (!agent) {
       agent = await system.spawnHumanAgent({ name: op.name }, () => { /* no-op transport */ })
@@ -118,9 +188,10 @@ export const opHandlers: HandlerMap = {
     }
   },
 
-  'post-message': async (op, { system, state }) => {
-    const room = system.house.getRoom(op.room)
-    if (!room) throw new Error(`post-message: room "${op.room}" not found`)
+  'post-message': async (op, { system, state, options }) => {
+    const roomName = resolveRoomName(op.room, system, options)
+    const room = system.house.getRoom(roomName)
+    if (!room) throw new Error(`post-message: room "${roomName}" not found`)
     const cause = { kind: 'scenario' as const, name: state.title, step: state.currentOpIndex }
     if (op.as === 'system') {
       // System-typed posts behave like setup cards (welcome banners, scenario
@@ -138,9 +209,10 @@ export const opHandlers: HandlerMap = {
     room.post({ senderId: sender.id, content: op.body, type: 'chat', cause })
   },
 
-  'start-script': async (op, { system, arrangeExternal }) => {
-    const room = system.house.getRoom(op.room)
-    if (!room) throw new Error(`start-script: room "${op.room}" not found`)
+  'start-script': async (op, { system, options, arrangeExternal }) => {
+    const roomName = resolveRoomName(op.room, system, options)
+    const room = system.house.getRoom(roomName)
+    if (!room) throw new Error(`start-script: room "${roomName}" not found`)
     const startResult = await system.scriptRunner.start(room.profile.id, op.scriptName)
     if (!startResult.ok) {
       throw new Error(`start-script "${op.scriptName}" failed to start: ${startResult.reason ?? 'unknown'}`)
@@ -151,14 +223,15 @@ export const opHandlers: HandlerMap = {
     // and the awaitResolver fires us through.
     await arrangeExternal({
       type: 'script-completed',
-      room: op.room,
+      room: roomName,
       scriptName: op.scriptName,
     })
   },
 
-  'inline-script': async (op, { system, arrangeExternal, trackCleanup }) => {
-    const room = system.house.getRoom(op.room)
-    if (!room) throw new Error(`inline-script: room "${op.room}" not found`)
+  'inline-script': async (op, { system, options, arrangeExternal, trackCleanup }) => {
+    const roomName = resolveRoomName(op.room, system, options)
+    const room = system.house.getRoom(roomName)
+    if (!room) throw new Error(`inline-script: room "${roomName}" not found`)
     // Synthetic name surfaces in error messages + UI; deterministic per
     // scenario+op-line so abort-loops aren't confusing.
     const inlineName = `__inline_${op.line}`
@@ -178,7 +251,7 @@ export const opHandlers: HandlerMap = {
     trackCleanup(() => { void system.scriptRunner.stop(room.profile.id) })
     await arrangeExternal({
       type: 'script-completed',
-      room: op.room,
+      room: roomName,
       scriptName: inlineName,
     })
   },
@@ -214,8 +287,13 @@ export const opHandlers: HandlerMap = {
     })
   },
 
-  'wait': async (op, { arrangeExternal }) => {
-    await arrangeExternal(op.waitFor)
+  'wait': async (op, { system, options, arrangeExternal }) => {
+    // Resolve __CURRENT_ROOM__ inside the room-bearing wait shapes
+    // (script-completed) before handing off to the arranger.
+    const resolved = op.waitFor.type === 'script-completed'
+      ? { ...op.waitFor, room: resolveRoomName(op.waitFor.room, system, options) }
+      : op.waitFor
+    await arrangeExternal(resolved)
   },
 
   'branch-on-llm-decision': async (op, { system, state }) => {

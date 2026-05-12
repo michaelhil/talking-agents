@@ -12,18 +12,15 @@ This demo makes one HTTPS call to `data.vatsim.net` (the public datafeed,
 no API key required). If VATSIM is unreachable the agent will say so and
 stop — no opaque errors.
 
-If your default model is `gpt-5.4` (and you have an OpenAI key configured),
-the demo runs on that.
+The demo runs in the room you currently have open.
 
 ```scenario
 - guide-toast: { body: "VATSIM Heathrow — fetching live feed…" }
-- create-room: { name: "VATSIM Heathrow" }
-- post-message:
-    room: VATSIM Heathrow
-    as: system
-    body: "Demo will use the default model (__DEFAULT_MODEL__)."
+- spawn-human:
+    room: __CURRENT_ROOM__
+    name: You
 - spawn-agent:
-    room: VATSIM Heathrow
+    room: __CURRENT_ROOM__
     name: ATC
     model: __DEFAULT_MODEL__
     persona: |
@@ -35,9 +32,9 @@ the demo runs on that.
       and stop.
     tools: ["vatsim_arrivals"]
 - post-message:
-    room: VATSIM Heathrow
-    as: system
+    room: __CURRENT_ROOM__
+    as: You
     body: "Show all VATSIM traffic arriving into London Heathrow (EGLL)."
 - wait: { waitFor: { type: llm-response, agent: ATC } }
-- guide-toast: { body: "Live feed rendered. Ask the agent about another airport (e.g. 'Show arrivals to KJFK')." }
+- guide-toast: { body: "Live feed rendered. Ask ATC about another airport (e.g. 'Show arrivals to KJFK')." }
 ```

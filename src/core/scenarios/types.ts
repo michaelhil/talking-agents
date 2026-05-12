@@ -165,4 +165,37 @@ export interface RunOptions {
   // Author has explicitly granted pack-install consent for this run via the
   // share-link consent dialog. install-pack ops fail otherwise.
   readonly allowInstall?: boolean
+  // The room name the user has open at run-start. Scenarios that target
+  // `__CURRENT_ROOM__` in any `room:` field resolve to this. When the user
+  // has no room open (e.g. share-link with no prior session), this is
+  // undefined and ops fall back to the first available room (or fail with
+  // a clear error if none exist).
+  readonly currentRoom?: string
+  // User-selected model from the run dialog. When set, replaces
+  // `__DEFAULT_MODEL__` in any spawn-agent op for this run. Unset =
+  // resolve at run-time via the system's current curated default
+  // (resolveDefaultModel). The dialog pre-populates this from
+  // /api/models's defaultModel so the user can simply confirm.
+  readonly model?: string
 }
+
+// Placeholder string that scenario authors use in `room:` fields to mean
+// "the room the user has open at run-start." Resolved by ops.ts via
+// `resolveRoomName` before any room lookup. Centralized so the resolver
+// and the demo scenarios agree on the spelling.
+export const CURRENT_ROOM_PLACEHOLDER = '__CURRENT_ROOM__'
+
+// Placeholder string scenario authors use in `model:` fields to mean
+// "whatever the user's currently-preferred default model is." Resolved
+// at run-time, not at scenario-load — so changing the curated default,
+// adding a provider key, or the user picking a model in the run dialog
+// all take effect immediately without re-loading the scenario store.
+//
+// Why a runtime placeholder rather than load-time substitution:
+//   - Load-time substitution freezes a value at boot. A bad resolution
+//     at that moment (provider transiently down, env not loaded yet,
+//     stale catalog before bun --watch reloaded) persists for the
+//     lifetime of the server.
+//   - Authors never have to know the canonical model id at write time —
+//     the platform default flows in.
+export const DEFAULT_MODEL_PLACEHOLDER = '__DEFAULT_MODEL__'

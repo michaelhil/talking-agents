@@ -233,6 +233,17 @@ export const buildOp = (
 // Walks the op list and verifies every `room:` / `as:` reference is to a
 // name declared earlier (or to "system" for `as:`). Catches typos at scenario-
 // load time rather than mid-run.
+//
+// `__CURRENT_ROOM__` is a runtime placeholder — it bypasses the create-room
+// declaration requirement because it resolves at run-start to the room the
+// user has open (or the first existing room). Validating it as a name would
+// force every demo to ship a redundant `create-room` op just to satisfy
+// the parser.
+
+import { CURRENT_ROOM_PLACEHOLDER } from './types.ts'
+
+const isDeclaredRoom = (declared: Set<string>, name: string): boolean =>
+  name === CURRENT_ROOM_PLACEHOLDER || declared.has(name)
 
 export const validateNameReferences = (ops: ReadonlyArray<ScenarioOp>): void => {
   const declaredRooms = new Set<string>()
@@ -240,19 +251,25 @@ export const validateNameReferences = (ops: ReadonlyArray<ScenarioOp>): void => 
   for (const op of ops) {
     switch (op.kind) {
       case 'create-room':
-        declaredRooms.add(op.name)
+        // __CURRENT_ROOM__ in create-room is treated as a runtime adopt-
+        // the-active-room directive (the op handler no-ops in that case).
+        // Don't add it to declaredRooms — let downstream refs hit the
+        // placeholder bypass in isDeclaredRoom.
+        if (op.name !== CURRENT_ROOM_PLACEHOLDER) {
+          declaredRooms.add(op.name)
+        }
         break
       case 'spawn-agent':
-        if (!declaredRooms.has(op.room)) {
+        if (!isDeclaredRoom(declaredRooms, op.room)) {
           throw new ScenarioParseError(
-            `spawn-agent references undeclared room "${op.room}" (declare it with create-room first)`,
+            `spawn-agent references undeclared room "${op.room}" (declare it with create-room first, or use ${CURRENT_ROOM_PLACEHOLDER})`,
             op.line,
           )
         }
         declaredAgents.add(op.name)
         break
       case 'spawn-human':
-        if (!declaredRooms.has(op.room)) {
+        if (!isDeclaredRoom(declaredRooms, op.room)) {
           throw new ScenarioParseError(
             `spawn-human references undeclared room "${op.room}"`,
             op.line,
@@ -263,7 +280,7 @@ export const validateNameReferences = (ops: ReadonlyArray<ScenarioOp>): void => 
       case 'activate-pack':
       case 'start-script':
       case 'inline-script':
-        if (!declaredRooms.has(op.room)) {
+        if (!isDeclaredRoom(declaredRooms, op.room)) {
           throw new ScenarioParseError(
             `${op.kind} references undeclared room "${op.room}"`,
             op.line,
@@ -271,7 +288,7 @@ export const validateNameReferences = (ops: ReadonlyArray<ScenarioOp>): void => 
         }
         break
       case 'post-message':
-        if (!declaredRooms.has(op.room)) {
+        if (!isDeclaredRoom(declaredRooms, op.room)) {
           throw new ScenarioParseError(
             `post-message references undeclared room "${op.room}"`,
             op.line,
@@ -293,7 +310,7 @@ export const validateNameReferences = (ops: ReadonlyArray<ScenarioOp>): void => 
             )
           }
         } else if (op.waitFor.type === 'script-completed') {
-          if (!declaredRooms.has(op.waitFor.room)) {
+          if (!isDeclaredRoom(declaredRooms, op.waitFor.room)) {
             throw new ScenarioParseError(
               `wait { type: script-completed, room: "${op.waitFor.room}" } references undeclared room`,
               op.line,

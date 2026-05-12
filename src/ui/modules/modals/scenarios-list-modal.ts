@@ -11,6 +11,17 @@ import { createModal } from './detail-modal.ts'
 import { showToast } from '../toast.ts'
 import { confirmRunWithConsent, type ScenarioConsentMeta } from '../scenario-consent.ts'
 import { safeFetch } from '../fetch-helpers.ts'
+import { $selectedRoomId, $rooms } from '../stores.ts'
+
+// Reads the room the user currently has open so demos can run against it
+// rather than spawning a dedicated room per scenario. Returns undefined
+// when no room is selected — the server-side ops.ts falls back to the
+// first existing room.
+const currentRoomName = (): string | undefined => {
+  const id = $selectedRoomId.get()
+  if (!id) return undefined
+  return $rooms.get()[id]?.name
+}
 
 type ScenarioCategory = 'demo' | 'tutorial' | 'onboarding'
 
@@ -148,7 +159,7 @@ const renderCard = (
       description: scenario.description,
       opKinds: scenario.opKinds,
     }
-    const runId = await confirmRunWithConsent(meta)
+    const runId = await confirmRunWithConsent(meta, currentRoomName())
     if (runId) onStarted()
     else runBtn.disabled = hasActive   // restore if user cancelled
   })

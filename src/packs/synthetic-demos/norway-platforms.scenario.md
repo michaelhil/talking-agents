@@ -7,35 +7,30 @@ category: demo
 A single agent uses the bundled `norway_platforms` tool to render every
 major Norwegian Continental Shelf oil & gas platform on an inline Leaflet
 map. The data is static and ships in the binary — no network calls, no
-GitHub install, no rate limits. The demo runs end-to-end from this dialog.
+GitHub install, no rate limits.
 
-If your default model is `gpt-5.4` (and you have an OpenAI key configured),
-the demo runs on that. Otherwise it uses whatever default your providers
-panel currently resolves to.
+The demo runs in the room you currently have open (or the first
+available room if none is selected).
 
 ```scenario
 - guide-toast: { body: "Norway Platforms — starting…" }
-- create-room: { name: "NCS Platforms" }
-- post-message:
-    room: NCS Platforms
-    as: system
-    body: |
-      Demo will use the default model (__DEFAULT_MODEL__). Tool calls go through
-      the agent below.
+- spawn-human:
+    room: __CURRENT_ROOM__
+    name: You
 - spawn-agent:
-    room: NCS Platforms
+    room: __CURRENT_ROOM__
     name: Mapper
     model: __DEFAULT_MODEL__
     persona: |
       You map geographic data. When asked about Norwegian platforms, call
-      norway_platforms (no arguments) and paste the returned ```map fenced
-      block verbatim into your reply. Add one short sentence above the
-      fence describing what's shown — nothing else.
+      norway_platforms (no arguments — pass {}) and paste the returned
+      ```map fenced block verbatim into your reply. Add one short sentence
+      above the fence describing what's shown. Nothing else.
     tools: ["norway_platforms"]
 - post-message:
-    room: NCS Platforms
-    as: system
+    room: __CURRENT_ROOM__
+    as: You
     body: "Show all Norwegian oil & gas platforms on a map."
 - wait: { waitFor: { type: llm-response, agent: Mapper } }
-- guide-toast: { body: "Map rendered. Try editing the prompt to filter by operator (e.g. 'Show all Equinor platforms')." }
+- guide-toast: { body: "Map rendered. Try asking Mapper to filter by operator (e.g. 'Show all Equinor platforms')." }
 ```

@@ -110,7 +110,23 @@ export const scenarioRoutes: ReadonlyArray<RouteEntry> = [
       if (!scenario) return errorResponse(`scenario ${id} not found`, 404)
       const body = await parseBody(req)
       const allowInstall = body.allowInstall === true
-      const result = await system.scenarioRunner.run(scenario, { allowInstall })
+      // currentRoom: name of the room the user has open at run-start.
+      // Scenarios that target __CURRENT_ROOM__ resolve to this; unset
+      // values fall back to the first existing room (see ops.ts).
+      const currentRoom = typeof body.currentRoom === 'string' && body.currentRoom.trim()
+        ? body.currentRoom.trim()
+        : undefined
+      // model: user's pick from the run dialog. Replaces __DEFAULT_MODEL__
+      // in any spawn-agent op for this run. Unset = resolve at run-time
+      // via the system's current curated default (see ops.ts:resolveModel).
+      const model = typeof body.model === 'string' && body.model.trim()
+        ? body.model.trim()
+        : undefined
+      const result = await system.scenarioRunner.run(scenario, {
+        allowInstall,
+        ...(currentRoom ? { currentRoom } : {}),
+        ...(model ? { model } : {}),
+      })
       if (!result.ok) return errorResponse(result.reason ?? 'run failed', 400)
       return json({ runId: result.runId })
     },

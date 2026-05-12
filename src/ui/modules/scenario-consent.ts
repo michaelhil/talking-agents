@@ -37,14 +37,73 @@ export interface ScenarioConsentMeta {
 const containsInstallOp = (meta: ScenarioConsentMeta): boolean =>
   meta.opKinds.includes('install-pack')
 
-const startRun = async (meta: ScenarioConsentMeta, allowInstall: boolean): Promise<string | null> => {
+interface ModelEntry {
+  readonly id: string
+  readonly label?: string
+  readonly recommended?: boolean
+}
+
+interface ModelCatalog {
+  readonly defaultModel: string
+  readonly options: ReadonlyArray<{ provider: string; model: ModelEntry }>
+}
+
+// Fetch /api/models and flatten into a "provider — model" option list,
+// recommended/curated entries first. Returns an empty catalog on fetch
+// failure; the dialog handles the empty case by hiding the dropdown.
+const fetchModelCatalog = async (): Promise<ModelCatalog> => {
   try {
+    const res = await fetch('/api/models')
+    if (!res.ok) return { defaultModel: '', options: [] }
+    const data = await res.json() as {
+      defaultModel: string
+      providers: ReadonlyArray<{
+        name: string
+        status: string
+        models: ReadonlyArray<ModelEntry>
+      }>
+    }
+    const options: { provider: string; model: ModelEntry }[] = []
+    // Recommended/curated models from every ok provider first.
+    for (const p of data.providers) {
+      if (p.status !== 'ok') continue
+      for (const m of p.models) {
+        if (!m.recommended) continue
+        options.push({ provider: p.name, model: m })
+      }
+    }
+    // Then everything else (non-recommended). Lets the user pick obscure
+    // models without sifting through full provider lists for the common
+    // case.
+    for (const p of data.providers) {
+      if (p.status !== 'ok') continue
+      for (const m of p.models) {
+        if (m.recommended) continue
+        options.push({ provider: p.name, model: m })
+      }
+    }
+    return { defaultModel: data.defaultModel ?? '', options }
+  } catch {
+    return { defaultModel: '', options: [] }
+  }
+}
+
+const startRun = async (
+  meta: ScenarioConsentMeta,
+  allowInstall: boolean,
+  currentRoom: string | undefined,
+  model: string | undefined,
+): Promise<string | null> => {
+  try {
+    const body: Record<string, unknown> = { allowInstall }
+    if (currentRoom) body.currentRoom = currentRoom
+    if (model) body.model = model
     const res = await fetch(
       `/api/scenarios/${encodeURIComponent(meta.pack)}/${encodeURIComponent(meta.name)}/run`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowInstall }),
+        body: JSON.stringify(body),
       },
     )
     if (!res.ok) {
@@ -70,13 +129,24 @@ const startRun = async (meta: ScenarioConsentMeta, allowInstall: boolean): Promi
 }
 
 // Show the consent dialog (or short-circuit) and return the runId on success.
+// `currentRoom`: the name of the room the user has open at run-start. Sent
+// to the server so scenarios that target __CURRENT_ROOM__ inject into the
+// active room rather than spawning a fresh one. Undefined for share-link
+// visitors and other entry points without an active room — the server
+// falls back to the first existing room (see ops.ts).
 export const confirmRunWithConsent = async (
   meta: ScenarioConsentMeta,
+  currentRoom?: string,
 ): Promise<string | null> => {
   // Short-circuit: requireConsent: false bypasses the dialog entirely.
   if (meta.requireConsent === false) {
-    return startRun(meta, containsInstallOp(meta))
+    return startRun(meta, containsInstallOp(meta), currentRoom, undefined)
   }
+
+  // Fetch model catalog up-front so the dialog can render a populated
+  // dropdown. If /api/models fails, fall back to "use default" — the
+  // server-side resolver will pick the curated default at run-time.
+  const modelCatalog = await fetchModelCatalog()
 
   return new Promise<string | null>((resolve) => {
     const backdrop = document.createElement('div')
@@ -112,6 +182,31 @@ export const confirmRunWithConsent = async (
       narr.className = 'text-text whitespace-pre-wrap mb-3 max-h-64 overflow-y-auto border border-border rounded p-2 bg-surface-muted'
       narr.textContent = meta.narration
       card.appendChild(narr)
+    }
+
+    // Model picker — only rendered when the catalog has options. Empty
+    // catalog (network failure, no providers configured) means the dialog
+    // skips the picker and the server resolves the default at run-time.
+    let chosenModel: string | undefined = modelCatalog.defaultModel || undefined
+    if (modelCatalog.options.length > 0) {
+      const wrap = document.createElement('label')
+      wrap.className = 'flex flex-col gap-1 mb-3 text-xs text-text'
+      const lab = document.createElement('span')
+      lab.className = 'text-text-subtle'
+      lab.textContent = 'Model'
+      const sel = document.createElement('select')
+      sel.className = 'rounded border border-border bg-surface px-2 py-1 text-text'
+      for (const { provider, model } of modelCatalog.options) {
+        const opt = document.createElement('option')
+        opt.value = model.id
+        opt.textContent = `${provider} · ${model.label ?? model.id}`
+        if (model.id === modelCatalog.defaultModel) opt.selected = true
+        sel.appendChild(opt)
+      }
+      sel.addEventListener('change', () => { chosenModel = sel.value })
+      wrap.appendChild(lab)
+      wrap.appendChild(sel)
+      card.appendChild(wrap)
     }
 
     let allowInstall = false
@@ -150,7 +245,7 @@ export const confirmRunWithConsent = async (
         return
       }
       backdrop.remove()
-      const runId = await startRun(meta, allowInstall)
+      const runId = await startRun(meta, allowInstall, currentRoom, chosenModel)
       resolve(runId)
     })
 

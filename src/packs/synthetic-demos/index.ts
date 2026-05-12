@@ -19,32 +19,17 @@
 
 import type { System } from '../../main.ts'
 import type { ExtraSource } from '../../core/scenarios/store.ts'
-import { CURATED_MODELS } from '../../llm/models/catalog.ts'
-import { resolveDefaultModel, type ProviderSnapshot } from '../../llm/models/default-resolver.ts'
 import { buildBundledExtraSource } from '../bundled-scenario-loader.ts'
 
 export const DEMOS_PACK_NAMESPACE = 'demos'
 
-// Demo scenarios use the same `__DEFAULT_MODEL__` token welcome uses so
-// re-resolution per System works the same way. The demos pack picks the
-// same model with the same logic — extracting the resolver to a shared
-// helper would be premature (one extra consumer = three).
-const pickDemoModel = (system: System): string => {
-  const override = process.env.SAMSINN_SEED_MODEL
-  if (override && override.trim()) return override.trim()
-  const names = new Set<string>([...Object.keys(CURATED_MODELS), 'ollama'])
-  const providers: ProviderSnapshot[] = [...names].map(name => {
-    const enabled = name === 'ollama' ? !!system.ollama : system.providerKeys.isEnabled(name)
-    return {
-      name,
-      status: enabled ? 'ok' : 'no_key',
-      models: (CURATED_MODELS[name] ?? []).map(m => ({ id: m.id })),
-    }
-  })
-  return resolveDefaultModel(providers) || 'gemini-2.5-pro'
-}
-
-export const buildDemosExtraSource = (system: System): ExtraSource =>
+// Demo scenarios reference `__DEFAULT_MODEL__` literally in their .md
+// sources. Resolution is deferred to run-time (see DEFAULT_MODEL_PLACEHOLDER
+// in src/core/scenarios/types.ts) — at run-start the model resolves to the
+// user's pick from the run dialog, or the system's current curated default.
+// This used to be load-time substitution via pickDemoModel(); that approach
+// froze a value at boot and persisted bad resolutions until restart.
+export const buildDemosExtraSource = (_system: System): ExtraSource =>
   buildBundledExtraSource({
     pack: DEMOS_PACK_NAMESPACE,
     scenarios: [
@@ -86,7 +71,6 @@ export const buildDemosExtraSource = (system: System): ExtraSource =>
         importMetaUrl: import.meta.url,
       },
     ],
-    tokens: {
-      '__DEFAULT_MODEL__': pickDemoModel(system),
-    },
+    // No tokens — `__DEFAULT_MODEL__` is left as-is in the .md and
+    // resolved at run-time by ops.ts:resolveModel.
   })

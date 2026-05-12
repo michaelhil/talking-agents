@@ -16,6 +16,7 @@
 // ============================================================================
 
 import { confirmRunWithConsent, type ScenarioConsentMeta } from './scenario-consent.ts'
+import { $selectedRoomId, $rooms } from './stores.ts'
 
 interface CatalogScenario {
   readonly id: string
@@ -23,8 +24,15 @@ interface CatalogScenario {
   readonly name: string
   readonly title: string
   readonly description: string
+  readonly category: 'demo' | 'tutorial' | 'onboarding'
   readonly opCount: number
   readonly opKinds: ReadonlyArray<string>
+}
+
+const currentRoomName = (): string | undefined => {
+  const id = $selectedRoomId.get()
+  if (!id) return undefined
+  return $rooms.get()[id]?.name
 }
 
 const STRIP_ID = 'scenario-empty-state-strip'
@@ -34,10 +42,10 @@ const fetchDemoCatalog = async (): Promise<CatalogScenario[]> => {
     const res = await fetch('/api/scenarios')
     if (!res.ok) return []
     const data = await res.json() as { scenarios: CatalogScenario[] }
-    // Only show scenarios from the bundled demos pack — welcome already
-    // ran (that's why the strip is visible at all), and arbitrary user-
-    // installed scenarios shouldn't auto-pitch.
-    return data.scenarios.filter(s => s.pack === 'demos')
+    // Filter to category: demo specifically — tutorials are interactive
+    // walkthroughs that need a fresh room, and onboarding/welcome already
+    // ran. We want the strip to only pitch the one-click showcase set.
+    return data.scenarios.filter(s => s.category === 'demo')
   } catch { return [] }
 }
 
@@ -85,7 +93,7 @@ const buildStrip = (demos: ReadonlyArray<CatalogScenario>, refresh: () => void):
         description: demo.description,
         opKinds: demo.opKinds,
       }
-      const runId = await confirmRunWithConsent(meta)
+      const runId = await confirmRunWithConsent(meta, currentRoomName())
       if (runId) refresh()   // strip will hide once active run is detected
     })
     grid.appendChild(btn)
