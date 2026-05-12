@@ -18,7 +18,7 @@ import { createAIAgent } from './ai-agent.ts'
 import type { Decision } from './ai-agent.ts'
 import { callLLM, streamLLM } from './evaluation.ts'
 import { addAgentToRoom } from './actions.ts'
-import { createToolSurface, inferProviderFromModelRef } from '../tool-surface/index.ts'
+import { createToolSurface, inferProviderFromModelRef, FAMILY_DISPATCHER_NAMES } from '../tool-surface/index.ts'
 import { CURATED_MODELS } from '../llm/models/catalog.ts'
 
 // --- Tool executor ---
@@ -147,7 +147,14 @@ export interface AgentToolSupport {
 }
 
 const warnMissingTools = (agentName: string, requested: ReadonlyArray<string>, registry: ToolRegistry): void => {
-  const missing = requested.filter(n => !registry.has(n))
+  // Skip dispatcher names — they're expected to be absent from the
+  // registry as atomic entries. The surface synthesises them at
+  // projection time, the trampoline gets registered later in
+  // buildToolSupport, and expandFamilyAliases in tool-surface/index.ts
+  // turns stored dispatcher names into member names before they reach
+  // the candidate set. Treating them as "missing" was misleading and
+  // sent prod debugging down a rabbit hole (2026-05-12).
+  const missing = requested.filter(n => !registry.has(n) && !FAMILY_DISPATCHER_NAMES.has(n))
   if (missing.length > 0)
     console.warn(`[spawn] Agent "${agentName}": tools not found in registry: ${missing.join(', ')}`)
 }

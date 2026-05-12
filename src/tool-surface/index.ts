@@ -77,7 +77,38 @@ export interface CreateToolSurfaceDeps {
 
 export const createToolSurface = (deps: CreateToolSurfaceDeps): ToolSurface => {
   const families = deps.families ?? BUILT_IN_FAMILIES
-  const requestedSet = new Set(deps.requestedTools)
+
+  // Stale-snapshot self-heal: pre-trampoline-refactor (2026-05) snapshots
+  // captured family dispatcher names (`geo_tools`, `pack_admin`, ...) in
+  // agent.config.tools — those were "real" registered tools at the time.
+  // Post-refactor dispatchers are synthesized, not requested. A loaded
+  // agent whose requestedTools contains only dispatcher names + a few
+  // built-ins would silently end up with no geo capability at all
+  // (FAMILY_DISPATCHER_NAMES filter strips them from candidates; no
+  // members in requestedTools means compressFamilies finds nothing to
+  // compress; result: agent sees `pass` only and loops on map requests).
+  //
+  // Fix: when a dispatcher name appears in requestedTools, expand it to
+  // the family's underlying member names so the surface re-synthesises
+  // the dispatcher from real members. Doesn't migrate the snapshot;
+  // self-heals on every load.
+  const expandFamilyAliases = (names: ReadonlyArray<string>): ReadonlyArray<string> => {
+    if (names.every(n => !FAMILY_DISPATCHER_NAMES.has(n))) return names
+    const expanded = new Set<string>()
+    for (const name of names) {
+      if (!FAMILY_DISPATCHER_NAMES.has(name)) {
+        expanded.add(name)
+        continue
+      }
+      const family = families.find(f => f.name === name)
+      if (!family) continue
+      for (const entry of deps.registry.listEntries()) {
+        if (family.match(entry)) expanded.add(entry.tool.name)
+      }
+    }
+    return [...expanded]
+  }
+  const requestedSet = new Set(expandFamilyAliases(deps.requestedTools))
 
   // Compute once per project() call; member resolution is lazy so MCP /
   // pack lifecycle changes are picked up automatically.
@@ -98,10 +129,19 @@ export const createToolSurface = (deps: CreateToolSurfaceDeps): ToolSurface => {
   //      explicitly turned on.
   //
   // Family dispatcher names (geo_tools, fs, pack_admin, codegen_tools)
-  // are universally excluded from the candidate set — the compressed
-  // path re-synthesises them, the flat path wants the underlying tools,
-  // and including a stored dispatcher caused Gemini "Duplicate function
-  // declaration" failures (geo_tools synthesised + stored sharing a name).
+  // are universally excluded from the candidate set. THIS FILTER IS
+  // LOAD-BEARING — it prevents projection-time duplicate-function
+  // declarations on Gemini (commit b0fe8d3 was the prior incident:
+  // synthesised geo_tools + stored geo_tools shared a name and the
+  // request was rejected with HTTP 400 INVALID_ARGUMENT).
+  //
+  // expandFamilyAliases above turns stored dispatcher names INTO
+  // member names before this filter runs, so the typical stale-
+  // snapshot case never reaches here. But the filter is the last line
+  // for: (a) any future path that bypasses expansion, (b) registry
+  // entries that happen to share a name with a family. Do NOT remove
+  // without auditing both the projection and the executor against
+  // the duplicate-name failure mode.
   const buildCandidates = (roomId: string | undefined): ReadonlySet<string> => {
     const room = roomId && deps.getRoomActivation ? deps.getRoomActivation(roomId) : undefined
     const activeSet = room ? effectiveActivePackSet(room) : null

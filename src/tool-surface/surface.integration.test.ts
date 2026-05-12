@@ -195,6 +195,88 @@ describe('regression: dispatcher round-trip never produces duplicate function de
   })
 })
 
+describe('stale-snapshot self-heal: requestedTools containing dispatcher names', () => {
+  // Real prod bug 2026-05-12: pre-trampoline-refactor snapshots captured
+  // family dispatcher names (geo_tools, pack_admin, codegen_tools) in
+  // agent.config.tools. After the refactor, dispatchers are synthesised
+  // from members — a requestedTools list that only has dispatcher names
+  // (no underlying members) would produce an empty surface. The agent
+  // ended up with only `pass` and looped on map requests.
+  test('dispatcher name in requestedTools expands to family members → compression fires', () => {
+    const r = createToolRegistry()
+    // Underlying geo members in the registry — but the agent's
+    // requestedTools only has the DISPATCHER NAME (stale-snapshot shape).
+    for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
+    r.register(createPassTool())
+
+    const surface = createToolSurface({
+      registry: r,
+      requestedTools: ['pass', 'geo_tools'],  // dispatcher name only — no members listed
+    })
+    const compressed = surface.project(undefined, 'openai')
+    const names = compressed.map(d => d.function.name).sort()
+    // geo_tools dispatcher should be in the surface (synthesised from
+    // the expanded members), plus pass.
+    expect(names).toContain('geo_tools')
+    expect(names).toContain('pass')
+  })
+
+  test('dispatcher name absent → no expansion (regression guard)', () => {
+    // Normal case: requestedTools has member names directly. No expansion
+    // path runs; the existing compression behaviour is unchanged.
+    const r = createToolRegistry()
+    for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
+    r.register(createPassTool())
+
+    const surface = createToolSurface({
+      registry: r,
+      requestedTools: ['pass', 'geo_lookup', 'geo_add', 'geo_remove'],
+    })
+    const compressed = surface.project(undefined, 'openai')
+    const names = compressed.map(d => d.function.name).sort()
+    expect(names).toContain('geo_tools')
+    expect(names).toContain('pass')
+  })
+
+  test('dispatcher name + flat-strict provider: returns underlying member tools', () => {
+    // gemini path — dispatchers aren't sent. Expansion must still surface
+    // the underlying members.
+    const r = createToolRegistry()
+    for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
+    r.register(createPassTool())
+
+    const surface = createToolSurface({
+      registry: r,
+      requestedTools: ['pass', 'geo_tools'],
+    })
+    const flat = surface.project(undefined, 'gemini')
+    const names = flat.map(d => d.function.name).sort()
+    expect(names).toEqual(['geo_add', 'geo_lookup', 'geo_remove', 'pass'])
+  })
+
+  test('load-bearing FAMILY_DISPATCHER_NAMES filter: synthesised dispatcher appears ONCE, never twice', () => {
+    // The filter in accept() prevents projection-time duplicate-function
+    // declarations on Gemini (commit b0fe8d3 was the prior incident).
+    // This test models a registry that contains BOTH the family members
+    // AND a real tool that happens to share the dispatcher name
+    // (e.g. a pack registers a tool called geo_tools, or — historically —
+    // a previous spawn's dispatcher registration left geo_tools in the
+    // registry). The projection must emit geo_tools exactly once.
+    const r = createToolRegistry()
+    for (const n of ['geo_lookup', 'geo_add', 'geo_remove']) r.register(mockTool(n, 100))
+    r.register(mockTool('geo_tools', 100))   // colliding atomic registration
+    r.register(createPassTool())
+
+    const surface = createToolSurface({
+      registry: r,
+      requestedTools: r.list().map(t => t.name),
+    })
+    const compressed = surface.project(undefined, 'openai')
+    const names = compressed.map(d => d.function.name)
+    expect(names.filter(n => n === 'geo_tools').length).toBe(1)
+  })
+})
+
 describe('getRegistryDispatchers', () => {
   test('returns one trampoline per family in BUILT_IN_FAMILIES, regardless of current member count', () => {
     // Pre-trampoline this returned only "compressible-now" families; with
