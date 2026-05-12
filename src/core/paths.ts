@@ -50,7 +50,6 @@ export const sharedPaths = {
   root: (): string => samsinnHome(),
   providers: (): string => join(samsinnHome(), 'providers.json'),
   llmPolicy: (): string => join(samsinnHome(), 'llm-policy.json'),
-  wikis: (): string => join(samsinnHome(), 'wikis.json'),
   packs: (): string => join(samsinnHome(), 'packs'),
   skills: (): string => join(localPack(), 'skills'),
   scripts: (): string => join(localPack(), 'scripts'),

@@ -1,0 +1,37 @@
+// Bundled pack — registers procedure_lookup using the wiki binding from
+// pack.json. Compiled into the binary like synthetic-demos; the wiki
+// content itself is always fetched fresh from GitHub at tool-call time.
+//
+// Future remote-pack migration: move this directory to its own GitHub
+// repo (samsinn-packs/pwr-eops), drop the bundled registration in
+// bootstrap.ts, and the rest stays the same.
+
+import type { Tool } from '../../core/types/tool.ts'
+import packManifest from './pack.json' with { type: 'json' }
+import { createProcedureLookupTool } from './tools/procedure-lookup.ts'
+import type { WikiSourceBinding } from '../types.ts'
+
+interface ManifestWiki {
+  readonly name: string
+  readonly url: string
+  readonly source: WikiSourceBinding
+}
+
+interface PackManifestShape {
+  readonly name: string
+  readonly description?: string
+  readonly wikis: ReadonlyArray<ManifestWiki>
+}
+
+const manifest = packManifest as PackManifestShape
+
+const wiki = manifest.wikis[0]
+if (!wiki || !wiki.source) {
+  throw new Error('[packs/pwr-eops] pack.json must declare wikis[0].source — fix the manifest')
+}
+
+export const PWR_EOPS_TOOLS: ReadonlyArray<Tool> = [
+  createProcedureLookupTool(wiki.source, wiki.name, wiki.url),
+]
+
+export const PWR_EOPS_MANIFEST = manifest

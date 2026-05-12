@@ -2,7 +2,7 @@
 // yields an empty manifest ({}) rather than an error — the directory name is
 // the canonical namespace, so a pack without a manifest is still valid.
 
-import type { PackManifest, WikiRef } from './types.ts'
+import type { PackManifest, WikiRef, WikiSourceBinding } from './types.ts'
 import { readFile } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 
@@ -37,9 +37,34 @@ const parseWikis = (raw: unknown, filePath: string): ReadonlyArray<WikiRef> | un
       console.warn(`[packs] ${filePath}: wikis entry "${e.name}" url protocol must be http(s) — skipping`)
       continue
     }
-    out.push({ name: e.name.trim(), url: e.url.trim() })
+    const source = parseWikiSource(e.source, e.name, filePath)
+    out.push({ name: e.name.trim(), url: e.url.trim(), ...(source ? { source } : {}) })
   }
   return out.length > 0 ? out : undefined
+}
+
+const parseWikiSource = (raw: unknown, wikiName: string, filePath: string): WikiSourceBinding | undefined => {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'object') {
+    console.warn(`[packs] ${filePath}: wiki "${wikiName}" source is not an object — ignoring binding`)
+    return undefined
+  }
+  const s = raw as Record<string, unknown>
+  const required = ['org', 'repo', 'branch', 'procedureDir', 'indexFile', 'citationBase'] as const
+  for (const key of required) {
+    if (typeof s[key] !== 'string' || !(s[key] as string).trim()) {
+      console.warn(`[packs] ${filePath}: wiki "${wikiName}" source.${key} missing or non-string — ignoring binding`)
+      return undefined
+    }
+  }
+  return {
+    org: (s.org as string).trim(),
+    repo: (s.repo as string).trim(),
+    branch: (s.branch as string).trim(),
+    procedureDir: (s.procedureDir as string).trim().replace(/^\/+|\/+$/g, ''),
+    indexFile: (s.indexFile as string).trim().replace(/^\/+/, ''),
+    citationBase: (s.citationBase as string).trim(),
+  }
 }
 
 export const readManifest = async (dirPath: string): Promise<PackManifest> => {

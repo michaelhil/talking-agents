@@ -53,23 +53,33 @@ export const normaliseMermaidSource = (src: string): string => {
     return id
   }
 
-  // An edge label sits inside one of two forms:
-  //   A --"label"--> B          (between `--` and `--`, any dash count)
-  //   A -->|"label"| B          (between `|` delimiters on an arrow line)
-  // A quoted string is a bare node reference ONLY when it's NOT in either
-  // position. Check neighbours at match time rather than using variable-
-  // width lookbehind (portability + clarity).
+  // A quoted string is a bare node reference ONLY when it isn't in one of
+  // these mermaid contexts where `"..."` is already structurally meaningful:
+  //   A --"label"--> B           (between `--` and `--`)
+  //   A -->|"label"| B           (pipe-delimited edge label)
+  //   click X "url" _blank       (link directive — URL inside quotes)
+  // Anything else is treated as a bare node ref and replaced with a
+  // synthetic id (`n1["..."]`).
   normalised = normalised.replace(
     /"([^"\n]+)"/g,
     (match, label: string, offset: number, full: string): string => {
-      const before = full.slice(Math.max(0, offset - 6), offset)
-      const after = full.slice(offset + match.length, offset + match.length + 6)
+      const before = full.slice(Math.max(0, offset - 8), offset)
+      const after = full.slice(offset + match.length, offset + match.length + 8)
       const isDashEdgeStart = /--\s*$/.test(before)
       const isDashEdgeEnd = /^\s*--/.test(after)
       const isPipeEdgeStart = /\|\s*$/.test(before)
       const isPipeEdgeEnd = /^\s*\|/.test(after)
       if (isDashEdgeStart && isDashEdgeEnd) return match
       if (isPipeEdgeStart && isPipeEdgeEnd) return match
+      // Click directive: line starts with `click <id> ` and the quoted
+      // string is followed by an optional second string and/or a target
+      // keyword (_blank/_self/_parent/_top). Detect by scanning back to
+      // start-of-line.
+      const lineStart = full.lastIndexOf('\n', offset - 1) + 1
+      const linePrefix = full.slice(lineStart, offset)
+      if (/^\s*click\s+\S+\s*/.test(linePrefix)) return match
+      // Comment / callback: same context — leave alone.
+      if (/^\s*%%/.test(linePrefix)) return match
       return `__MM_LABEL__${synthId(label)}__MM_END__`
     },
   )

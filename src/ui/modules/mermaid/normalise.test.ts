@@ -130,6 +130,25 @@ describe('normaliseMermaidSource — edge cases', () => {
     const out = normaliseMermaidSource(src)
     expect(out).toBe('A["foo/bar"] --> B\nB --> A')
   })
+
+  it('leaves click directive URLs alone (third edge-context case)', () => {
+    const src = `flowchart TD
+  A["Step 1"]
+  EXT_X["X"]
+  A --> EXT_X
+  click EXT_X "https://example.com/proc/X" _blank`
+    const out = normaliseMermaidSource(src)
+    // The URL must survive intact, not be replaced by a synthetic n1["..."]
+    expect(out).toContain('click EXT_X "https://example.com/proc/X" _blank')
+    expect(out).not.toMatch(/n\d+\["https/)
+  })
+
+  it('leaves pipe edge labels alone (regression for the procedure_lookup bug)', () => {
+    const src = 'A --> B\nA -->|"If x: continue"| B'
+    const out = normaliseMermaidSource(src)
+    expect(out).toContain('-->|"If x: continue"|')
+    expect(out).not.toMatch(/n\d+\["If x: continue"\]/)
+  })
 })
 
 describe('truncateForDisplay', () => {

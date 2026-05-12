@@ -1,0 +1,18 @@
+{
+  "name": "pwr-eops",
+  "description": "Westinghouse PWR Emergency Operating Procedures — fetched live from the samsinn-wikis/pwr-eops wiki.",
+  "wikis": [
+    {
+      "name": "PWR EOPs",
+      "url": "https://samsinn-wikis.github.io/pwr-eops/",
+      "source": {
+        "org": "samsinn-wikis",
+        "repo": "pwr-eops",
+        "branch": "main",
+        "procedureDir": "wiki/procedures",
+        "indexFile": "wiki/index.md",
+        "citationBase": "https://samsinn-wikis.github.io/pwr-eops/procedures/"
+      }
+    }
+  ]
+}

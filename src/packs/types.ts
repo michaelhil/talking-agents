@@ -3,13 +3,25 @@
 // tools/, skills/, scripts/, geodata/ subdirs. The directory name is the
 // canonical namespace.
 
-// External link to a wiki the pack author wants to surface. samsinn does
-// not fetch or parse wiki content — it just shows the link in the pack
-// panel. People view + edit on GitHub Pages / Vercel like any static
-// site. (If an agent genuinely needs to read a page, web_fetch covers it.)
+// External link to a wiki the pack author wants to surface in the pack
+// panel. Optionally, the pack can also declare a `source` binding —
+// org/repo/branch/paths — so samsinn-side tools can fetch the wiki
+// markdown directly from raw.githubusercontent. The first consumer is
+// the pwr-eops pack's `procedure_lookup` tool. Without `source`, the
+// WikiRef behaves as before: a display-only link.
+export interface WikiSourceBinding {
+  readonly org: string
+  readonly repo: string
+  readonly branch: string                  // typically "main"
+  readonly procedureDir: string            // path within the repo, e.g. "wiki/procedures"
+  readonly indexFile: string               // path to the index file with [[ID]] wikilinks
+  readonly citationBase: string            // base URL for clickable per-procedure citations
+}
+
 export interface WikiRef {
-  readonly name: string           // display name (non-empty)
-  readonly url: string            // http(s) URL
+  readonly name: string                    // display name (non-empty)
+  readonly url: string                     // http(s) URL (the rendered wiki home)
+  readonly source?: WikiSourceBinding      // optional binding for content fetching
 }
 
 export interface PackManifest {
