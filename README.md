@@ -128,7 +128,7 @@ Every room has an evolving **summary** (running description of the conversation)
 - **UI** — the 🗜 button in the room header reveals `⚙` (config), `🔍` (inspect with live deltas), `↻` (regenerate). First open auto-generates if no output exists.
 - **REST** — `GET/PUT /api/rooms/:name/summary-config`, `GET /api/rooms/:name/summary`, `POST /api/rooms/:name/summary/regenerate` (body: `{ target: 'summary' | 'compression' | 'both' }`).
 - **WebSocket** — `set_summary_config`, `regenerate_summary`; lifecycle events `summary_run_started` / `summary_run_delta` / `summary_run_completed` / `summary_run_failed`.
-- **Snapshot** — persisted as part of `SNAPSHOT_VERSION = 11`.
+- **Snapshot** — persisted alongside other room state; the canonical version constant is `SNAPSHOT_VERSION` in `src/core/storage/snapshot.ts` (currently 22). When updating this number, prefer the source-of-truth reference over hard-coding it here — the v11→v22 drift on this line is the example for the anti-patterns catalog (`.health/suppressed.md` `## anti-patterns` "README ↔ code factual drift").
 
 This feature replaces the earlier message-cap pruning and per-agent history compression, which were removed in the same change.
 

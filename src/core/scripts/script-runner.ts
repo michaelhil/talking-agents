@@ -21,6 +21,7 @@ import { classifyWhisper } from './script-whisper.ts'
 import { renderLivingScript } from './script-render.ts'
 import { SYSTEM_SENDER_ID } from '../types/constants.ts'
 import { effectiveActivePackSet } from '../../packs/activation.ts'
+import { asAIAgent } from '../../agents/shared.ts'
 
 // === Public surface ===
 
@@ -314,7 +315,7 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
     for (const member of run.script.cast) {
       const agent = system.team.getAgent(member.name)
       if (!agent) continue
-      const ai = agent.kind === 'ai' && 'whenIdle' in agent ? agent as unknown as { whenIdle: (ms: number) => Promise<void> } : undefined
+      const ai = asAIAgent(agent)
       if (ai) {
         try { await ai.whenIdle(5000) } catch { /* timed out — proceed */ }
       }
