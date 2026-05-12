@@ -2,7 +2,7 @@ import { json, errorResponse, parseBody } from './helpers.ts'
 import { SYSTEM_SENDER_ID } from '../../core/types/constants.ts'
 import { SETTABLE_DELIVERY_MODES } from '../../core/types/messaging.ts'
 import type { SettableDeliveryMode } from '../../core/types/messaging.ts'
-import type { SummaryConfig } from '../../core/types/summary.ts'
+import { validateSummaryConfig } from '../../core/types/summary.ts'
 import type { RouteEntry } from './types.ts'
 import { asAIAgent } from '../../agents/shared.ts'
 import { exportRoomConversation } from '../../core/rooms/room-export.ts'
@@ -286,8 +286,13 @@ export const roomRoutes: RouteEntry[] = [
       const room = system.house.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
       const body = await parseBody(req)
-      // Trust the shape — UI sends the full SummaryConfig.
-      room.setSummaryConfig(body as unknown as SummaryConfig)
+      // Validate at the trust boundary. The previous version did
+      // `body as unknown as SummaryConfig` which TS-accepted any shape
+      // and pushed failure to runtime in unpredictable places (an
+      // invalid schedule.kind could silently break the scheduler).
+      const result = validateSummaryConfig(body)
+      if (result.ok === false) return errorResponse(result.error, 400)
+      room.setSummaryConfig(result.value)
       return json(room.summaryConfig)
     },
   },

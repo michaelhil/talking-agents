@@ -85,6 +85,12 @@ export interface ChatRequest {
   readonly toolChoice?: 'auto' | 'required' | { readonly name: string }
   readonly think?: boolean
   readonly numCtx?: number
+  // Ollama-specific: model keep_alive duration (string like '30m' or '0' to
+  // unload immediately). Other providers silently ignore. Surfaced as a
+  // first-class optional field rather than smuggled through a cast — the
+  // ollama-dashboard config writes this; the Ollama adapter reads it
+  // (src/llm/ollama.ts).
+  readonly keepAlive?: string
   // Structured system-prompt blocks — opt-in, used only by providers that can
   // attach cache markers (currently Anthropic). When present, the adapter
   // emits the system message as an array of content parts with

@@ -116,8 +116,8 @@ export const createOllamaProvider = (initialBaseUrl: string): OllamaProviderExte
       stream: false,
     }
 
-    if ((request as unknown as Record<string, unknown>).keepAlive !== undefined) {
-      body.keep_alive = (request as unknown as Record<string, unknown>).keepAlive
+    if (request.keepAlive !== undefined) {
+      body.keep_alive = request.keepAlive
     }
 
     const options: Record<string, unknown> = {

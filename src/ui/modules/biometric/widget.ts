@@ -339,6 +339,4 @@ export const renderBiometricBlocks = async (container: HTMLElement): Promise<voi
   }
 }
 
-// Re-exported for tests + diagnostics. Not part of the stable public API.
-export { sessionRegistry as _sessionRegistry }
 export type { ReleaseReason }
