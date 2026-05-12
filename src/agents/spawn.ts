@@ -23,16 +23,6 @@ import { CURATED_MODELS } from '../llm/models/catalog.ts'
 
 // --- Tool executor ---
 
-// Optional per-room whitelist resolver. Returns the set of tool names that
-// active skills permit in `roomId`, or null when no skill in scope declares
-// a whitelist (= unrestricted, today's behavior). When non-null, the
-// executor intersects this with the agent's spawn-time `allowedTools`.
-//
-// Why per-room and per-call: skills are room-scoped (skillStore.forScope)
-// but agents can be members of multiple rooms. A spawn-time intersection
-// would freeze the whitelist to whichever room the agent first joined.
-export type GetAllowedToolsForRoom = (roomId: string) => ReadonlySet<string> | null
-
 // Maps a registered tool to the pack that owns it. The mapping is the source
 // of truth for "is this tool in the active surface for room X":
 //
@@ -51,7 +41,6 @@ const createToolExecutor = (
   registry: ToolRegistry,
   allowedTools: ReadonlyArray<string>,
   context: ToolContext,
-  getAllowedToolsForRoom?: GetAllowedToolsForRoom,
   getRoomActivation?: GetRoomActivation,
 ): ToolExecutor => {
   const allowed = new Set(allowedTools)
@@ -77,25 +66,19 @@ const createToolExecutor = (
     const results: ToolResult[] = []
     const callContext: ToolContext = roomId ? { ...context, roomId } : context
 
-    // Resolve the per-room skill whitelist once per executor invocation.
-    // Null = unrestricted (no skill in this room declared allowed-tools).
-    const skillWhitelist = roomId && getAllowedToolsForRoom ? getAllowedToolsForRoom(roomId) : null
-
+    // Two access gates: agent's spawn-time allowlist (config.tools) and
+    // per-room pack activation. NO skill-level whitelist: skill
+    // `allowed-tools` is documentary only (see README + ai-agent.ts
+    // coherence check). Earlier versions of this executor enforced
+    // the skill whitelist at runtime — that contradicted the README,
+    // produced silent tool_loop_exceeded errors in rooms with
+    // restrictively-declared skills (biometric-awareness in particular),
+    // and overloaded "skill metadata" with "permission policy."
+    // Removed 2026-05-12; see the PR that deletes spawn-allowed-tools.test.ts.
     for (const call of calls) {
       if (!allowed.has(call.tool) && !allowedByActivation(call.tool, roomId)) {
         results.push({ success: false, error: `Tool "${call.tool}" is not available` })
         continue
-      }
-      if (skillWhitelist && !skillWhitelist.has(call.tool)) {
-        // Pass is always permitted — agents must be able to decline.
-        if (call.tool !== 'pass') {
-          const allowedList = [...skillWhitelist].sort().join(', ')
-          results.push({
-            success: false,
-            error: `Tool "${call.tool}" not allowed by active skills in this room. Allowed: ${allowedList}.`,
-          })
-          continue
-        }
       }
 
       const tool = registry.get(call.tool)
@@ -120,8 +103,9 @@ const createToolExecutor = (
 }
 
 // Test seam — executor isn't part of the public spawn API but is the
-// load-bearing piece for per-room allowed-tools enforcement. Exported so
-// tests can construct an executor directly without standing up an agent.
+// load-bearing piece for the two-gate tool access check (agent's spawn-time
+// allowlist + per-room pack activation). Exported so tests can construct
+// an executor directly without standing up an agent.
 export const __testSeam = { createToolExecutor }
 
 // --- Tool support resolution ---
@@ -183,7 +167,6 @@ export const buildToolSupport = async (
   llmProvider: LLMProvider,
   maxResultChars?: number,
   seed?: number,
-  getAllowedToolsForRoom?: GetAllowedToolsForRoom,
   getRoomActivation?: GetRoomActivation,
 ): Promise<AgentToolSupport> => {
   // Always include the pass tool (auto-injected for all agents)
@@ -227,7 +210,7 @@ export const buildToolSupport = async (
   // allToolNames, but they're real tools in the registry. Inject them.
   const dispatcherNames = surface.getRegistryDispatchers().map(d => d.name)
   const executorAllowedNames = [...allToolNames, ...dispatcherNames.filter(n => !allToolNames.includes(n))]
-  const executor = createToolExecutor(registry, executorAllowedNames, lazyContext, getAllowedToolsForRoom, getRoomActivation)
+  const executor = createToolExecutor(registry, executorAllowedNames, lazyContext, getRoomActivation)
 
   // Initial projection — no room context yet, no provider known. project()
   // is cheap; the per-eval resolveToolDefinitions below overrides this
@@ -292,7 +275,6 @@ const resolveAgentTools = async (
   llmProvider: LLMProvider,
   toolRegistry: ToolRegistry | undefined,
   agentRef: { id: string; name: string },
-  getAllowedToolsForRoom?: GetAllowedToolsForRoom,
   getRoomActivation?: GetRoomActivation,
 ): Promise<AgentToolSupport> => {
   if (!toolRegistry) return {}
@@ -309,7 +291,6 @@ const resolveAgentTools = async (
     llmProvider,
     config.maxToolResultChars,
     config.seed,
-    getAllowedToolsForRoom,
     getRoomActivation,
   )
 }
@@ -327,10 +308,6 @@ export interface SpawnOptions {
     | { systemDoc: string; dialogue: ReadonlyArray<{ speaker: string; content: string }> }
     | undefined
   readonly onEvalEvent?: (agentName: string, event: import('../core/types/agent-eval.ts').EvalEvent) => void
-  // Per-room allowed-tools resolver. When provided, the tool executor
-  // intersects the agent's spawn-time toolset with this room's skill
-  // whitelist on every call. See createToolExecutor for semantics.
-  readonly getAllowedToolsForRoom?: GetAllowedToolsForRoom
   // Per-room pack-activation resolver. When provided, the LLM tool surface
   // is filtered per eval to tools owned by packs active in the trigger
   // room (plus implicit-active 'core' + 'local'). This is the structural
@@ -452,7 +429,6 @@ export const spawnAIAgent = async (
     llmProvider,
     toolRegistry,
     agentRef,
-    spawnOptions?.getAllowedToolsForRoom,
     spawnOptions?.getRoomActivation,
   )
 

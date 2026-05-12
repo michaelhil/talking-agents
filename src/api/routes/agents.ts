@@ -239,11 +239,10 @@ export const agentRoutes: RouteEntry[] = [
         if (typeof body.maxToolIterations === 'number') aiAgent.updateMaxToolIterations(body.maxToolIterations)
         // Tool-list edits rebuild every AI agent's tool support via the
         // system helper. Routing through refreshAllAgentTools is what keeps
-        // the per-room pack-activation resolver and the per-room skill
-        // allowed-tools resolver wired — building a fresh support object
-        // here with raw buildToolSupport (no resolvers) silently erased
-        // them, so PATCH'd agents lost per-room filtering. Rejects names
-        // not in the registry before updating.
+        // the per-room pack-activation resolver wired — building a fresh
+        // support object here with raw buildToolSupport (no resolvers)
+        // silently erased it, so PATCH'd agents lost per-room filtering.
+        // Rejects names not in the registry before updating.
         if (Array.isArray(body.tools)) {
           const requested = (body.tools as unknown[]).filter((n): n is string => typeof n === 'string')
           const known = new Set(system.toolRegistry.list().map(t => t.name))

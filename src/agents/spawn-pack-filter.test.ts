@@ -39,7 +39,7 @@ describe('pack-aware tool surface filter', () => {
       registry,
       { id: 'a', name: 'Alice' },
       stubProvider,
-      undefined, undefined, undefined,
+      undefined, undefined,
       (roomId) => roomId === 'r1' ? makeRoom([]) : undefined,
     )
 
@@ -69,7 +69,7 @@ describe('pack-aware tool surface filter', () => {
       registry,
       { id: 'a', name: 'Alice' },
       stubProvider,
-      undefined, undefined, undefined,
+      undefined, undefined,
       (roomId) => roomId === 'tower' ? makeRoom(['aviation']) : undefined,
     )
 
@@ -89,7 +89,7 @@ describe('pack-aware tool surface filter', () => {
       registry,
       { id: 'a', name: 'Alice' },
       stubProvider,
-      undefined, undefined, undefined,
+      undefined, undefined,
       () => undefined,
     )
 

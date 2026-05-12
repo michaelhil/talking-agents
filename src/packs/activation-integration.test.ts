@@ -48,8 +48,8 @@ describe('pack activation — end-to-end with House + Room', () => {
       reg,
       { id: 'a', name: 'A' },
       stubProvider,
-      undefined, undefined, undefined,
-      (id) => house.getRoom(id),
+      undefined, undefined,
+      (id: string) => house.getRoom(id),
     )
 
     expect(support.resolveToolDefinitions).toBeDefined()
@@ -74,8 +74,8 @@ describe('pack activation — end-to-end with House + Room', () => {
       reg,
       { id: 'a', name: 'A' },
       stubProvider,
-      undefined, undefined, undefined,
-      (id) => house.getRoom(id),
+      undefined, undefined,
+      (id: string) => house.getRoom(id),
     )
 
     // Empty activation → only built-in.
@@ -119,8 +119,8 @@ describe('pack activation — end-to-end with House + Room', () => {
       reg,
       { id: 'a', name: 'A' },
       stubProvider,
-      undefined, undefined, undefined,
-      (id) => house.getRoom(id),
+      undefined, undefined,
+      (id: string) => house.getRoom(id),
     )
 
     const towerSurf = (support.resolveToolDefinitions!(tower.profile.id) ?? []).map(d => d.function.name)

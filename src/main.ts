@@ -688,27 +688,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       .map(s => ({ name: s.name, declaredTools: s.allowedToolNames }))
   }
 
-  // Per-room allowed-tools whitelist. Resolves from skillStore at every
-  // tool call (executor invokes it with the room ID) — agents that span
-  // multiple rooms see different whitelists per room.
-  //
-  // Semantics: union of `allowed-tools` across skills in scope. If NO skill
-  // in scope declares a non-empty `allowed-tools`, returns null (no
-  // restriction — today's behavior preserved). The room ID parameter
-  // matches roomId; we resolve to room name for skillStore.forScope.
-  const getAllowedToolsForRoom = (roomId: string): ReadonlySet<string> | null => {
-    const room = house.getRoom(roomId)
-    if (!room) return null
-    // Same activation gate as getSkillsForRoom — a pack-bundled skill's
-    // allowed-tools list shouldn't constrain rooms where its pack is inactive.
-    const active = effectiveActivePackSet(room)
-    const skills = skillStore.forScope(room.profile.name)
-      .filter(s => active.has(s.pack ?? 'local'))
-    const declaring = skills.filter(s => s.allowedToolNames.length > 0)
-    if (declaring.length === 0) return null
-    return new Set(declaring.flatMap(s => [...s.allowedToolNames]))
-  }
-
   const refreshAllAgentTools = async (): Promise<void> => {
     for (const agent of team.listByKind('ai')) {
       const ai = agent as AIAgent
@@ -720,7 +699,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
         llm,
         undefined,
         undefined,
-        getAllowedToolsForRoom,
         // Pack-aware filter must survive a hot reload — without re-passing
         // it here, refreshing tools (e.g. after install_pack) would silently
         // erase the resolver and revert the agent to seeing every tool.
@@ -837,7 +815,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       getSkills: getSkillsForRoom,
       getActiveSkillsDeclarations: getActiveSkillsDeclarationsForRoom,
       getScriptContext: (roomId, agentName) => scriptRunner.getScriptContextForAgent(roomId, agentName),
-      getAllowedToolsForRoom,
       // Pack-aware tool surface filter — the LLM only sees tools owned by
       // packs active in the trigger room. Returns the Room directly; the
       // resolver only needs getActivePacks().
