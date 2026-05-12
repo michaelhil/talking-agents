@@ -18,17 +18,17 @@ knowledge graph.
 
 ## Status
 
-This document specifies **procmd v0.5**. Samsinn-side runtime support
+This document specifies **procmd v0.6**. Samsinn-side runtime support
 (executor tool, agent guardrail traversal, render integration) is out of
-scope for v0.5; see [Deferred](#deferred--out-of-scope-for-v05) at the
+scope for v0.6; see [Deferred](#deferred--out-of-scope-for-v05) at the
 bottom.
 
 **Breaking changes are allowed between v0.x minor versions until v1.0.**
-v0.5 is additive over v0.4 — existing v0.4 procedures parse unchanged
+v0.6 is additive over v0.5 — existing v0.5 procedures parse unchanged
 once the frontmatter version is bumped, and only acquire new validation
-rules if they introduce `«TAG»` references. Earlier minor versions
-required mechanical migration; v0.5 does not. After v1.0, breaking
-changes require a major bump.
+rules if they introduce the new `↻` (retry) or `↯` (abort) branch
+targets. v0.5 was additive over v0.4 (tag binding). After v1.0,
+breaking changes require a major bump.
 
 ## Semantic model
 
@@ -195,11 +195,15 @@ it contains exactly one `→`. Items without `→` are step content.
 ```markdown
 ## Step 1 [id: verify-rx-trip]
 Check: reactor trip breakers OPEN AND rod bottom lights LIT
-- [Continue] Verified → #verify-turbine-trip
+- Verified → #verify-turbine-trip
   Because: rapid neutron flux decrease confirmed
-- [Escalate] Not verified → [[FR-S.1]]
+- Not verified → [[FR-S.1]]
   Because: must establish subcriticality before continuing diagnostic flow
 ```
+
+Edge type (`continuesTo`, `escalatesTo`, …) is inferred from the target's
+shape and the loaded profile's naming patterns at KG-export time — not
+written in source. See [Edge type inference](#edge-type-inference-no-in-source-labels).
 
 A branch line containing more than one `→` is a parse error. To express
 "do action then transition," use an `Action:` body line followed by a
@@ -217,16 +221,37 @@ Branch target syntax:
 | `→ #<step-id>` | Same-page step (renders as standard markdown anchor) |
 | `→ [[<page>#<step-id>]]` | Step in another procedure |
 | `→ [[<page>]]` | Other procedure, enter at first step |
-| `→ END` | Procedure terminates here |
+| `→ END` | Procedure terminates normally |
+| `→ ↻` | **Retry**: re-enter the current step. Exit comes from a sibling non-`↻` branch (or the step's `Until:` / `Within:` clause). A step whose only branches are `↻` is a validator error — infinite loop. (v0.6+) |
+| `→ ↯` | **Abort**: terminate the procedure abnormally. The branch's condition text becomes the abort cause. Distinct from `→ END` (which is normal completion). (v0.6+) |
 
 A bare `→ <target>` line outside a list is a valid **unconditional
 transition** — equivalent to a single-branch list with no condition.
-Use sparingly; explicit branches read better.
+Use sparingly; explicit branches read better. **Bare `→ ↻` and bare
+`→ ↯` are validator errors** — both must be conditional (a retry
+without a condition is an infinite loop; an abort without a cause
+loses the diagnostic value of the branch text).
 
 Wikilinks accept display text: `[[E-3|Establish Heat Sink]]` — the
 target is used for resolution, the display text is presentation.
 **Display text cannot contain unescaped `|` or `]]`.** Use backslash
 escapes: `[[E-3|Heat\|Sink]]`.
+
+Retry and abort in practice:
+
+```markdown
+## Step [id: stabilize]
+Action: monitor pressure, hold valve at current setpoint
+Until: 60s of stable readings (drift < 0.1 bar/s)
+- Stable → END
+- Unstable → ↻
+
+## Step [id: confirm-conditions]
+Check: containment radiation, ECCS armed
+- Within limits → #begin-cooldown
+- Containment radiation > 100 R/hr → ↯
+  Because: requires entry to FR-Z.1 (high radiation), not this procedure
+```
 
 `Because:` and `Against:` lines under a branch attach rationale.
 Rationale is *unweighted* in v0.5 — agents reason over it as soft
@@ -251,6 +276,8 @@ shape and the loaded profile's naming patterns:
 | `→ [[<page>]]` matching profile "extreme-conditions" pattern (e.g. ECA-x) | `fallbacksTo` |
 | `→ [[<page>]]` matching profile "diagnostic-eop" pattern (e.g. E-x) | `delegatesTo` |
 | `→ END` | `terminates` |
+| `→ ↻` | `repeatsSelf` (reflexive: step → same step) |
+| `→ ↯` | `abortsWith` (step → literal cause string from the branch condition) |
 
 Profiles declare these naming patterns under `## Naming patterns`.
 Without a profile, the default is `continuesTo` (same-page) or
@@ -340,8 +367,8 @@ vocabulary.
 
 #### Profile namespacing
 
-A procedure loads exactly one profile in v0.2 (multi-profile is
-deferred). Profile synonyms cannot redefine core procmd keywords or
+A procedure loads exactly one profile in v0.5 (multi-profile is
+deferred — see [Deferred](#deferred--out-of-scope-for-v05)). Profile synonyms cannot redefine core procmd keywords or
 core synonyms (see [Synonyms](#synonyms-for-lifecycle-keywords)).
 
 If a profile fails to load (parse error, missing file), validator
@@ -378,6 +405,8 @@ and emits triples with the following predicates:
 | `fallbacksTo` | procedure → procedure |
 | `continuesTo` | step → step |
 | `terminates` | step → END (literal) |
+| `repeatsSelf` | step → same step (reflexive; from `→ ↻`) |
+| `abortsWith` | step → literal cause string (from `→ ↯`; the branch condition text) |
 | `monitors` | procedure → CSF |
 | `monitorsCsf` | procedure → CSF |
 | `triggeredBy` | procedure → trigger |
@@ -388,7 +417,7 @@ and emits triples with the following predicates:
 JSON-LD output includes a `@context` mapping these predicates to URIs
 under a stable placeholder ontology namespace
 (`https://samsinn-wikis.github.io/pwr-eops/ontology/v1#`). The URI need
-not resolve in v0.2; it serves as a stable identifier for the predicate
+not resolve in v0.5; it serves as a stable identifier for the predicate
 set. Formal SHACL/OWL schema is deferred.
 
 A reference exporter for the `pwr-eops` corpus lives in that repo as
@@ -701,11 +730,12 @@ Migration paths:
 
 Validators reject older syntax with explicit migration messages.
 
-Tag binding landed in v0.5 (additive):
+Tag binding landed in v0.5 (additive); retry + abort glyphs landed in v0.6 (additive):
 
 | Version | Additions | Notes |
 |---|---|---|
 | **v0.5** | `«TAG»` inline references + `## Tags` appendix + `referencesTag` / `tagOnEquipment` KG predicates | Procedures become self-contained — every referenced tag is defined in an appendix in the same file. Cross-procedure validator catches drift on `sim-path` / `units` / `equipment`. No central catalog page. Migration: bump `procedure-md: 0.4` → `0.5`; existing procedures with no tag refs are unchanged. |
+| **v0.6** | `→ ↻` retry-self arrow + `→ ↯` abort arrow + `repeatsSelf` / `abortsWith` KG predicates | Two new branch-target glyphs cover patterns previously expressed as `→ #<self-id>` (with no structural signal of "this is a loop") and as falling-off-the-end (with no structural signal of "this is an abort"). Validator: a step whose only branches are `↻` is rejected (infinite loop); bare unconditional `→ ↻` / `→ ↯` rejected (loops/aborts must carry a condition or cause). Migration: bump `procedure-md: 0.5` → `0.6`; existing procedures unchanged unless they adopt the new arrows. |
 
 ## Versioning policy
 
@@ -744,6 +774,16 @@ of features must be announced one minor version before removal.
   among several or carries its own rationale.
 - **Profile or no profile.** Procedures without a `profile:` field are
   fully valid; profiles enable domain synonyms and taxonomy vocabulary.
+- **Use `↻` for retry loops bounded by `Until:` or `Within:`.** It's
+  cleaner than writing `→ #<self-id>` and the KG renders it as a
+  reflexive edge that's easy to query. The step must have a non-`↻`
+  exit branch — a step that loops to itself with no way out is a
+  validator error. (v0.6+)
+- **Use `↯` when a branch detects "wrong procedure, abort," not "next
+  step."** The branch's condition text becomes the abort cause in the
+  KG. Distinct from `→ END` (normal completion) and from falling off
+  the end of the step list (which is incomplete authoring, not an
+  abort). (v0.6+)
 
 ## Example: a minimal procedure
 
@@ -875,4 +915,4 @@ The following are deferred to v0.6 or later:
 
 ---
 
-*procmd v0.5 — last reviewed 2026-05-06.*
+*procmd v0.6 — last reviewed 2026-05-12.*
