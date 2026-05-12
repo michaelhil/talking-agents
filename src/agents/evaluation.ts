@@ -46,23 +46,75 @@ const nativeCallsToToolCalls = (native: ReadonlyArray<NativeToolCall>): Readonly
 
 const MAX_TOOL_RESULT_CHARS = 4_000
 
-const truncateResult = (s: string, maxChars: number): string =>
-  s.length > maxChars
-    ? `${s.slice(0, maxChars)}\n[... ${s.length - maxChars} characters omitted]`
-    : s
+// Truncate with a visible marker so the model knows content was dropped.
+// Returns the (possibly truncated) string and how many characters were
+// omitted (0 when no truncation occurred) — the omitted-count is surfaced
+// as a warning event so operators can see silent data loss in the trace.
+interface TruncateOutcome {
+  readonly text: string
+  readonly omitted: number
+}
 
+const truncateWithTrace = (s: string, maxChars: number): TruncateOutcome => {
+  if (s.length <= maxChars) return { text: s, omitted: 0 }
+  const omitted = s.length - maxChars
+  return { text: `${s.slice(0, maxChars)}\n[... ${omitted} characters omitted]`, omitted }
+}
+
+// Render a tool's `data` field for inclusion in the LLM's next turn.
+//
+// String results pass through verbatim (no JSON.stringify wrapping, which
+// would add `"..."` quote-wrapping and escape every newline as `\n`,
+// forcing the model to mentally unescape before pasting). This is the
+// single most-impactful fix for fence-emitting tools like norway_platforms
+// and procedure_lookup: the fence reaches the model with real newlines
+// and no escape clutter.
+//
+// Object/array results are pretty-printed with 2-space indent so newlines
+// are real characters the model parses as structure, not `\n` literals.
+//
+// Other primitives (number, boolean, null) JSON-stringify cleanly.
+export const formatToolDataForLLM = (data: unknown): string => {
+  if (typeof data === 'string') return data
+  // null / undefined → empty string; agents see a blank result instead of
+  // the four-character literal "null".
+  if (data === null || data === undefined) return ''
+  try { return JSON.stringify(data, null, 2) } catch {
+    // Circular or otherwise un-serialisable — fall back to String() so the
+    // tool result still reaches the LLM (even if uninformative).
+    return String(data)
+  }
+}
+
+// formatToolResults composes the user-role message the eval loop pushes
+// back to the LLM after running tool calls. The trailer instruction is
+// the single guardrail keeping fence-shaped output (```map / ```mermaid /
+// ```geojson / ```biometric) intact through to the renderer. Without the
+// "include fenced code blocks intact" reminder, models paraphrase
+// brittle syntax like mermaid node ids and break the post-render path.
 const formatToolResults = (
   calls: ReadonlyArray<ToolCall>,
   results: ReadonlyArray<ToolResult>,
   maxChars: number,
+  onEvent?: (e: EvalEventCore) => void,
 ): string => {
   const lines = results.map((r, i) => {
-    const value = r.success
-      ? truncateResult(JSON.stringify(r.data), maxChars)
-      : `Error: ${truncateResult(r.error ?? '', maxChars)}`
-    return `- ${calls[i]?.tool}: ${value}`
+    const toolName = calls[i]?.tool ?? '<unknown>'
+    if (!r.success) {
+      const outcome = truncateWithTrace(r.error ?? '', maxChars)
+      if (outcome.omitted > 0) {
+        onEvent?.({ kind: 'warning', message: `tool_result_truncated: tool="${toolName}" bytesOmitted=${outcome.omitted} (error path)` })
+      }
+      return `- ${toolName}: Error: ${outcome.text}`
+    }
+    const rendered = formatToolDataForLLM(r.data)
+    const outcome = truncateWithTrace(rendered, maxChars)
+    if (outcome.omitted > 0) {
+      onEvent?.({ kind: 'warning', message: `tool_result_truncated: tool="${toolName}" bytesOmitted=${outcome.omitted}` })
+    }
+    return `- ${toolName}: ${outcome.text}`
   })
-  return `Tool results:\n${lines.join('\n')}\n\nNow respond to the conversation using these results. Write your response as natural text.`
+  return `Tool results:\n${lines.join('\n')}\n\nUse the tool results above as you see fit. If a result contains a fenced code block (triple-backticks), include it in your reply intact — do not paraphrase the contents or rewrite identifiers inside the fence.`
 }
 
 // === Evaluate — single LLM call with tool loop ===
@@ -344,7 +396,7 @@ export const evaluate = async (
           })
         }
         context.push({ role: 'assistant' as const, content: streamResult.content })
-        context.push({ role: 'user' as const, content: formatToolResults(calls, results, maxToolResultChars) })
+        context.push({ role: 'user' as const, content: formatToolResults(calls, results, maxToolResultChars, onEvent) })
         continue
       }
 

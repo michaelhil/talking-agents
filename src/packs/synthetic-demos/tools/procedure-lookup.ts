@@ -18,10 +18,16 @@
 
 import type { Tool, ToolResult } from '../../../core/types/tool.ts'
 
-// Public wiki URL declared by this bundled pack. Single source of truth —
-// referenced both in the tool output and (when relevant) the demo
-// scenario narration.
-export const PWR_EOP_WIKI_URL = 'https://github.com/samsinn-wikis/pwr-eop'
+// Source-citation URI for the bundled procedure corpus. Uses the `samsinn://`
+// scheme to signal "this lives inside the Samsinn binary, not at an external
+// authority." Why not a real public URL: there's no canonical public location
+// for industry-generic Westinghouse PWR EOP procedures, and using a fictional
+// github.com URL (the previous `samsinn-wikis/pwr-eop` placeholder) invited
+// model hallucination — strong models would substitute plausible-looking
+// NRC URLs over a placeholder they could tell wasn't real. A samsinn:// URI
+// is unambiguously local; the model has nothing to "fix."
+export const PWR_EOP_SOURCE_URL = 'samsinn://pack/pwr-eop/E-0'
+export const PWR_EOP_SOURCE_LABEL = 'Bundled procedure (samsinn-pack-pwr-eop)'
 
 interface Step {
   readonly n: number
@@ -197,36 +203,43 @@ const parseProcedure = (source: string): ParsedProcedure => {
   }
 }
 
-// === Renderers =============================================================
-
-const renderStepsMarkdown = (proc: ParsedProcedure): string => {
-  const lines: string[] = []
-  lines.push(`### ${proc.title}`)
-  if (proc.appliesTo) lines.push(`_Applies to: ${proc.appliesTo}_`)
-  lines.push('')
-  for (const step of proc.steps) {
-    lines.push(`**Step ${step.n}: ${step.title}**`)
-    if (step.check) lines.push(`- Check: ${step.check}`)
-    if (step.action) lines.push(`- Action: ${step.action}`)
-    for (const branch of step.branches) lines.push(`  - → ${branch}`)
-    lines.push('')
-  }
-  return lines.join('\n')
-}
+// === Mermaid renderer ======================================================
+//
+// The tool server-renders a complete ```mermaid…``` fenced block which the
+// agent pastes into its reply verbatim. This mirrors how `norway_platforms`
+// returns a ```map fence and matches the established UI post-render
+// processor convention (src/ui/modules/mermaid/index.ts:34). Asking the
+// agent to assemble mermaid from raw step structure invites paraphrasing
+// of node-id labels which breaks the diagram syntactically — this happens
+// even with strong models when given a fill-in-template prompt.
 
 // Sanitize a string for use as a mermaid node label. Mermaid is picky about
 // quotes / parens inside `["..."]` labels — replace doubles with singles
 // and strip control characters.
 const escapeLabel = (s: string): string => s.replace(/"/g, "'").replace(/[\r\n]+/g, ' ').slice(0, 80)
 
+// Render a compact mermaid flowchart:
+//   - one node per step (rectangle for action/check-only, diamond for decisions)
+//   - "continue to Step N" branches become labeled edges between step nodes
+//   - "dispatch to X" branches become single named external nodes (one per
+//     unique X, deduped — previously we emitted EXT_* per branch which
+//     duplicated targets and blew up the diagram)
+//   - "manual" / other free-text branches are dropped from the diagram and
+//     surfaced in the step body's list (the markdown side) instead. They
+//     aren't graph transitions and rendering them as orphan nodes was the
+//     source of the T-node bloat that smaller models truncated mid-output.
 const renderMermaid = (proc: ParsedProcedure): string => {
   const lines: string[] = ['flowchart TD']
+  // Nodes (one per step)
   for (const step of proc.steps) {
     const isDecision = step.branches.length > 0
     const label = `Step ${step.n}: ${escapeLabel(step.title)}`
     const shape = isDecision ? `{"${label}"}` : `["${label}"]`
     lines.push(`  S${step.n}${shape}`)
   }
+  // Dedup external dispatch targets across all branches.
+  const externals = new Map<string, string>()  // id → label
+  // Edges
   for (const step of proc.steps) {
     if (step.branches.length === 0) {
       const next = proc.steps.find(s => s.n === step.n + 1)
@@ -239,32 +252,55 @@ const renderMermaid = (proc: ParsedProcedure): string => {
       if (continueM) {
         lines.push(`  S${step.n} -->|"${escapeLabel(branch)}"| S${continueM[1]}`)
       } else if (dispatchM) {
-        const target = `EXT_${dispatchM[1]!.replace(/[^A-Za-z0-9]/g, '_')}`
-        lines.push(`  ${target}["${escapeLabel(dispatchM[1]!)}"]:::external`)
-        lines.push(`  S${step.n} -->|"${escapeLabel(branch)}"| ${target}`)
-      } else {
-        // Unhandled branch shape — render as a self-comment edge so the
-        // information isn't lost.
-        const target = `T${step.n}_${proc.steps.indexOf(step)}_${Math.abs(branch.length)}`
-        lines.push(`  ${target}["${escapeLabel(branch)}"]`)
-        lines.push(`  S${step.n} --> ${target}`)
+        const targetName = dispatchM[1]!
+        const targetId = `EXT_${targetName.replace(/[^A-Za-z0-9]/g, '_')}`
+        externals.set(targetId, targetName)
+        lines.push(`  S${step.n} -->|"${escapeLabel(branch)}"| ${targetId}`)
       }
+      // Other shapes (manual recovery, free-text) are intentionally not
+      // rendered in the diagram. They remain visible in the step body list.
     }
+  }
+  // Emit external nodes after the edges so the diagram declares them in one place.
+  for (const [id, label] of externals) {
+    lines.push(`  ${id}["${escapeLabel(label)}"]:::external`)
   }
   lines.push('  classDef external fill:#fff3cd,stroke:#856404,color:#856404')
   return lines.join('\n')
 }
 
+// Wrap the mermaid source in a complete fenced block. The agent pastes this
+// string verbatim into its reply — same contract as norway_platforms' map
+// fence. The eval-loop trailer ("include fenced code blocks intact") plus
+// the persona-level "paste diagramFence verbatim" instruction together
+// keep the brittle mermaid syntax from being rewritten.
+const buildDiagramFence = (proc: ParsedProcedure): string =>
+  ['```mermaid', renderMermaid(proc), '```'].join('\n')
+
 // === Tool ==================================================================
+
+// Structured return shape: the agent writes the natural-language step list
+// from `steps[]` (its value-add — composing prose from data), but pastes
+// `diagramFence` verbatim (because mermaid syntax is brittle and the post-
+// render processor expects a complete block). `source` is a real-feeling
+// reference the agent cites without rewriting; the `samsinn://` scheme
+// signals self-contained content.
+export interface ProcedureLookupResult {
+  readonly procedureId: string
+  readonly title: string
+  readonly appliesTo?: string
+  readonly steps: ReadonlyArray<Step>
+  readonly diagramFence: string
+  readonly source: { readonly label: string; readonly url: string }
+}
 
 export const procedureLookupTool: Tool = {
   name: 'procedure_lookup',
   description:
-    'Looks up a procedure by id from the bundled PWR EOP corpus and returns structured fields: a markdown step list, a mermaid flowchart source, and the upstream wiki URL. ' +
-    "Format the agent's reply as exactly:\n" +
-    '<stepsMarkdown>\n\n```mermaid\n<mermaidSource>\n```\n\nSource: <wikiUrl>',
+    'Looks up a procedure by id from the bundled PWR EOP corpus. Returns the procedure as structured data — title, applies-to, an array of steps (each with check/action/branches), a ready-to-paste ```mermaid fenced block as `diagramFence`, and a `source` reference. ' +
+    'In your reply: synthesize a clean numbered step summary from `steps` in your own words (1-2 lines per step). Preserve technical terms verbatim — do not rephrase Check:/Action: prose. After the summary, paste `diagramFence` exactly as returned (it renders as an inline flowchart — paraphrasing breaks the diagram). End with one citation line: `Source: [<source.label>](<source.url>)`. Do not substitute the source URL.',
   usage: 'Pass `id` (e.g. "E-0"). Available ids are listed when an unknown id is requested.',
-  returns: 'Object: { stepsMarkdown, mermaidSource, wikiUrl }',
+  returns: 'A pre-formatted markdown string ready to paste into chat.',
   parameters: {
     type: 'object',
     properties: {
@@ -292,13 +328,14 @@ export const procedureLookupTool: Tool = {
     if (proc.steps.length === 0) {
       return { success: false, error: `Procedure "${matchKey}" parsed but contained no steps — bundle is corrupt` }
     }
-    return {
-      success: true,
-      data: {
-        stepsMarkdown: renderStepsMarkdown(proc),
-        mermaidSource: renderMermaid(proc),
-        wikiUrl: `${PWR_EOP_WIKI_URL}/blob/main/${matchKey}.md`,
-      },
+    const result: ProcedureLookupResult = {
+      procedureId: proc.id,
+      title: proc.title,
+      ...(proc.appliesTo ? { appliesTo: proc.appliesTo } : {}),
+      steps: proc.steps,
+      diagramFence: buildDiagramFence(proc),
+      source: { label: PWR_EOP_SOURCE_LABEL, url: PWR_EOP_SOURCE_URL },
     }
+    return { success: true, data: result }
   },
 }

@@ -1,19 +1,55 @@
 import { describe, expect, test } from 'bun:test'
-import { procedureLookupTool, PWR_EOP_WIKI_URL } from './procedure-lookup.ts'
+import {
+  procedureLookupTool,
+  PWR_EOP_SOURCE_URL,
+  PWR_EOP_SOURCE_LABEL,
+  type ProcedureLookupResult,
+} from './procedure-lookup.ts'
 
 const ctx = { callerId: 'test', callerName: 'test' }
 
 describe('procedure_lookup', () => {
-  test('looks up E-0 and returns three structured fields', async () => {
+  test('returns structured data + a ready-to-paste mermaid fence', async () => {
     const res = await procedureLookupTool.execute({ id: 'E-0' }, ctx)
     expect(res.success).toBe(true)
-    const out = res.data as { stepsMarkdown: string; mermaidSource: string; wikiUrl: string }
-    expect(out.stepsMarkdown).toContain('Reactor Trip or Safety Injection')
-    expect(out.stepsMarkdown).toContain('Step 1:')
-    expect(out.stepsMarkdown).toContain('Step 10:')
-    expect(out.mermaidSource).toContain('flowchart TD')
-    expect(out.mermaidSource).toContain('S1')
-    expect(out.wikiUrl).toBe(`${PWR_EOP_WIKI_URL}/blob/main/E-0.md`)
+    const out = res.data as ProcedureLookupResult
+    expect(out.procedureId).toBe('E-0')
+    expect(out.title).toContain('Reactor Trip')
+    expect(out.appliesTo).toContain('Westinghouse')
+    expect(out.steps.length).toBeGreaterThanOrEqual(10)
+    expect(out.steps[0]!.title).toBeTruthy()
+
+    // diagramFence is a COMPLETE fenced block — agent pastes verbatim,
+    // post-render processor picks it up. Must open and close cleanly.
+    expect(out.diagramFence.startsWith('```mermaid\n')).toBe(true)
+    expect(out.diagramFence.endsWith('\n```')).toBe(true)
+    expect(out.diagramFence).toContain('flowchart TD')
+    expect(out.diagramFence).toContain('S1')
+  })
+
+  test('source citation uses samsinn:// scheme (self-contained, not fictional)', async () => {
+    const res = await procedureLookupTool.execute({ id: 'E-0' }, ctx)
+    const out = res.data as ProcedureLookupResult
+    expect(out.source.url).toBe(PWR_EOP_SOURCE_URL)
+    expect(out.source.url.startsWith('samsinn://')).toBe(true)
+    expect(out.source.label).toBe(PWR_EOP_SOURCE_LABEL)
+  })
+
+  test('mermaid drops manual-recovery "T" nodes (in step body, not diagram)', async () => {
+    const res = await procedureLookupTool.execute({ id: 'E-0' }, ctx)
+    const out = res.data as ProcedureLookupResult
+    // No T_<n>_<i>_<len> orphan nodes — they used to bloat the diagram.
+    expect(out.diagramFence).not.toMatch(/\sT\d+_\d+_\d+\[/)
+  })
+
+  test('mermaid dedups external dispatch targets across branches', async () => {
+    const res = await procedureLookupTool.execute({ id: 'E-0' }, ctx)
+    const out = res.data as ProcedureLookupResult
+    // Each EXT_* node is declared exactly once even if multiple branches
+    // dispatch to it. Count `EXT_<name>[` declarations vs distinct names.
+    const declarations = out.diagramFence.match(/EXT_[A-Za-z0-9_]+\[/g) ?? []
+    const uniqueIds = new Set(declarations)
+    expect(declarations.length).toBe(uniqueIds.size)
   })
 
   test('case-insensitive id lookup', async () => {
@@ -27,14 +63,5 @@ describe('procedure_lookup', () => {
     expect(res.error).toContain('X-99')
     expect(res.error).toContain('Available')
     expect(res.error).toContain('E-0')
-  })
-
-  test('mermaid output renders dispatch branches as external nodes', async () => {
-    const res = await procedureLookupTool.execute({ id: 'E-0' }, ctx)
-    const out = res.data as { mermaidSource: string }
-    // E-0 dispatches to ECA-0.0, ES-0.1, FR-H.1, ES-1.2, E-1, E-2, E-3 — at least
-    // a few of these should appear as labeled external nodes.
-    expect(out.mermaidSource).toContain('EXT_')
-    expect(out.mermaidSource).toContain('classDef external')
   })
 })
