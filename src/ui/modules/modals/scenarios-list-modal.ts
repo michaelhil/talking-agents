@@ -12,6 +12,7 @@ import { showToast } from '../toast.ts'
 import { confirmRunWithConsent, type ScenarioConsentMeta } from '../scenario-consent.ts'
 import { safeFetch } from '../fetch-helpers.ts'
 import { $selectedRoomId, $rooms } from '../stores.ts'
+import { SHOWCASE_PROMPTS, sendAsCurrentHuman, type ShowcasePrompt } from '../showcase-prompts.ts'
 
 // Reads the room the user currently has open so demos can run against it
 // rather than spawning a dedicated room per scenario. Returns undefined
@@ -117,6 +118,47 @@ const renderActiveRunBanner = (run: ActiveRun, onStopped: () => void): HTMLEleme
   return wrap
 }
 
+// Showcase prompts — chips that post a natural-language prompt as the user
+// in the current room. Same card chrome as scenario cards for visual
+// consistency; the action is "Send" (immediate post) instead of "Run"
+// (consent dialog + scenario runner). Always rendered in this modal so
+// users have a stable entry point even when the empty-state strip can't
+// (room has chat, sessionStorage races, etc).
+const renderShowcaseCard = (entry: ShowcasePrompt, onSent: () => void): HTMLElement => {
+  const card = document.createElement('div')
+  card.className = 'p-3 rounded border border-border bg-surface-strong flex flex-col gap-2'
+
+  const title = document.createElement('div')
+  title.className = 'text-sm font-semibold text-text'
+  title.textContent = entry.label
+  card.appendChild(title)
+
+  const desc = document.createElement('div')
+  desc.className = 'text-xs text-text-subtle'
+  desc.textContent = entry.description
+  card.appendChild(desc)
+
+  // Show the actual prompt the chip will post — transparency about what
+  // the user is about to send. Truncated visually via CSS line-clamp.
+  const preview = document.createElement('div')
+  preview.className = 'text-xs text-text-subtle italic line-clamp-2'
+  preview.textContent = `“${entry.prompt}”`
+  card.appendChild(preview)
+
+  const btnRow = document.createElement('div')
+  btnRow.className = 'flex gap-2 mt-1'
+  const sendBtn = document.createElement('button')
+  sendBtn.textContent = 'Send'
+  sendBtn.className = 'px-3 py-1 text-xs rounded bg-accent text-white hover:bg-accent-hover'
+  sendBtn.addEventListener('click', () => {
+    const ok = sendAsCurrentHuman(entry.prompt)
+    if (ok) onSent()
+  })
+  btnRow.appendChild(sendBtn)
+  card.appendChild(btnRow)
+  return card
+}
+
 const renderCard = (
   scenario: CatalogScenario,
   hasActive: boolean,
@@ -203,11 +245,32 @@ export const openScenariosListModal = async (): Promise<void> => {
       root.appendChild(renderActiveRunBanner(active, () => { void render() }))
     }
 
+    // Showcase prompts — always rendered, independent of the scenario
+    // catalog. These chips post a chat message into the user's current
+    // room and exit; no scenarios runner involved, so they can't be
+    // blocked by stale run state.
+    {
+      const header = document.createElement('div')
+      header.className = 'text-xs uppercase tracking-wide text-text-subtle mt-3 mb-2 first:mt-0'
+      header.textContent = 'Showcase prompts'
+      root.appendChild(header)
+
+      const grid = document.createElement('div')
+      grid.className = 'grid grid-cols-1 md:grid-cols-2 gap-2'
+      for (const entry of SHOWCASE_PROMPTS) {
+        grid.appendChild(renderShowcaseCard(entry, () => {
+          // Close the modal once the prompt has been sent so the user
+          // sees the chat respond. The active-run banner doesn't apply
+          // (chips don't start a scenario run), so just dismiss.
+          modal.close()
+        }))
+      }
+      root.appendChild(grid)
+    }
+
     if (catalog.length === 0) {
-      const empty = document.createElement('div')
-      empty.className = 'text-sm text-text-subtle p-4'
-      empty.textContent = 'No scenarios installed. Bundled demos should appear here — if they don\'t, check the server logs.'
-      root.appendChild(empty)
+      // No scenarios installed — the showcase section above is the only
+      // surface; we're done.
       return
     }
 
