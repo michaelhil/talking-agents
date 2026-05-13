@@ -3,7 +3,7 @@
 // Spec: docs/procedure-md.md (v0.6 normative).
 //
 // This is the single source of truth for procmd parsing. It is vendored
-// into the pwr-eops wiki repo under `procmd-core/` with a SHA pin in
+// into the pwr-ops wiki repo under `procmd-core/` with a SHA pin in
 // `procmd-core.sha`. Both samsinn and the wiki repo (validate.ts +
 // scripts/render-procmd.ts) import from here.
 

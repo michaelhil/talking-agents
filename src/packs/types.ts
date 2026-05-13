@@ -7,7 +7,7 @@
 // panel. Optionally, the pack can also declare a `source` binding —
 // org/repo/branch/paths — so samsinn-side tools can fetch the wiki
 // markdown directly from raw.githubusercontent. The first consumer is
-// the pwr-eops pack's `procedure_lookup` tool. Without `source`, the
+// the pwr-ops pack's `procedure_lookup` tool. Without `source`, the
 // WikiRef behaves as before: a display-only link.
 export interface WikiSourceBinding {
   readonly org: string
@@ -20,7 +20,7 @@ export interface WikiSourceBinding {
    * Optional path to a machine-readable manifest emitted by the wiki's build
    * pipeline (e.g. `wiki/_manifest.json`). When present, the fetcher prefers
    * it over regex-scraping `indexFile`. Manifest shape is documented in the
-   * pwr-eops repo at `scripts/build-manifest.ts`.
+   * pwr-ops repo at `scripts/build-manifest.ts`.
    */
   readonly manifestFile?: string
 }

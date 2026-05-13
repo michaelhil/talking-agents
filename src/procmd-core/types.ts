@@ -1,10 +1,10 @@
 // procmd-core — shared type surface for the procmd v0.6 parser.
 //
 // Consumed by:
-//   - talkingAgents/src/packs/pwr-eops/procmd/parser.ts (re-export shim)
-//   - talkingAgents/src/packs/pwr-eops/procmd/renderer.ts (procmd → agent markdown)
-//   - pwr-eops/validate.ts (corpus-wide validator)
-//   - pwr-eops/scripts/render-procmd.ts (procmd → MkDocs-flavored markdown)
+//   - talkingAgents/src/packs/pwr-ops/procmd/parser.ts (re-export shim)
+//   - talkingAgents/src/packs/pwr-ops/procmd/renderer.ts (procmd → agent markdown)
+//   - pwr-ops/validate.ts (corpus-wide validator)
+//   - pwr-ops/scripts/render-procmd.ts (procmd → MkDocs-flavored markdown)
 //
 // Spec: docs/procedure-md.md (v0.6 normative).
 //

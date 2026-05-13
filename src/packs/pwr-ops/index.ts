@@ -3,7 +3,7 @@
 // content itself is always fetched fresh from GitHub at tool-call time.
 //
 // Future remote-pack migration: move this directory to its own GitHub
-// repo (samsinn-packs/pwr-eops), drop the bundled registration in
+// repo (samsinn-packs/pwr-ops), drop the bundled registration in
 // bootstrap.ts, and the rest stays the same.
 
 import type { Tool } from '../../core/types/tool.ts'
@@ -27,11 +27,11 @@ const manifest = packManifest as PackManifestShape
 
 const wiki = manifest.wikis[0]
 if (!wiki || !wiki.source) {
-  throw new Error('[packs/pwr-eops] pack.json must declare wikis[0].source — fix the manifest')
+  throw new Error('[packs/pwr-ops] pack.json must declare wikis[0].source — fix the manifest')
 }
 
-export const PWR_EOPS_TOOLS: ReadonlyArray<Tool> = [
+export const PWR_OPS_TOOLS: ReadonlyArray<Tool> = [
   createProcedureLookupTool(wiki.source, wiki.name, wiki.url),
 ]
 
-export const PWR_EOPS_MANIFEST = manifest
+export const PWR_OPS_MANIFEST = manifest

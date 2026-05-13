@@ -4,11 +4,11 @@ import type { WikiSourceBinding } from '../packs/types.ts'
 
 const BINDING: WikiSourceBinding = {
   org: 'samsinn-wikis',
-  repo: 'pwr-eops',
+  repo: 'pwr-ops',
   branch: 'main',
   procedureDir: 'wiki/procedures',
   indexFile: 'wiki/index.md',
-  citationBase: 'https://samsinn-wikis.github.io/pwr-eops/procedures/',
+  citationBase: 'https://samsinn-wikis.github.io/pwr-ops/procedures/',
 }
 
 const installFetchMock = (responder: (url: string) => Response | Promise<Response>): () => void => {
@@ -27,8 +27,8 @@ describe('createWikiSource', () => {
 
   test('builds citation + raw URLs from the binding', () => {
     const src = createWikiSource(BINDING)
-    expect(src.citationUrl('E-0')).toBe('https://samsinn-wikis.github.io/pwr-eops/procedures/E-0/')
-    expect(src.rawUrl('E-0')).toBe('https://raw.githubusercontent.com/samsinn-wikis/pwr-eops/main/wiki/procedures/E-0.md')
+    expect(src.citationUrl('E-0')).toBe('https://samsinn-wikis.github.io/pwr-ops/procedures/E-0/')
+    expect(src.rawUrl('E-0')).toBe('https://raw.githubusercontent.com/samsinn-wikis/pwr-ops/main/wiki/procedures/E-0.md')
   })
 
   test('fetchProcedure hits raw.githubusercontent with the right path', async () => {
@@ -40,7 +40,7 @@ describe('createWikiSource', () => {
     const src = createWikiSource(BINDING)
     const got = await src.fetchProcedure('E-0')
     expect(got).toBe('# E-0 content')
-    expect(calls[0]).toBe('https://raw.githubusercontent.com/samsinn-wikis/pwr-eops/main/wiki/procedures/E-0.md')
+    expect(calls[0]).toBe('https://raw.githubusercontent.com/samsinn-wikis/pwr-ops/main/wiki/procedures/E-0.md')
   })
 
   test('second call within TTL uses the buffer (no re-fetch)', async () => {
@@ -66,7 +66,7 @@ describe('createWikiSource', () => {
     restore = installFetchMock(() => new Response('not found', { status: 404 }))
     const src = createWikiSource(BINDING)
     await expect(src.fetchProcedure('XYZ-99')).rejects.toThrow(/HTTP 404/)
-    await expect(src.fetchProcedure('XYZ-99')).rejects.toThrow(/samsinn-wikis\/pwr-eops/)
+    await expect(src.fetchProcedure('XYZ-99')).rejects.toThrow(/samsinn-wikis\/pwr-ops/)
   })
 })
 
@@ -96,16 +96,16 @@ describe('extractProcedureIds', () => {
 describe('wiki-fetcher — GitHub Pages fallback for manifest', () => {
   const BINDING = {
     org: 'samsinn-wikis',
-    repo: 'pwr-eops',
+    repo: 'pwr-ops',
     branch: 'main',
     procedureDir: 'wiki/procedures',
     indexFile: 'wiki/index.md',
     manifestFile: 'wiki/_manifest.json',
-    citationBase: 'https://samsinn-wikis.github.io/pwr-eops/procedures/',
+    citationBase: 'https://samsinn-wikis.github.io/pwr-ops/procedures/',
   }
 
   test('falls back to GitHub Pages mirror when raw.githubusercontent 404s', async () => {
-    const MANIFEST = JSON.stringify({ version: 1, wiki: 'pwr-eops', procedures: [{ id: 'X-1' }] })
+    const MANIFEST = JSON.stringify({ version: 1, wiki: 'pwr-ops', procedures: [{ id: 'X-1' }] })
     const original = globalThis.fetch
     let rawCalls = 0
     let pagesCalls = 0
@@ -115,7 +115,7 @@ describe('wiki-fetcher — GitHub Pages fallback for manifest', () => {
         rawCalls += 1
         return Promise.resolve(new Response('rate limited', { status: 429 }))
       }
-      if (url === 'https://samsinn-wikis.github.io/pwr-eops/_manifest.json') {
+      if (url === 'https://samsinn-wikis.github.io/pwr-ops/_manifest.json') {
         pagesCalls += 1
         return Promise.resolve(new Response(MANIFEST, { status: 200 }))
       }
@@ -144,7 +144,7 @@ describe('wiki-fetcher — GitHub Pages fallback for manifest', () => {
         rawCalls += 1
         return Promise.resolve(new Response('boom', { status: 503 }))
       }
-      if (url === 'https://samsinn-wikis.github.io/pwr-eops/procedures/E-0.md') {
+      if (url === 'https://samsinn-wikis.github.io/pwr-ops/procedures/E-0.md') {
         sidecarCalls += 1
         return Promise.resolve(new Response('---\nprocedure-id: E-0\ntitle: Stub\n---\n## Step 1 [id: x]\nCheck: ok\n', { status: 200 }))
       }

@@ -6,11 +6,11 @@ import type { WikiSourceBinding } from '../../types.ts'
 
 const BINDING: WikiSourceBinding = {
   org: 'samsinn-wikis',
-  repo: 'pwr-eops',
+  repo: 'pwr-ops',
   branch: 'main',
   procedureDir: 'wiki/procedures',
   indexFile: 'wiki/index.md',
-  citationBase: 'https://samsinn-wikis.github.io/pwr-eops/procedures/',
+  citationBase: 'https://samsinn-wikis.github.io/pwr-ops/procedures/',
 }
 
 const fixture = (name: string): string =>
@@ -40,7 +40,7 @@ describe('procedure_lookup — integration with mocked GitHub', () => {
   afterEach(() => restore())
 
   test('no id → returns index of procedures from real fixture', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({}, ctx)
     expect(r.success).toBe(true)
     const data = r.data as string
@@ -49,18 +49,18 @@ describe('procedure_lookup — integration with mocked GitHub', () => {
   })
 
   test('id="E-0" → returns rendered markdown with mermaid', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0' }, ctx)
     expect(r.success).toBe(true)
     const data = r.data as string
     expect(data).toMatch(/^## E-0 — Reactor Trip/)
     expect(data).toContain('```mermaid')
     expect(data).toContain('Source: [E-0 — Reactor Trip')
-    expect(data).toContain('https://samsinn-wikis.github.io/pwr-eops/procedures/E-0/')
+    expect(data).toContain('https://samsinn-wikis.github.io/pwr-ops/procedures/E-0/')
   })
 
   test('unknown id → structured error with fuzzy suggestions', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0X' }, ctx)
     expect(r.success).toBe(false)
     expect(r.error).toContain('E-0X')
@@ -68,7 +68,7 @@ describe('procedure_lookup — integration with mocked GitHub', () => {
   })
 
   test('case-sensitive id lookup (wiki uses canonical ids)', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'e-0' }, ctx)  // lowercase
     expect(r.success).toBe(false)  // wiki ids are canonical-case
   })
@@ -80,7 +80,7 @@ describe('procedure_lookup — format / step / mode parameters', () => {
   afterEach(() => restore())
 
   test('format: "json" returns the parsed shape, not markdown', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0', format: 'json' }, ctx)
     expect(r.success).toBe(true)
     const data = r.data as { kind: string; procedureId: string; parsed: { frontmatter: { procedureId: string }; steps: unknown[]; csfChannels: string[] } }
@@ -92,7 +92,7 @@ describe('procedure_lookup — format / step / mode parameters', () => {
   })
 
   test('format: "json" with no id returns an index object', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ format: 'json' }, ctx)
     expect(r.success).toBe(true)
     const data = r.data as { kind: string; ids: string[] }
@@ -101,7 +101,7 @@ describe('procedure_lookup — format / step / mode parameters', () => {
   })
 
   test('step: "<id>" returns only that step (markdown)', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0', step: 'verify-reactor-trip' }, ctx)
     expect(r.success).toBe(true)
     const data = r.data as string
@@ -111,7 +111,7 @@ describe('procedure_lookup — format / step / mode parameters', () => {
   })
 
   test('step: "<id>" returns the step in JSON mode', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0', step: 'verify-reactor-trip', format: 'json' }, ctx)
     expect(r.success).toBe(true)
     const data = r.data as { kind: string; step: { id: string; checks: string[] } }
@@ -121,14 +121,14 @@ describe('procedure_lookup — format / step / mode parameters', () => {
   })
 
   test('unknown step → structured error with fuzzy suggestions', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0', step: 'no-such-step' }, ctx)
     expect(r.success).toBe(false)
     expect(r.error).toContain('no-such-step')
   })
 
   test('mode: "summary" returns frontmatter + step ids, no step bodies', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0', mode: 'summary' }, ctx)
     expect(r.success).toBe(true)
     const data = r.data as string
@@ -138,7 +138,7 @@ describe('procedure_lookup — format / step / mode parameters', () => {
   })
 
   test('mode: "summary" with format: "json" returns structured summary', async () => {
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0', mode: 'summary', format: 'json' }, ctx)
     expect(r.success).toBe(true)
     const data = r.data as { kind: string; stepIds: string[]; entryTriggers: string[] }
@@ -155,7 +155,7 @@ describe('procedure_lookup — telemetry', () => {
 
   test('emits one telemetry event per call with success + duration + indexSource', async () => {
     const events: ProcedureLookupTelemetry[] = []
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/', e => events.push(e))
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/', e => events.push(e))
     await tool.execute({ id: 'E-0' }, ctx)
     expect(events.length).toBe(1)
     expect(events[0]!.tool).toBe('procedure_lookup')
@@ -168,7 +168,7 @@ describe('procedure_lookup — telemetry', () => {
 
   test('emits error-classified telemetry on unknown id', async () => {
     const events: ProcedureLookupTelemetry[] = []
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/', e => events.push(e))
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/', e => events.push(e))
     await tool.execute({ id: 'NONESUCH' }, ctx)
     expect(events.length).toBe(1)
     expect(events[0]!.success).toBe(false)
@@ -179,14 +179,14 @@ describe('procedure_lookup — telemetry', () => {
     restore()
     restore = installFetchMock((url) => {
       if (url.endsWith('/wiki/_manifest.json')) return new Response(JSON.stringify({
-        version: 1, wiki: 'pwr-eops', procedures: [{ id: 'E-0', title: 'Reactor Trip' }],
+        version: 1, wiki: 'pwr-ops', procedures: [{ id: 'E-0', title: 'Reactor Trip' }],
       }), { status: 200 })
       return fixtureResponder(url)
     })
     const events: ProcedureLookupTelemetry[] = []
     const tool = createProcedureLookupTool(
       { ...BINDING, manifestFile: 'wiki/_manifest.json' },
-      'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/',
+      'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/',
       e => events.push(e),
     )
     await tool.execute({ id: 'E-0' }, ctx)
@@ -201,7 +201,7 @@ describe('procedure_lookup — manifest-driven index', () => {
   test('binding with manifestFile prefers the manifest over regex on indexFile', async () => {
     const MANIFEST = {
       version: 1,
-      wiki: 'pwr-eops',
+      wiki: 'pwr-ops',
       procmdVersion: '0.6',
       procedures: [
         { id: 'E-0', title: 'Reactor Trip', coverage: 'developed', stepCount: 18 },
@@ -228,7 +228,7 @@ Check: ok
     const tool = createProcedureLookupTool(
       { ...BINDING, manifestFile: 'wiki/_manifest.json' },
       'PWR EOPs',
-      'https://samsinn-wikis.github.io/pwr-eops/',
+      'https://samsinn-wikis.github.io/pwr-ops/',
     )
     // AOP-1 is in manifest but NOT in index.md — should still resolve
     const r = await tool.execute({ id: 'AOP-1' }, ctx)
@@ -244,7 +244,7 @@ Check: ok
     const tool = createProcedureLookupTool(
       { ...BINDING, manifestFile: 'wiki/_manifest.json' },
       'PWR EOPs',
-      'https://samsinn-wikis.github.io/pwr-eops/',
+      'https://samsinn-wikis.github.io/pwr-ops/',
     )
     // Should fall back to regex extraction from the existing index.md fixture
     const r = await tool.execute({ id: 'E-0' }, ctx)
@@ -259,7 +259,7 @@ Check: ok
     const tool = createProcedureLookupTool(
       { ...BINDING, manifestFile: 'wiki/_manifest.json' },
       'PWR EOPs',
-      'https://samsinn-wikis.github.io/pwr-eops/',
+      'https://samsinn-wikis.github.io/pwr-ops/',
     )
     const r = await tool.execute({ id: 'E-0' }, ctx)
     expect(r.success).toBe(true)  // regex fallback should still find E-0
@@ -275,7 +275,7 @@ describe('procedure_lookup — failure modes', () => {
       if (url.endsWith('/wiki/index.md')) return new Response(fixture('index.md'), { status: 200 })
       return new Response('boom', { status: 503 })
     })
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({ id: 'E-0' }, ctx)
     expect(r.success).toBe(false)
     expect(r.error).toContain('E-0')
@@ -284,7 +284,7 @@ describe('procedure_lookup — failure modes', () => {
 
   test('GitHub error on index fetch → user-facing message names the wiki', async () => {
     restore = installFetchMock(() => new Response('', { status: 503 }))
-    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/')
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-ops/')
     const r = await tool.execute({}, ctx)
     expect(r.success).toBe(false)
     expect(r.error).toContain('PWR EOPs')

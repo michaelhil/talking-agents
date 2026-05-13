@@ -164,13 +164,13 @@ export const bootstrap = async (): Promise<void> => {
     for (const tool of BUNDLED_DEMO_TOOLS) {
       shared.sharedToolRegistry.registerWithSource(tool, { kind: 'built-in' })
     }
-    // pwr-eops bundled pack — wiki-backed procedure_lookup. Same compiled-in
+    // pwr-ops bundled pack — wiki-backed procedure_lookup. Same compiled-in
     // shape as synthetic-demos; the procedure content itself is fetched
-    // fresh from samsinn-wikis/pwr-eops on each first call (5-min in-memory
+    // fresh from samsinn-wikis/pwr-ops on each first call (5-min in-memory
     // buffer for repeats). Future remote-pack migration drops this block
-    // and moves src/packs/pwr-eops/ into its own repo.
-    const { PWR_EOPS_TOOLS } = await import('./packs/pwr-eops/index.ts')
-    for (const tool of PWR_EOPS_TOOLS) {
+    // and moves src/packs/pwr-ops/ into its own repo.
+    const { PWR_OPS_TOOLS } = await import('./packs/pwr-ops/index.ts')
+    for (const tool of PWR_OPS_TOOLS) {
       shared.sharedToolRegistry.registerWithSource(tool, { kind: 'built-in' })
     }
   }

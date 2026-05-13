@@ -20,7 +20,7 @@ knowledge graph.
 
 This document specifies **procmd v0.6 normative**. Reference parser:
 `src/procmd-core/parser.ts`. Reference validator:
-`pwr-eops/validate.ts`. Both are version-locked to v0.6.
+`pwr-ops/validate.ts`. Both are version-locked to v0.6.
 
 **No backward compatibility with v0.5 or earlier.** The atomic v0.6 bump
 landed 2026-05-13 alongside the procmd-core extraction; every artifact
@@ -418,11 +418,11 @@ and emits triples with the following predicates:
 
 JSON-LD output includes a `@context` mapping these predicates to URIs
 under a stable placeholder ontology namespace
-(`https://samsinn-wikis.github.io/pwr-eops/ontology/v1#`). The URI need
+(`https://samsinn-wikis.github.io/pwr-ops/ontology/v1#`). The URI need
 not resolve in v0.5; it serves as a stable identifier for the predicate
 set. Formal SHACL/OWL schema is deferred.
 
-A reference exporter for the `pwr-eops` corpus lives in that repo as
+A reference exporter for the `pwr-ops` corpus lives in that repo as
 `scripts/export-kg.ts` (single TS file, no deps, runs under Bun).
 
 ## Tag references
@@ -534,7 +534,7 @@ This makes coverage queries directly expressible:
 - **Treat the appendix as canonical for the procedure.** When you copy a
   procedure to a new wiki, the appendix travels with it.
 - **Use the cascade script for sim-path changes.** A reference exporter
-  in `pwr-eops` ships `scripts/update-tag.ts <id> --field=sim-path
+  in `pwr-ops` ships `scripts/update-tag.ts <id> --field=sim-path
   --to=<new>` to propagate a definition change across every procedure
   referencing the tag. Cheaper than hand-editing N files; guaranteed
   consistent.
@@ -662,14 +662,14 @@ A v0.2 validator must check:
   `equipment` are errors; conflicting `description` is a warning;
   unreferenced appendix entries are warnings
 
-A reference validator for the `pwr-eops` corpus lives in that repo as
+A reference validator for the `pwr-ops` corpus lives in that repo as
 `validate.ts` (~580 LOC, single file, no dependencies, runs under Bun).
 
 ## Reference rendering: visibility controls
 
 This section describes a **recommended** rendering convention. It is not
 part of the format spec — procmd parsers and KG exporters never need it.
-It documents how the canonical pwr-eops renderer surfaces optional
+It documents how the canonical pwr-ops renderer surfaces optional
 content to readers, so other procmd wikis can adopt a compatible UX if
 they wish.
 
@@ -707,7 +707,7 @@ recommended render — they carry operational importance.
 
 The mechanism is purely browser-side. The procmd source is canonical;
 no parallel rendered files exist. Reference implementation lives in
-`samsinn-wikis/pwr-eops` (`overrides/visibility.css`, `overrides/visibility.js`,
+`samsinn-wikis/pwr-ops` (`overrides/visibility.css`, `overrides/visibility.js`,
 `overrides/main.html` FOUC `<script>`, plus build-time wrapping in
 `scripts/render-procmd.ts`).
 
@@ -880,7 +880,7 @@ The following are deferred to v0.6 or later:
   it.
 - **Cross-wiki tag sharing.** A shared tag catalog reused across
   multiple procedure wikis (e.g. one `pwr-instrumentation` catalog
-  consumed by `pwr-eops` and `pwr-aops`). v0.5 keeps tags per-procedure
+  consumed by `pwr-ops` and `pwr-aops`). v0.5 keeps tags per-procedure
   precisely to avoid pulling cross-wiki references forward; if the use
   case becomes pressing, it lands with general cross-wiki references.
 - **Weighted argumentation.** `Because (strong):` / `Because (weak):`

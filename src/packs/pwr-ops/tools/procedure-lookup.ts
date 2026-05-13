@@ -1,5 +1,5 @@
 // procedure_lookup — fetch a Westinghouse PWR EOP from the samsinn-wikis
-// pwr-eops wiki, parse procmd, render a ready-to-paste markdown reply OR
+// pwr-ops wiki, parse procmd, render a ready-to-paste markdown reply OR
 // a structured JSON shape for agents that reason over the procedure.
 //
 // Fetch policy: fresh from raw.githubusercontent.com on every "first" call,
@@ -140,7 +140,7 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
   return {
     name: 'procedure_lookup',
     description:
-      'Fetches an emergency operating procedure (EOP) from the pwr-eops wiki. ' +
+      'Fetches an emergency operating procedure (EOP) from the pwr-ops wiki. ' +
       'Default returns a complete, ready-to-paste markdown response — step list, mermaid flowchart, source citation. ' +
       'Paste the markdown `data` verbatim into your reply unless you set `format: "json"`, in which case `data` is structured and is for your own reasoning, not for pasting. ' +
       'Call with no `id` to list available procedures.',

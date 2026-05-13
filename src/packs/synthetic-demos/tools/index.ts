@@ -6,8 +6,8 @@
 // because their browser-side widget code has its own install lifecycle.
 //
 // `procedure_lookup` moved out of this pack — it now lives in
-// src/packs/pwr-eops/ as its own bundled pack with a real wiki binding
-// (samsinn-wikis/pwr-eops). The showcase chip's prompt is unchanged.
+// src/packs/pwr-ops/ as its own bundled pack with a real wiki binding
+// (samsinn-wikis/pwr-ops). The showcase chip's prompt is unchanged.
 
 import type { Tool } from '../../../core/types/tool.ts'
 import { norwayPlatformsTool } from './norway-platforms.ts'

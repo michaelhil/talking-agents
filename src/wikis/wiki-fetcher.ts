@@ -3,7 +3,7 @@
 // (the supported wiki repos are public). Process-level in-memory buffer
 // keeps repeat hits within a session free.
 //
-// The first consumer is the pwr-eops pack's procedure_lookup tool.
+// The first consumer is the pwr-ops pack's procedure_lookup tool.
 // Future wiki-backed packs follow the same shape: declare a
 // WikiSourceBinding in pack.json, call createWikiSource(), the helper
 // owns the fetch + buffer.
@@ -22,7 +22,7 @@ interface BufferEntry {
 
 /**
  * Wiki manifest schema v1 — machine-readable counterpart to wiki/index.md.
- * Emitted by the wiki's build pipeline (e.g. pwr-eops/scripts/build-manifest.ts).
+ * Emitted by the wiki's build pipeline (e.g. pwr-ops/scripts/build-manifest.ts).
  */
 export interface WikiManifest {
   readonly version: 1
@@ -71,14 +71,14 @@ export const createWikiSource = (
 
   // Fallback fetch: if raw.githubusercontent.com is unavailable (rate-limit,
   // transient outage), try the GitHub Pages mirror for files the wiki ships
-  // into its `site/` artifact. The pwr-eops deploy workflow stages
+  // into its `site/` artifact. The pwr-ops deploy workflow stages
   // _manifest.json into site/_manifest.json at the org-page root, so the
   // fallback URL is `<citationBase>../<basename>`. For procedure markdown,
   // there is no published .md sidecar today — the fallback returns 404 and
   // surfaces the original raw error to the caller. Adding a `<id>/raw.md`
   // sidecar is a separate wiki-side workstream.
   const pagesFallbackUrl = (path: string): string | null => {
-    // citationBase ends like ".../pwr-eops/procedures/" — strip trailing path
+    // citationBase ends like ".../pwr-ops/procedures/" — strip trailing path
     // segments to get the site root.
     try {
       const base = new URL(binding.citationBase)
@@ -168,7 +168,7 @@ export const createWikiSource = (
 }
 
 // Extract canonical procedure ids from an index page that uses wikilinks.
-// The pwr-eops index lists procedures as `[[E-0]]`, `[[ECA-0.0]]`, etc.
+// The pwr-ops index lists procedures as `[[E-0]]`, `[[ECA-0.0]]`, etc.
 // Returns deduplicated ids in encounter order, filtered to procmd-shaped
 // ids (uppercase + digits + hyphens + dots; must start with a letter).
 const ID_RE = /\[\[([A-Z][A-Z0-9.-]*)\]\]/g

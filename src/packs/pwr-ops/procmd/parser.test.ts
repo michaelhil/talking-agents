@@ -6,7 +6,7 @@ import { parseProcedure } from './parser.ts'
 const fixture = (name: string): string =>
   readFileSync(join(import.meta.dir, '..', 'fixtures', name), 'utf-8')
 
-describe('parseProcedure — E-0 (real fixture from samsinn-wikis/pwr-eops)', () => {
+describe('parseProcedure — E-0 (real fixture from samsinn-wikis/pwr-ops)', () => {
   const result = parseProcedure(fixture('E-0.md'))
   if ('error' in result) throw new Error(`E-0 fixture failed to parse: ${result.error}`)
   const parsed = result

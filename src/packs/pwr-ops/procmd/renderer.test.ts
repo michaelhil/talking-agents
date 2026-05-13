@@ -7,7 +7,7 @@ import { renderProcedure, renderIndex } from './renderer.ts'
 const fixture = (name: string): string =>
   readFileSync(join(import.meta.dir, '..', 'fixtures', name), 'utf-8')
 
-const citationUrl = (id: string): string => `https://samsinn-wikis.github.io/pwr-eops/procedures/${id}/`
+const citationUrl = (id: string): string => `https://samsinn-wikis.github.io/pwr-ops/procedures/${id}/`
 
 describe('renderProcedure — E-0', () => {
   const parsed = parseProcedure(fixture('E-0.md'))
@@ -45,7 +45,7 @@ describe('renderProcedure — E-0', () => {
 
   test('source citation line uses canonical citation URL (not paraphrased)', () => {
     expect(rendered.markdown).toContain('Source: [E-0 — Reactor Trip')
-    expect(rendered.markdown).toContain('https://samsinn-wikis.github.io/pwr-eops/procedures/E-0/')
+    expect(rendered.markdown).toContain('https://samsinn-wikis.github.io/pwr-ops/procedures/E-0/')
   })
 
   test('tags section appears when references exist', () => {
