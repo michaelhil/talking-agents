@@ -11,6 +11,7 @@ import packManifest from './pack.json' with { type: 'json' }
 import { createProcedureLookupTool } from './tools/procedure-lookup.ts'
 import { createWikiLookupTool } from './tools/wiki-lookup.ts'
 import { createEalClassifyTool } from './tools/eal-classify.ts'
+import { createProcedureSearchTool } from './tools/procedure-search.ts'
 import type { WikiSourceBinding } from '../types.ts'
 
 interface ManifestWiki {
@@ -36,6 +37,7 @@ export const PWR_OPS_TOOLS: ReadonlyArray<Tool> = [
   createProcedureLookupTool(wiki.source, wiki.name, wiki.url),
   createWikiLookupTool(wiki.source, wiki.name, wiki.url),
   createEalClassifyTool(wiki.source, wiki.name),
+  createProcedureSearchTool(wiki.source, wiki.name, wiki.url),
 ]
 
 export const PWR_OPS_MANIFEST = manifest

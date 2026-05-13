@@ -133,6 +133,10 @@ export const createWikiSource = (
       if (basename === '_eal-rules.json') {
         return `${siteRoot}_eal-rules.json`.replace(/([^:])\/\/+/g, '$1/')
       }
+      // F.3 — _search-index.json sibling.
+      if (basename === '_search-index.json') {
+        return `${siteRoot}_search-index.json`.replace(/([^:])\/\/+/g, '$1/')
+      }
       // Procedure markdown: <procedureDir>/<id>.md → site/procedures/<id>.md
       const procPrefix = binding.procedureDir.replace(/\/$/, '') + '/'
       if (path.startsWith(procPrefix) && path.endsWith('.md')) {
