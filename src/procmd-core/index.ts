@@ -8,13 +8,17 @@
 // scripts/render-procmd.ts) import from here.
 
 export { parseProcedure, PARSER_PROCMD_VERSION, ACCEPTED_PROCMD_VERSIONS } from './parser.ts'
+export { parseScenario } from './scenario-parser.ts'
 export type {
   Branch,
   BranchTarget,
   ParsedDecision,
   ParsedFrontmatter,
   ParsedProcedure,
+  ParsedScenario,
   ParsedStep,
   ParseResult,
+  ScenarioInjection,
+  ScenarioParseResult,
   TagDefinition,
 } from './types.ts'

@@ -93,3 +93,61 @@ export interface ParsedProcedure {
 }
 
 export type ParseResult = ParsedProcedure | { readonly error: string }
+
+// === Scenario schema (Phase F.0) ===========================================
+//
+// Scenarios bridge procedures to simulator input. Each scenario file lives
+// in `wiki/scenarios/*.md` with simple frontmatter and three structured
+// body sections, each a fenced JSON code block. Authors get readable
+// markdown source; the parser gets unambiguous structured data without a
+// YAML dependency.
+//
+// Expected file layout:
+//
+//     ---
+//     type: scenario
+//     scenario-id: sb-loca
+//     title: Small-break LOCA
+//     ---
+//
+//     Prose preamble describing the scenario.
+//
+//     ## Initial state
+//     ```json
+//     { "PT-455": 2235, "SG-A-LVL-NR": 50 }
+//     ```
+//
+//     ## Injections
+//     ```json
+//     [{ "tag": "PT-455", "value": 1600, "at-time-s": 30 }]
+//     ```
+//
+//     ## Expected traversal
+//     ```json
+//     ["E-0#verify-reactor-trip", "E-1#start-hhsi"]
+//     ```
+//
+//     ## Expected terminal state
+//     ```json
+//     { "RHR-PUMP-A": "RUN" }
+//     ```
+
+export interface ScenarioInjection {
+  readonly tag: string
+  readonly value: string | number | boolean
+  readonly atTimeS: number
+}
+
+export interface ParsedScenario {
+  readonly scenarioId: string
+  readonly title: string
+  readonly preamble: string
+  readonly initialState: Readonly<Record<string, string | number | boolean>>
+  readonly injections: ReadonlyArray<ScenarioInjection>
+  /** Ordered list of `<procedure-id>#<step-id>` refs the scenario expects to traverse. */
+  readonly expectedTraversal: ReadonlyArray<string>
+  readonly expectedTerminalState: Readonly<Record<string, string | number | boolean>>
+  readonly warnings: ReadonlyArray<string>
+}
+
+export type ScenarioParseResult = ParsedScenario | { readonly error: string }
