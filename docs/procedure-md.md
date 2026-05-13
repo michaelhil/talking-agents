@@ -18,17 +18,19 @@ knowledge graph.
 
 ## Status
 
-This document specifies **procmd v0.6**. Samsinn-side runtime support
-(executor tool, agent guardrail traversal, render integration) is out of
-scope for v0.6; see [Deferred](#deferred--out-of-scope-for-v05) at the
-bottom.
+This document specifies **procmd v0.6 normative**. Reference parser:
+`src/procmd-core/parser.ts`. Reference validator:
+`pwr-eops/validate.ts`. Both are version-locked to v0.6.
 
-**Breaking changes are allowed between v0.x minor versions until v1.0.**
-v0.6 is additive over v0.5 — existing v0.5 procedures parse unchanged
-once the frontmatter version is bumped, and only acquire new validation
-rules if they introduce the new `↻` (retry) or `↯` (abort) branch
-targets. v0.5 was additive over v0.4 (tag binding). After v1.0,
-breaking changes require a major bump.
+**No backward compatibility with v0.5 or earlier.** The atomic v0.6 bump
+landed 2026-05-13 alongside the procmd-core extraction; every artifact
+(parser, validator, mkdocs.yml, every procedure frontmatter) declares
+v0.6. Parsers reject other versions with a warning (still parse, but
+output is degraded).
+
+**Versioning protocol.** Breaking changes allowed between v0.x minor
+versions until v1.0; each bump is atomic (every artifact moves together;
+no straddle period). After v1.0, breaking changes require a major bump.
 
 ## Semantic model
 
@@ -71,7 +73,7 @@ procedures use standard `[[wikilinks]]`.
 ```yaml
 ---
 type: procedure
-procedure-md: 0.5
+procedure-md: 0.6
 procedure-id: E-0
 title: Reactor Trip or Safety Injection
 profile: nuclear-erg
@@ -298,7 +300,7 @@ its frontmatter.
 ```yaml
 ---
 type: procedure-profile
-procedure-md: 0.5
+procedure-md: 0.6
 profile-id: nuclear-erg
 title: Nuclear Emergency Response Guidelines profile
 ---
@@ -735,7 +737,7 @@ Tag binding landed in v0.5 (additive); retry + abort glyphs landed in v0.6 (addi
 | Version | Additions | Notes |
 |---|---|---|
 | **v0.5** | `«TAG»` inline references + `## Tags` appendix + `referencesTag` / `tagOnEquipment` KG predicates | Procedures become self-contained — every referenced tag is defined in an appendix in the same file. Cross-procedure validator catches drift on `sim-path` / `units` / `equipment`. No central catalog page. Migration: bump `procedure-md: 0.4` → `0.5`; existing procedures with no tag refs are unchanged. |
-| **v0.6** | `→ ↻` retry-self arrow + `→ ↯` abort arrow + `repeatsSelf` / `abortsWith` KG predicates | Two new branch-target glyphs cover patterns previously expressed as `→ #<self-id>` (with no structural signal of "this is a loop") and as falling-off-the-end (with no structural signal of "this is an abort"). Validator: a step whose only branches are `↻` is rejected (infinite loop); bare unconditional `→ ↻` / `→ ↯` rejected (loops/aborts must carry a condition or cause). Migration: bump `procedure-md: 0.5` → `0.6`; existing procedures unchanged unless they adopt the new arrows. |
+| **v0.6** | `→ ↻` retry-self arrow + `→ ↯` abort arrow + `repeatsSelf` / `abortsWith` KG predicates | Two new branch-target glyphs cover patterns previously expressed as `→ #<self-id>` (with no structural signal of "this is a loop") and as falling-off-the-end (with no structural signal of "this is an abort"). Validator: a step whose only branches are `↻` is rejected (infinite loop); bare unconditional `→ ↻` / `→ ↯` rejected (loops/aborts must carry a condition or cause). Migration: bump `procedure-md: 0.6` → `0.6`; existing procedures unchanged unless they adopt the new arrows. |
 
 ## Versioning policy
 
@@ -790,7 +792,7 @@ of features must be announced one minor version before removal.
 ```markdown
 ---
 type: procedure
-procedure-md: 0.5
+procedure-md: 0.6
 procedure-id: example-engine-restart
 title: Engine Restart After In-Flight Shutdown
 profile: aviation-qrh
