@@ -203,7 +203,6 @@ describe('procedure_lookup — manifest-driven index', () => {
       version: 1,
       wiki: 'pwr-eops',
       procmdVersion: '0.6',
-      generatedAt: '2026-05-13T00:00:00Z',
       procedures: [
         { id: 'E-0', title: 'Reactor Trip', coverage: 'developed', stepCount: 18 },
         { id: 'FR-S.1', title: 'ATWS', coverage: 'stub', stepCount: 4 },

@@ -134,13 +134,41 @@ describe('wiki-fetcher — GitHub Pages fallback for manifest', () => {
     }
   })
 
-  test('procedure markdown does NOT have a Pages fallback (no sidecar published)', async () => {
+  test('procedure markdown falls back to Pages sidecar when raw fails', async () => {
+    const original = globalThis.fetch
+    let rawCalls = 0
+    let sidecarCalls = 0
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('https://raw.githubusercontent.com/')) {
+        rawCalls += 1
+        return Promise.resolve(new Response('boom', { status: 503 }))
+      }
+      if (url === 'https://samsinn-wikis.github.io/pwr-eops/procedures/E-0.md') {
+        sidecarCalls += 1
+        return Promise.resolve(new Response('---\nprocedure-id: E-0\ntitle: Stub\n---\n## Step 1 [id: x]\nCheck: ok\n', { status: 200 }))
+      }
+      return Promise.resolve(new Response('404', { status: 404 }))
+    }) as typeof fetch
+    try {
+      const src = createWikiSource(BINDING)
+      const md = await src.fetchProcedure('E-0')
+      expect(md).toContain('procedure-id: E-0')
+      expect(rawCalls).toBe(1)
+      expect(sidecarCalls).toBe(1)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  test('procedure markdown failure with no sidecar surfaces the raw error', async () => {
     const original = globalThis.fetch
     globalThis.fetch = ((input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.startsWith('https://raw.githubusercontent.com/')) {
         return Promise.resolve(new Response('boom', { status: 503 }))
       }
+      // No sidecar published — Pages 404s
       return Promise.resolve(new Response('404', { status: 404 }))
     }) as typeof fetch
     try {

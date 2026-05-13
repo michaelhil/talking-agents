@@ -28,7 +28,6 @@ export interface WikiManifest {
   readonly version: 1
   readonly wiki: string
   readonly procmdVersion?: string
-  readonly generatedAt?: string
   readonly procedures: ReadonlyArray<WikiManifestEntry>
 }
 
@@ -85,8 +84,17 @@ export const createWikiSource = (
       const base = new URL(binding.citationBase)
       const siteRoot = `${base.origin}${base.pathname.replace(/procedures\/?$/, '')}`
       const basename = path.split('/').pop()!
+      // The deploy workflow stages these into the GitHub Pages tree:
+      //   site/_manifest.json
+      //   site/procedures/<id>.md   (verbatim source markdown)
+      //   site/profiles/<id>.md
       if (basename === '_manifest.json' || path === binding.manifestFile) {
         return `${siteRoot}_manifest.json`.replace(/([^:])\/\/+/g, '$1/')
+      }
+      // Procedure markdown: <procedureDir>/<id>.md → site/procedures/<id>.md
+      const procPrefix = binding.procedureDir.replace(/\/$/, '') + '/'
+      if (path.startsWith(procPrefix) && path.endsWith('.md')) {
+        return `${siteRoot}procedures/${basename}`.replace(/([^:])\/\/+/g, '$1/')
       }
       return null
     } catch { return null }
