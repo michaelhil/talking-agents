@@ -34,8 +34,12 @@ const PIN_SVG = `<svg viewBox="0 0 24 32" width="24" height="32" xmlns="http://w
   <circle cx="12" cy="12" r="4.5" fill="white"/>
 </svg>`
 
+// Top-down plane silhouette: nose up, wings spread, tail at bottom.
+// The previous version was a 4-pointed star (orthogonal radii from centre);
+// indistinguishable from the AIRPORT marker. Now: pointed nose, full-width
+// wings at the fuselage, narrow tail wings near the rear, fuselage between.
 const PLANE_SVG = `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-  <path d="M12 2 L13.5 10 L22 12 L13.5 14 L12 22 L10.5 14 L2 12 L10.5 10 Z" fill="currentColor" stroke="rgba(0,0,0,.4)" stroke-width=".6"/>
+  <path d="M12 1 L13.4 9 L22 12 L22 13.5 L13.4 11.5 L13 17 L15.5 19 L15.5 20.5 L8.5 20.5 L8.5 19 L11 17 L10.6 11.5 L2 13.5 L2 12 L10.6 9 Z" fill="currentColor" stroke="rgba(0,0,0,.4)" stroke-width=".6" stroke-linejoin="round"/>
 </svg>`
 
 const AIRPORT_SVG = `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
