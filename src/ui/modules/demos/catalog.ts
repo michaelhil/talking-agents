@@ -54,9 +54,9 @@ export const DEMO_CATALOG: ReadonlyArray<Demo> = [
         prompt: 'Use the eal_classify tool to classify a scenario where a steam generator tube rupture (SGTR) is detected with primary-to-secondary leakage of 50 gpm. What EAL class does this map to?',
       },
       {
-        label: 'Reference: RCS tag catalogue',
-        description: 'Fetch a wiki reference page (not a procedure) — the tag catalogue.',
-        prompt: 'Use the wiki_lookup tool to fetch the tag-catalogue page for the RCS system and summarise the main tagged points.',
+        label: 'Reference: Tag catalogue index',
+        description: 'Fetch a wiki reference page (not a procedure) — the tag-catalogue index.',
+        prompt: 'Use the wiki_lookup tool with type "tag-catalogue" and id "index" to fetch the tag-catalogue index, then summarise what systems are covered and what each entry represents.',
       },
     ],
   },

@@ -181,26 +181,26 @@ const buildHeaderIcon = (demo: Demo): HTMLButtonElement => {
 
 export const refreshDemoHeaderIcon = (): void => {
   const roomId = $selectedRoomId.get()
-  const header = document.getElementById('room-header')
-  if (!header) return
-  const existing = document.getElementById(HEADER_ICON_ID)
-  if (!roomId) {
-    if (existing) existing.remove()
-    return
-  }
+  // Room header layout: `#room-header > div(name) + div(icon-cluster)` with
+  // `justify-between`. Append into the icon cluster (second child) so the
+  // existing right-aligned cluster keeps its layout. Appending to
+  // `#room-header` directly adds a third flex child and the name/cluster
+  // pair collapses to centered.
+  const cluster = document.querySelector('#room-header > div:nth-child(2)') as HTMLElement | null
+  if (!cluster) return
+  const existingGroup = document.getElementById(`${HEADER_ICON_ID}-group`)
+  const removeIcon = (): void => { existingGroup?.remove() }
+  if (!roomId) { removeIcon(); return }
   const demoId = $activeDemoByRoom.get()[roomId]
-  if (!demoId) {
-    if (existing) existing.remove()
-    return
-  }
+  if (!demoId) { removeIcon(); return }
   const demo = getDemo(demoId)
-  if (!demo) {
-    if (existing) existing.remove()
-    return
-  }
-  if (existing) return  // already correct
-  // Place icon before the room name / mute button. Header structure:
-  //   <div id="roomHeader"> ... room name + buttons ... </div>
-  // Append at end is safe; visibility-popover keeps ordering stable.
-  header.appendChild(buildHeaderIcon(demo))
+  if (!demo) { removeIcon(); return }
+  if (existingGroup) return  // already correct
+  // Append as a new toolbar-group at the end of the icon cluster so the
+  // wand sits to the right of the Summary group, with a divider.
+  const group = document.createElement('div')
+  group.className = 'toolbar-group toolbar-divider'
+  group.id = `${HEADER_ICON_ID}-group`
+  group.appendChild(buildHeaderIcon(demo))
+  cluster.appendChild(group)
 }
