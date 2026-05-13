@@ -7,7 +7,7 @@
 
 import type { Tool, ToolResult } from '../../../core/types/tool.ts'
 import type { WikiSourceBinding } from '../../types.ts'
-import { createWikiSource, extractProcedureIds, type WikiSource } from '../../../wikis/wiki-fetcher.ts'
+import { createWikiSource, extractProcedureIds, type WikiSource, type WikiManifest } from '../../../wikis/wiki-fetcher.ts'
 import { parseProcedure } from '../procmd/parser.ts'
 import type { ParsedProcedure, ParsedStep } from '../procmd/parser.ts'
 import { renderProcedure, renderIndex } from '../procmd/renderer.ts'
@@ -16,10 +16,44 @@ interface PwrEopsToolDeps {
   readonly source: WikiSource
   readonly wikiName: string
   readonly wikiHomepage: string
+  /**
+   * Optional telemetry sink. One call per tool invocation. Default is a
+   * stderr JSONL line tagged `procedure_lookup_telemetry` so an operator
+   * can `tail -F` the process log and see usage. When the broader
+   * ToolContext.logEvent hook lands (planned), bootstrap will pass a real
+   * sink-bound callback here.
+   */
+  readonly telemetry?: (event: ProcedureLookupTelemetry) => void
+}
+
+export interface ProcedureLookupTelemetry {
+  readonly tool: 'procedure_lookup'
+  readonly ts: string
+  readonly callerId: string
+  readonly callerName: string
+  readonly id: string | null
+  readonly format: 'markdown' | 'json'
+  readonly mode: 'full' | 'summary'
+  readonly step: string | null
+  readonly success: boolean
+  readonly durationMs: number
+  readonly indexSource: 'manifest' | 'regex' | 'none'
+  readonly parseWarnings: number
+  readonly errorClass?: 'unknown-id' | 'unknown-step' | 'fetch-failed' | 'parse-failed' | 'index-failed'
+}
+
+const defaultTelemetry = (event: ProcedureLookupTelemetry): void => {
+  // Single stderr line, JSON. Operators tail; samsinn-side aggregator can
+  // grep for `procedure_lookup_telemetry`. No PII; no content; just
+  // ids, durations, and classification of outcome.
+  try {
+    console.error('procedure_lookup_telemetry ' + JSON.stringify(event))
+  } catch { /* never crash a tool over a log line */ }
 }
 
 interface IndexCache {
   ids: ReadonlyArray<string>
+  manifest: WikiManifest | null
   fetchedAt: number
 }
 const INDEX_TTL_MS = 5 * 60 * 1000
@@ -85,13 +119,22 @@ const renderSummaryFragment = (parsed: ParsedProcedure, citationUrl: string): st
 const buildTool = (deps: PwrEopsToolDeps): Tool => {
   let indexCache: IndexCache | null = null
 
-  const getIndex = async (): Promise<ReadonlyArray<string>> => {
-    const now = Date.now()
-    if (indexCache && now - indexCache.fetchedAt < INDEX_TTL_MS) return indexCache.ids
+  const refreshIndex = async (): Promise<IndexCache> => {
+    const manifest = await deps.source.fetchManifest()
+    if (manifest && manifest.procedures.length > 0) {
+      const ids = manifest.procedures.map(p => p.id)
+      return { ids, manifest, fetchedAt: Date.now() }
+    }
     const raw = await deps.source.fetchIndex()
-    const ids = extractProcedureIds(raw)
-    indexCache = { ids, fetchedAt: now }
-    return ids
+    return { ids: extractProcedureIds(raw), manifest: null, fetchedAt: Date.now() }
+  }
+
+  const getIndex = async (): Promise<{ ids: ReadonlyArray<string>; source: 'manifest' | 'regex' }> => {
+    const now = Date.now()
+    if (!indexCache || now - indexCache.fetchedAt >= INDEX_TTL_MS) {
+      indexCache = await refreshIndex()
+    }
+    return { ids: indexCache.ids, source: indexCache.manifest ? 'manifest' : 'regex' }
   }
 
   return {
@@ -130,28 +173,58 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
       },
       additionalProperties: false,
     },
-    execute: async (params): Promise<ToolResult> => {
+    execute: async (params, context): Promise<ToolResult> => {
+      const t0 = Date.now()
       const rawId = typeof params.id === 'string' ? params.id.trim() : ''
       const format = params.format === 'json' ? 'json' : 'markdown'
       const mode = params.mode === 'summary' ? 'summary' : 'full'
       const stepId = typeof params.step === 'string' ? params.step.trim() : ''
+      let indexSource: 'manifest' | 'regex' | 'none' = 'none'
+      let parseWarnings = 0
+      const emit = deps.telemetry ?? defaultTelemetry
+      const fire = (success: boolean, errorClass?: ProcedureLookupTelemetry['errorClass']): void => {
+        emit({
+          tool: 'procedure_lookup',
+          ts: new Date().toISOString(),
+          callerId: context.callerId,
+          callerName: context.callerName,
+          id: rawId || null,
+          format,
+          mode,
+          step: stepId || null,
+          success,
+          durationMs: Date.now() - t0,
+          indexSource,
+          parseWarnings,
+          ...(errorClass ? { errorClass } : {}),
+        })
+      }
 
       if (!rawId) {
         try {
-          const ids = await getIndex()
-          if (format === 'json') return { success: true, data: { kind: 'index', wikiName: deps.wikiName, wikiHomepage: deps.wikiHomepage, ids } }
-          return { success: true, data: renderIndex(ids, deps.wikiName, deps.wikiHomepage) }
+          const idx = await getIndex()
+          indexSource = idx.source
+          if (format === 'json') {
+            fire(true)
+            return { success: true, data: { kind: 'index', wikiName: deps.wikiName, wikiHomepage: deps.wikiHomepage, ids: idx.ids } }
+          }
+          fire(true)
+          return { success: true, data: renderIndex(idx.ids, deps.wikiName, deps.wikiHomepage) }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
+          fire(false, 'index-failed')
           return { success: false, error: `Could not load procedure index from ${deps.wikiName}: ${msg}` }
         }
       }
 
       let ids: ReadonlyArray<string>
       try {
-        ids = await getIndex()
+        const idx = await getIndex()
+        ids = idx.ids
+        indexSource = idx.source
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        fire(false, 'index-failed')
         return { success: false, error: `Could not validate procedure id "${rawId}" — index fetch failed: ${msg}. Try again in a minute.` }
       }
       if (!ids.includes(rawId)) {
@@ -159,6 +232,7 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
         const hint = suggestions.length > 0
           ? ` Did you mean: ${suggestions.join(', ')}?`
           : ` Available ids: ${ids.slice(0, 10).join(', ')}${ids.length > 10 ? `, ... (${ids.length} total)` : ''}.`
+        fire(false, 'unknown-id')
         return { success: false, error: `Procedure "${rawId}" not found in ${deps.wikiName}.${hint}` }
       }
 
@@ -167,19 +241,23 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
         raw = await deps.source.fetchProcedure(rawId)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        fire(false, 'fetch-failed')
         return { success: false, error: `Could not fetch procedure "${rawId}" from GitHub: ${msg}. Try again in a minute.` }
       }
 
       const parsed = parseProcedure(raw)
       if ('error' in parsed) {
         if (format === 'json') {
+          fire(false, 'parse-failed')
           return { success: false, error: `Could not parse "${rawId}" as procmd: ${parsed.error}` }
         }
+        fire(true, 'parse-failed')  // raw fallback IS a success from the user's POV
         return {
           success: true,
           data: `> ⚠️ Could not parse procedure as procmd: ${parsed.error}. Showing raw source.\n\n${raw}\n\nSource: [${rawId}](${deps.source.citationUrl(rawId)})`,
         }
       }
+      parseWarnings = parsed.warnings.length
 
       if (stepId) {
         const step = parsed.steps.find(s => s.id === stepId)
@@ -187,8 +265,10 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
           const stepIds = parsed.steps.map(s => s.id)
           const hints = fuzzyMatch(stepId, stepIds)
           const hint = hints.length > 0 ? ` Did you mean: ${hints.join(', ')}?` : ` Available step ids: ${stepIds.slice(0, 8).join(', ')}${stepIds.length > 8 ? `, ...` : ''}.`
+          fire(false, 'unknown-step')
           return { success: false, error: `Step "${stepId}" not found in ${rawId}.${hint}` }
         }
+        fire(true)
         if (format === 'json') {
           return { success: true, data: { kind: 'step', procedureId: rawId, step, citationUrl: deps.source.citationUrl(rawId) } }
         }
@@ -196,6 +276,7 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
       }
 
       if (mode === 'summary') {
+        fire(true)
         if (format === 'json') {
           return { success: true, data: {
             kind: 'summary',
@@ -214,6 +295,7 @@ const buildTool = (deps: PwrEopsToolDeps): Tool => {
         }
         return { success: true, data: renderSummaryFragment(parsed, deps.source.citationUrl(rawId)) }
       }
+      fire(true)
 
       if (format === 'json') {
         return { success: true, data: {
@@ -233,8 +315,10 @@ export const createProcedureLookupTool = (
   binding: WikiSourceBinding,
   wikiName: string,
   wikiHomepage: string,
+  telemetry?: (event: ProcedureLookupTelemetry) => void,
 ): Tool => buildTool({
   source: createWikiSource(binding),
   wikiName,
   wikiHomepage,
+  ...(telemetry ? { telemetry } : {}),
 })

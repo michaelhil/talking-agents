@@ -20,10 +20,40 @@ interface BufferEntry {
   readonly fetchedAt: number
 }
 
+/**
+ * Wiki manifest schema v1 — machine-readable counterpart to wiki/index.md.
+ * Emitted by the wiki's build pipeline (e.g. pwr-eops/scripts/build-manifest.ts).
+ */
+export interface WikiManifest {
+  readonly version: 1
+  readonly wiki: string
+  readonly procmdVersion?: string
+  readonly generatedAt?: string
+  readonly procedures: ReadonlyArray<WikiManifestEntry>
+}
+
+export interface WikiManifestEntry {
+  readonly id: string
+  readonly title?: string
+  readonly file?: string
+  readonly category?: string
+  readonly csfsMonitored?: ReadonlyArray<string>
+  readonly entryTriggers?: ReadonlyArray<string>
+  readonly coverage?: 'developed' | 'partial' | 'stub'
+  readonly stepCount?: number
+  readonly tagDefinitionCount?: number
+}
+
 export interface WikiSource {
   readonly binding: WikiSourceBinding
   /** Fetch the index file once and cache it; subsequent calls return the cached value within ttl. */
   readonly fetchIndex: () => Promise<string>
+  /**
+   * Fetch the wiki's `_manifest.json` if the binding declares `manifestFile`.
+   * Returns null if not declared or if the fetch/parse fails (caller falls
+   * back to regex scraping of `indexFile`). Never throws.
+   */
+  readonly fetchManifest: () => Promise<WikiManifest | null>
   /** Fetch a procedure's raw markdown by id (case-sensitive — wiki uses canonical ids). */
   readonly fetchProcedure: (id: string) => Promise<string>
   /** Build the canonical citation URL for a procedure id (the rendered wiki page). */
@@ -40,10 +70,52 @@ export const createWikiSource = (
 
   const rawBase = `https://raw.githubusercontent.com/${binding.org}/${binding.repo}/${binding.branch}`
 
+  // Fallback fetch: if raw.githubusercontent.com is unavailable (rate-limit,
+  // transient outage), try the GitHub Pages mirror for files the wiki ships
+  // into its `site/` artifact. The pwr-eops deploy workflow stages
+  // _manifest.json into site/_manifest.json at the org-page root, so the
+  // fallback URL is `<citationBase>../<basename>`. For procedure markdown,
+  // there is no published .md sidecar today — the fallback returns 404 and
+  // surfaces the original raw error to the caller. Adding a `<id>/raw.md`
+  // sidecar is a separate wiki-side workstream.
+  const pagesFallbackUrl = (path: string): string | null => {
+    // citationBase ends like ".../pwr-eops/procedures/" — strip trailing path
+    // segments to get the site root.
+    try {
+      const base = new URL(binding.citationBase)
+      const siteRoot = `${base.origin}${base.pathname.replace(/procedures\/?$/, '')}`
+      const basename = path.split('/').pop()!
+      if (basename === '_manifest.json' || path === binding.manifestFile) {
+        return `${siteRoot}_manifest.json`.replace(/([^:])\/\/+/g, '$1/')
+      }
+      return null
+    } catch { return null }
+  }
+
   const fetchFresh = async (path: string): Promise<string> => {
     const url = `${rawBase}/${path}`
-    const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } }, FETCH_TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } }, FETCH_TIMEOUT_MS)
+    } catch (err) {
+      // Network-level failure — try fallback before giving up
+      const fb = pagesFallbackUrl(path)
+      if (fb) {
+        try {
+          const fbRes = await fetchWithTimeout(fb, { headers: { 'User-Agent': USER_AGENT } }, FETCH_TIMEOUT_MS)
+          if (fbRes.ok) return await fbRes.text()
+        } catch { /* fall through to original error */ }
+      }
+      throw err
+    }
     if (!res.ok) {
+      const fb = pagesFallbackUrl(path)
+      if (fb) {
+        try {
+          const fbRes = await fetchWithTimeout(fb, { headers: { 'User-Agent': USER_AGENT } }, FETCH_TIMEOUT_MS)
+          if (fbRes.ok) return await fbRes.text()
+        } catch { /* fall through */ }
+      }
       throw new Error(`HTTP ${res.status} fetching ${path} from ${binding.org}/${binding.repo}`)
     }
     return await res.text()
@@ -58,9 +130,29 @@ export const createWikiSource = (
     return value
   }
 
+  const fetchManifest = async (): Promise<WikiManifest | null> => {
+    if (!binding.manifestFile) return null
+    let raw: string
+    try {
+      raw = await getBuffered('__manifest__', binding.manifestFile)
+    } catch {
+      return null
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (!parsed || typeof parsed !== 'object') return null
+      const m = parsed as Partial<WikiManifest>
+      if (m.version !== 1 || !Array.isArray(m.procedures)) return null
+      return m as WikiManifest
+    } catch {
+      return null
+    }
+  }
+
   return {
     binding,
     fetchIndex: () => getBuffered('__index__', binding.indexFile),
+    fetchManifest,
     fetchProcedure: (id: string) => getBuffered(id, `${binding.procedureDir}/${id}.md`),
     citationUrl: (id: string) => `${binding.citationBase.replace(/\/$/, '')}/${id}/`,
     rawUrl: (id: string) => `${rawBase}/${binding.procedureDir}/${id}.md`,

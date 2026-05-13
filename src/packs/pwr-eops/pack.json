@@ -11,6 +11,7 @@
         "branch": "main",
         "procedureDir": "wiki/procedures",
         "indexFile": "wiki/index.md",
+        "manifestFile": "wiki/_manifest.json",
         "citationBase": "https://samsinn-wikis.github.io/pwr-eops/procedures/"
       }
     }

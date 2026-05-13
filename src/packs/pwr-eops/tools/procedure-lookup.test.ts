@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createProcedureLookupTool } from './procedure-lookup.ts'
+import { createProcedureLookupTool, type ProcedureLookupTelemetry } from './procedure-lookup.ts'
 import type { WikiSourceBinding } from '../../types.ts'
 
 const BINDING: WikiSourceBinding = {
@@ -145,6 +145,125 @@ describe('procedure_lookup — format / step / mode parameters', () => {
     expect(data.kind).toBe('summary')
     expect(data.stepIds.length).toBeGreaterThan(5)
     expect(data.entryTriggers).toContain('reactor-trip-signal')
+  })
+})
+
+describe('procedure_lookup — telemetry', () => {
+  let restore: () => void
+  beforeEach(() => { restore = installFetchMock(fixtureResponder) })
+  afterEach(() => restore())
+
+  test('emits one telemetry event per call with success + duration + indexSource', async () => {
+    const events: ProcedureLookupTelemetry[] = []
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/', e => events.push(e))
+    await tool.execute({ id: 'E-0' }, ctx)
+    expect(events.length).toBe(1)
+    expect(events[0]!.tool).toBe('procedure_lookup')
+    expect(events[0]!.success).toBe(true)
+    expect(events[0]!.id).toBe('E-0')
+    expect(events[0]!.indexSource).toBe('regex')  // BINDING has no manifestFile
+    expect(events[0]!.callerId).toBe('t')
+    expect(typeof events[0]!.durationMs).toBe('number')
+  })
+
+  test('emits error-classified telemetry on unknown id', async () => {
+    const events: ProcedureLookupTelemetry[] = []
+    const tool = createProcedureLookupTool(BINDING, 'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/', e => events.push(e))
+    await tool.execute({ id: 'NONESUCH' }, ctx)
+    expect(events.length).toBe(1)
+    expect(events[0]!.success).toBe(false)
+    expect(events[0]!.errorClass).toBe('unknown-id')
+  })
+
+  test('indexSource reports "manifest" when manifest is consumed', async () => {
+    restore()
+    restore = installFetchMock((url) => {
+      if (url.endsWith('/wiki/_manifest.json')) return new Response(JSON.stringify({
+        version: 1, wiki: 'pwr-eops', procedures: [{ id: 'E-0', title: 'Reactor Trip' }],
+      }), { status: 200 })
+      return fixtureResponder(url)
+    })
+    const events: ProcedureLookupTelemetry[] = []
+    const tool = createProcedureLookupTool(
+      { ...BINDING, manifestFile: 'wiki/_manifest.json' },
+      'PWR EOPs', 'https://samsinn-wikis.github.io/pwr-eops/',
+      e => events.push(e),
+    )
+    await tool.execute({ id: 'E-0' }, ctx)
+    expect(events[0]!.indexSource).toBe('manifest')
+  })
+})
+
+describe('procedure_lookup — manifest-driven index', () => {
+  let restore: () => void
+  afterEach(() => restore?.())
+
+  test('binding with manifestFile prefers the manifest over regex on indexFile', async () => {
+    const MANIFEST = {
+      version: 1,
+      wiki: 'pwr-eops',
+      procmdVersion: '0.6',
+      generatedAt: '2026-05-13T00:00:00Z',
+      procedures: [
+        { id: 'E-0', title: 'Reactor Trip', coverage: 'developed', stepCount: 18 },
+        { id: 'FR-S.1', title: 'ATWS', coverage: 'stub', stepCount: 4 },
+        // Procedure that does NOT appear in index.md — manifest is authoritative
+        { id: 'AOP-1', title: 'Generic AOP', coverage: 'developed', stepCount: 10 },
+      ],
+    }
+    restore = installFetchMock((url) => {
+      if (url.endsWith('/wiki/_manifest.json')) return new Response(JSON.stringify(MANIFEST), { status: 200 })
+      if (url.endsWith('/wiki/index.md')) return new Response('# Old index\n[[E-0]]', { status: 200 })  // stale on purpose
+      if (url.endsWith('/wiki/procedures/AOP-1.md')) return new Response(`---
+procedure-id: AOP-1
+title: Generic AOP
+profile: nuclear-erg
+applies-to: anywhere
+---
+
+## Step 1 [id: x]
+Check: ok
+`, { status: 200 })
+      return new Response('not found', { status: 404 })
+    })
+    const tool = createProcedureLookupTool(
+      { ...BINDING, manifestFile: 'wiki/_manifest.json' },
+      'PWR EOPs',
+      'https://samsinn-wikis.github.io/pwr-eops/',
+    )
+    // AOP-1 is in manifest but NOT in index.md — should still resolve
+    const r = await tool.execute({ id: 'AOP-1' }, ctx)
+    expect(r.success).toBe(true)
+    expect(r.data as string).toContain('AOP-1')
+  })
+
+  test('manifest fetch failure falls through to regex on indexFile', async () => {
+    restore = installFetchMock((url) => {
+      if (url.endsWith('/wiki/_manifest.json')) return new Response('', { status: 404 })
+      return fixtureResponder(url)
+    })
+    const tool = createProcedureLookupTool(
+      { ...BINDING, manifestFile: 'wiki/_manifest.json' },
+      'PWR EOPs',
+      'https://samsinn-wikis.github.io/pwr-eops/',
+    )
+    // Should fall back to regex extraction from the existing index.md fixture
+    const r = await tool.execute({ id: 'E-0' }, ctx)
+    expect(r.success).toBe(true)
+  })
+
+  test('malformed manifest is rejected and falls through to regex', async () => {
+    restore = installFetchMock((url) => {
+      if (url.endsWith('/wiki/_manifest.json')) return new Response('{"version":2,"procedures":[]}', { status: 200 })  // unsupported version
+      return fixtureResponder(url)
+    })
+    const tool = createProcedureLookupTool(
+      { ...BINDING, manifestFile: 'wiki/_manifest.json' },
+      'PWR EOPs',
+      'https://samsinn-wikis.github.io/pwr-eops/',
+    )
+    const r = await tool.execute({ id: 'E-0' }, ctx)
+    expect(r.success).toBe(true)  // regex fallback should still find E-0
   })
 })
 

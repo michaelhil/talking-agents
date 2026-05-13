@@ -14,8 +14,15 @@ export interface WikiSourceBinding {
   readonly repo: string
   readonly branch: string                  // typically "main"
   readonly procedureDir: string            // path within the repo, e.g. "wiki/procedures"
-  readonly indexFile: string               // path to the index file with [[ID]] wikilinks
+  readonly indexFile: string               // path to the index file with [[ID]] wikilinks (fallback for old wikis)
   readonly citationBase: string            // base URL for clickable per-procedure citations
+  /**
+   * Optional path to a machine-readable manifest emitted by the wiki's build
+   * pipeline (e.g. `wiki/_manifest.json`). When present, the fetcher prefers
+   * it over regex-scraping `indexFile`. Manifest shape is documented in the
+   * pwr-eops repo at `scripts/build-manifest.ts`.
+   */
+  readonly manifestFile?: string
 }
 
 export interface WikiRef {

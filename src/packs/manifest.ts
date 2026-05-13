@@ -57,7 +57,7 @@ const parseWikiSource = (raw: unknown, wikiName: string, filePath: string): Wiki
       return undefined
     }
   }
-  return {
+  const out: WikiSourceBinding = {
     org: (s.org as string).trim(),
     repo: (s.repo as string).trim(),
     branch: (s.branch as string).trim(),
@@ -65,6 +65,10 @@ const parseWikiSource = (raw: unknown, wikiName: string, filePath: string): Wiki
     indexFile: (s.indexFile as string).trim().replace(/^\/+/, ''),
     citationBase: (s.citationBase as string).trim(),
   }
+  if (typeof s['manifestFile'] === 'string' && (s['manifestFile'] as string).trim()) {
+    return { ...out, manifestFile: (s['manifestFile'] as string).trim().replace(/^\/+/, '') }
+  }
+  return out
 }
 
 export const readManifest = async (dirPath: string): Promise<PackManifest> => {

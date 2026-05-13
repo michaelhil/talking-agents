@@ -92,3 +92,62 @@ describe('extractProcedureIds', () => {
     expect(extractProcedureIds('# Nothing here')).toEqual([])
   })
 })
+
+describe('wiki-fetcher — GitHub Pages fallback for manifest', () => {
+  const BINDING = {
+    org: 'samsinn-wikis',
+    repo: 'pwr-eops',
+    branch: 'main',
+    procedureDir: 'wiki/procedures',
+    indexFile: 'wiki/index.md',
+    manifestFile: 'wiki/_manifest.json',
+    citationBase: 'https://samsinn-wikis.github.io/pwr-eops/procedures/',
+  }
+
+  test('falls back to GitHub Pages mirror when raw.githubusercontent 404s', async () => {
+    const MANIFEST = JSON.stringify({ version: 1, wiki: 'pwr-eops', procedures: [{ id: 'X-1' }] })
+    const original = globalThis.fetch
+    let rawCalls = 0
+    let pagesCalls = 0
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('https://raw.githubusercontent.com/')) {
+        rawCalls += 1
+        return Promise.resolve(new Response('rate limited', { status: 429 }))
+      }
+      if (url === 'https://samsinn-wikis.github.io/pwr-eops/_manifest.json') {
+        pagesCalls += 1
+        return Promise.resolve(new Response(MANIFEST, { status: 200 }))
+      }
+      return Promise.resolve(new Response('404', { status: 404 }))
+    }) as typeof fetch
+
+    try {
+      const src = createWikiSource(BINDING)
+      const manifest = await src.fetchManifest()
+      expect(manifest).not.toBeNull()
+      expect(manifest!.procedures[0]!.id).toBe('X-1')
+      expect(rawCalls).toBe(1)
+      expect(pagesCalls).toBe(1)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  test('procedure markdown does NOT have a Pages fallback (no sidecar published)', async () => {
+    const original = globalThis.fetch
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('https://raw.githubusercontent.com/')) {
+        return Promise.resolve(new Response('boom', { status: 503 }))
+      }
+      return Promise.resolve(new Response('404', { status: 404 }))
+    }) as typeof fetch
+    try {
+      const src = createWikiSource(BINDING)
+      await expect(src.fetchProcedure('E-0')).rejects.toThrow(/HTTP 503/)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+})
