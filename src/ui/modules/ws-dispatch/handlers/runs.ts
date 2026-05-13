@@ -20,13 +20,6 @@ import {
   handleSummaryRunFailed,
 } from '../../panels/summary-panel.ts'
 import { shouldEmitBound } from '../dedup.ts'
-import {
-  handleScenarioStarted,
-  handleScenarioGuideShown,
-  handleScenarioCompleted,
-  handleScenarioFailed,
-  handleScenarioStopped,
-} from '../../scenario-overlay.ts'
 
 type OutboundByType<K extends WSOutbound['type']> = Extract<WSOutbound, { readonly type: K }>
 
@@ -128,35 +121,6 @@ export const runHandlers: RunHandlers = {
         if (Array.isArray(scripts)) $scriptCatalog.set(scripts as never)
       })
       .catch(() => { /* ignore */ })
-  },
-
-  // --- Scenarios ---
-  // Forwarded to scenario-overlay.ts which manages the transient guide UI.
-  // No persistent UI state lives in the stores layer (matches the rejected-
-  // artifacts precedent — scenarios layer guidance on top of chat, not a
-  // sidebar surface).
-
-  scenario_started(msg) {
-    handleScenarioStarted(msg.runId, msg.title)
-  },
-  scenario_guide_shown(msg) {
-    handleScenarioGuideShown(msg)
-  },
-  scenario_completed(msg) {
-    handleScenarioCompleted(msg.runId)
-  },
-  scenario_failed(msg) {
-    handleScenarioFailed(msg.runId, msg.reason)
-  },
-  scenario_stopped(msg) {
-    handleScenarioStopped(msg.runId)
-  },
-  scenario_op_executed(_msg) {
-    // No UI work — guide-shown events drive the overlay; op_executed is
-    // for external observers / debugging only.
-  },
-  scenario_catalog_changed(_msg) {
-    // No catalog UI in v1; reserved for a future scenarios browser.
   },
 
   // --- Ollama ---

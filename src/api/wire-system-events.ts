@@ -69,32 +69,6 @@ export const wireSystemEvents = (
     sched()
   })
 
-  system.scenarioStore.onChange(() => {
-    broadcast({ type: 'scenario_catalog_changed' })
-    sched()
-  })
-
-  system.setOnScenarioEvent((runId, event, detail) => {
-    if (event === 'scenario_started') {
-      const d = detail as { scenarioId: string; title: string; totalOps: number }
-      broadcast({ type: 'scenario_started', runId, ...d })
-    } else if (event === 'scenario_op_executed') {
-      const d = detail as { opIndex: number; kind: string }
-      broadcast({ type: 'scenario_op_executed', runId, ...d })
-    } else if (event === 'scenario_guide_shown') {
-      const d = detail as { kind: 'tooltip' | 'modal'; selector?: string; title?: string; body: string; waitFor: { type: 'click' | 'post' | 'timer'; selector?: string; room?: string; seconds?: number } | null }
-      broadcast({ type: 'scenario_guide_shown', runId, ...d })
-    } else if (event === 'scenario_completed') {
-      broadcast({ type: 'scenario_completed', runId })
-    } else if (event === 'scenario_failed') {
-      const d = detail as { reason: string }
-      broadcast({ type: 'scenario_failed', runId, ...d })
-    } else if (event === 'scenario_stopped') {
-      broadcast({ type: 'scenario_stopped', runId })
-    }
-    sched()
-  })
-
   system.setOnScriptEvent((roomId, event, detail) => {
     const roomName = roomNameFor(roomId)
     if (event === 'script_started') {

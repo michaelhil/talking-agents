@@ -249,12 +249,11 @@ export const buildToolSupport = async (
 // default, which combined with the now-deleted budget cap produced
 // silent tool drops in production.
 //
-// Scenarios that want a specific breadth (e.g. the Cafe AI in the
-// welcome scenario) declare `tools:` explicitly in the scenario yaml.
-// Snapshot-restored agents whose persisted config has tools === undefined
-// are backfilled at load time to preserve their pre-redesign behavior
-// (see src/core/storage/snapshot.ts).
-const IMPLICIT_ACTIVE_PACKS: ReadonlySet<string> = new Set(['core', 'local', 'welcome', 'demos'])
+// Callers that want a specific breadth declare `tools:` explicitly on the
+// AIAgentConfig. Snapshot-restored agents whose persisted config has
+// tools === undefined are backfilled at load time to preserve their
+// pre-redesign behavior (see src/core/storage/snapshot.ts).
+const IMPLICIT_ACTIVE_PACKS: ReadonlySet<string> = new Set(['core', 'local', 'demos', 'pwr-ops'])
 
 const deriveDefaultRequestedTools = (registry: ToolRegistry): ReadonlyArray<string> => {
   const out: string[] = []

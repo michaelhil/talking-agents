@@ -46,7 +46,7 @@ import { isAgentFallbackable as classifyIsAgentFallbackable } from '../agents/er
 
 // === Source tagging — every call site declares its identity ===
 
-export type LLMSource = 'agent' | 'summary' | 'whisper' | 'system' | 'scenario-branch'
+export type LLMSource = 'agent' | 'summary' | 'whisper' | 'system'
 
 // === Codes that warrant advancing to the next chain element ===
 // Single source of truth. Includes `model_unavailable` because cross-provider

@@ -210,7 +210,7 @@ describe('createTriggerScheduler', () => {
     sched.stop()
   })
 
-  // start-script / start-scenario modes (Phase A automation extension)
+  // start-script mode (Phase A automation extension)
 
   test('start-script trigger calls startScript when target room is free', async () => {
     const trigger: Trigger = {
@@ -262,50 +262,4 @@ describe('createTriggerScheduler', () => {
     sched.stop()
   })
 
-  test('start-scenario trigger calls startScenario when no scenario running', async () => {
-    const trigger: Trigger = {
-      id: 't1', name: 'tour', prompt: '', mode: 'start-scenario',
-      intervalSec: 60, enabled: true, roomId: 'r1', targetName: 'welcome',
-      lastFiredAt: 0,
-    }
-    const agent = mkAgent('A', 'human', [trigger])
-    const room = mkRoom('r1', agent)
-    const calls: string[] = []
-    const sched = createTriggerScheduler({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      team: { listAgents: () => [agent as any], getAgent: () => agent as any } as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      house: { getRoom: () => room as any } as any,
-      now: () => 1_000_000,
-      isScenarioRunning: () => false,
-      startScenario: async (name) => { calls.push(name); return { ok: true } },
-    })
-    await sched.tickNow()
-    expect(calls).toEqual(['welcome'])
-    sched.stop()
-  })
-
-  test('start-scenario trigger suppressed while scenario already running', async () => {
-    const trigger: Trigger = {
-      id: 't1', name: 'tour', prompt: '', mode: 'start-scenario',
-      intervalSec: 60, enabled: true, roomId: 'r1', targetName: 'welcome',
-      lastFiredAt: 0,
-    }
-    const agent = mkAgent('A', 'human', [trigger])
-    const room = mkRoom('r1', agent)
-    const calls: string[] = []
-    const sched = createTriggerScheduler({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      team: { listAgents: () => [agent as any], getAgent: () => agent as any } as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      house: { getRoom: () => room as any } as any,
-      now: () => 1_000_000,
-      isScenarioRunning: () => true,
-      startScenario: async (name) => { calls.push(name); return { ok: true } },
-    })
-    await sched.tickNow()
-    expect(calls).toEqual([])
-    expect(agent.triggers[0]!.lastFiredAt).toBe(0)
-    sched.stop()
-  })
 })

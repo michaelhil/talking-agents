@@ -78,7 +78,7 @@ import { dirname } from 'node:path'
 
 // --- Version ---
 
-export const SNAPSHOT_VERSION = 22
+export const SNAPSHOT_VERSION = 23
 
 // --- Snapshot schema ---
 
@@ -147,7 +147,7 @@ export interface DocumentSnapshot {
 }
 
 export interface SystemSnapshot {
-  readonly version: '22'
+  readonly version: '23'
   readonly timestamp: number
   readonly rooms: ReadonlyArray<RoomSnapshot>
   readonly agents: ReadonlyArray<AgentSnapshot>             // AI agents
@@ -244,7 +244,7 @@ export const serializeSystem = (system: SerializableSystem): SystemSnapshot => {
   const responseFormat = system.house.getResponseFormat()
 
   return {
-    version: '22',
+    version: '23',
     timestamp: Date.now(),
     rooms,
     agents,

@@ -156,9 +156,8 @@ export const bootstrap = async (): Promise<void> => {
 
   // Bundled demo tools — register into the shared registry once at boot,
   // marked as built-in (compiled into the binary, no filesystem path).
-  // These back the showcase scenarios in synthetic-demos. Keeping them
-  // in-binary avoids the rate-limit / offline failure mode of registry-
-  // pack installs and means demos work end-to-end on first boot.
+  // These back the Aviation Demo prompts. Keeping them in-binary avoids
+  // the rate-limit / offline failure mode of registry-pack installs.
   {
     const { BUNDLED_DEMO_TOOLS } = await import('./packs/synthetic-demos/tools/index.ts')
     for (const tool of BUNDLED_DEMO_TOOLS) {

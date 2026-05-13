@@ -5,15 +5,15 @@ const room = (packs: string[]) => ({ getActivePacks: () => packs })
 
 describe('effectiveActivePacks', () => {
   test('empty room → implicit packs only', () => {
-    expect(effectiveActivePacks(room([]))).toEqual(['core', 'local', 'welcome', 'demos'])
+    expect(effectiveActivePacks(room([]))).toEqual(['core', 'local', 'demos', 'pwr-ops'])
   })
 
   test('one explicit pack → implicit + pack', () => {
-    expect(effectiveActivePacks(room(['aviation']))).toEqual(['core', 'local', 'welcome', 'demos', 'aviation'])
+    expect(effectiveActivePacks(room(['aviation']))).toEqual(['core', 'local', 'demos', 'pwr-ops', 'aviation'])
   })
 
   test('preserves explicit order', () => {
-    expect(effectiveActivePacks(room(['z', 'a', 'm']))).toEqual(['core', 'local', 'welcome', 'demos', 'z', 'a', 'm'])
+    expect(effectiveActivePacks(room(['z', 'a', 'm']))).toEqual(['core', 'local', 'demos', 'pwr-ops', 'z', 'a', 'm'])
   })
 })
 

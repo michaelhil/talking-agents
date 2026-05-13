@@ -54,12 +54,10 @@ describe('redactBiometricMessages', () => {
   test('does not redact other cause kinds', () => {
     const out = redactBiometricMessages([
       baseMessage({ content: 'kept', cause: { kind: 'script', name: 's', step: 0 } }),
-      baseMessage({ content: 'kept too', cause: { kind: 'scenario', name: 'demo' } }),
       baseMessage({ content: 'kept three', cause: { kind: 'trigger', name: 't' } }),
     ])
     expect(out[0]!.content).toBe('kept')
-    expect(out[1]!.content).toBe('kept too')
-    expect(out[2]!.content).toBe('kept three')
+    expect(out[1]!.content).toBe('kept three')
   })
 
   test('does not redact messages without cause', () => {

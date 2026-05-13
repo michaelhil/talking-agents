@@ -26,7 +26,7 @@ export type MessageErrorCode =
 
 // === Causality: what subsystem caused this message ===
 //
-// Stamped at message-construction sites in scripts, scenarios, and triggers
+// Stamped at message-construction sites in scripts and triggers
 // so the UI can surface "this message exists because step 3 of script X
 // advanced" / "fired by trigger Y". Optional — the vast majority of chat
 // messages have no upstream automation cause.
@@ -34,12 +34,12 @@ export type MessageErrorCode =
 // IMPORTANT: this is metadata, not LLM context. The agent's context-builder
 // strips `cause` so it doesn't bleed into the prompt as noise.
 
-export type MessageCauseKind = 'script' | 'scenario' | 'trigger' | 'biometric'
+export type MessageCauseKind = 'script' | 'trigger' | 'biometric'
 
 export interface MessageCause {
   readonly kind: MessageCauseKind
-  readonly name: string                 // script/scenario/trigger name; for biometric, the captureId
-  readonly step?: number                // 0-based step index (scripts) or op index (scenarios)
+  readonly name: string                 // script/trigger name; for biometric, the captureId
+  readonly step?: number                // 0-based step index (scripts)
 }
 
 export interface Message {

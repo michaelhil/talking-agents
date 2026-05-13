@@ -16,7 +16,7 @@ import { mountRoomSwitcher } from './render/render-room-switcher.ts'
 import { mountVisibilityPopover } from './visibility-popover.ts'
 import { initMessageHeaderPrefs } from './message-header-prefs.ts'
 import { renderMessage } from './render/render-message.ts'
-import { renderScenarioStrip } from './scenario-strip.ts'
+import { renderDemoStrip } from './demos/index.ts'
 import type {
   UIMessage,
   RoomProfile,
@@ -104,15 +104,14 @@ const $ = (sel: string) => document.querySelector(sel)!
 
 // Empty-state demo strip — adapter that closes over the messagesDiv ref and
 // the per-room "is the chat empty" check. Renders the strip below the
-// messages area only when (a) the current room has no chat (only system)
-// posts AND (b) no scenario is currently running in this tab.
-const renderScenarioStripForRoom = async (roomId: string): Promise<void> => {
+// messages area only when the current room has no chat (only system) posts.
+const renderDemoStripForRoom = (roomId: string): void => {
   if (messagesDiv.getAttribute('data-room-id') !== roomId) return
   const isCurrentRoomEmpty = (): boolean => {
     const msgs = $roomMessages.get()[roomId] ?? []
     return msgs.every(m => m.type !== 'chat')
   }
-  await renderScenarioStrip(messagesDiv, isCurrentRoomEmpty)
+  renderDemoStrip(messagesDiv, roomId, isCurrentRoomEmpty)
 }
 
 // === WS client ===
@@ -386,9 +385,9 @@ $selectedRoomId.listen((roomId, prevRoomId) => {
     refreshRoomControls()
 
     // Empty-state demo nudge — shows when the room has no chat content
-    // (only the welcome system banner). Hides as soon as anyone posts or a
-    // scenario starts. Idempotent; safe to call on every room render.
-    void renderScenarioStripForRoom(roomId)
+    // (only the welcome system banner). Hides as soon as anyone posts.
+    // Idempotent; safe to call on every room render.
+    renderDemoStripForRoom(roomId)
   } else {
     // No room selected — show the empty-state. Agent inspector is now a
     // modal, so it doesn't compete with chat-area visibility anymore.
@@ -465,7 +464,7 @@ $roomMessages.listen((allMessages, _old, changedRoomId) => {
 
   // The strip renderer's own empty-check decides whether to show or hide,
   // so calling on every message update is the cheapest correct path.
-  void renderScenarioStripForRoom(changedRoomId)
+  renderDemoStripForRoom(changedRoomId)
 })
 
 // --- Thinking indicator lifecycle ---
@@ -879,8 +878,7 @@ void (async () => {
   await refreshExtensions()
   window.addEventListener('packs-changed', () => { void refreshExtensions() })
   connect()
-  // Share-link scenario boot: runs after WS connect so guide events
-  // emitted by the started run reach the overlay subscribers.
-  const { initScenarioShareLink } = await import('./scenario-share-link.ts')
-  void initScenarioShareLink()
+  // Demo deep-link: read `?demo=<id>` and pin the demo to the current room.
+  const { initDemoDeepLink } = await import('./demos/index.ts')
+  initDemoDeepLink()
 })()

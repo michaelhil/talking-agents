@@ -294,10 +294,10 @@ export const evaluate = async (
 
   const makeResult = (decision: Decision): EvalResult => {
     // Emit `eval_completed` exactly once per evaluate() call. This is the
-    // single source of truth for "this agent is done" — subscribers (scenario
-    // runner's wait-for-llm-response arranger, anything that previously polled
-    // agent.state) can rely on this firing on every terminal path because
-    // every `return` in evaluate() routes through makeResult.
+    // single source of truth for "this agent is done" — anything that
+    // previously polled agent.state can rely on this firing on every
+    // terminal path because every `return` in evaluate() routes through
+    // makeResult.
     onEvent?.({ kind: 'eval_completed', outcome: decision.response.action })
     return {
       decision: {

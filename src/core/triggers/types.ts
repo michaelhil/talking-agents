@@ -8,10 +8,6 @@
 //                      the agent.
 //   - 'start-script'   (any kind): start script `targetName` in `roomId`.
 //                      Skipped silently if a script is already running there.
-//   - 'start-scenario' (any kind): start scenario `targetName` instance-wide.
-//                      Skipped silently if a scenario run is active. roomId
-//                      may still be relevant for scenarios with room-scoped
-//                      ops; pass it through.
 //
 // Storage: lives on the agent (AIAgent.triggers, HumanAgent.triggers).
 // Pinned to a single roomId; cascade-deleted when the room is removed.
@@ -22,7 +18,7 @@
 // crashing — the dispatch switch falls through.
 // ============================================================================
 
-export type TriggerMode = 'execute' | 'post' | 'start-script' | 'start-scenario'
+export type TriggerMode = 'execute' | 'post' | 'start-script'
 
 export interface Trigger {
   readonly id: string                  // crypto.randomUUID()
@@ -33,7 +29,7 @@ export interface Trigger {
   readonly enabled: boolean
   readonly roomId: string              // pinned target; cascade-cleaned on room delete
   readonly lastFiredAt?: number        // epoch ms; persists across restart
-  readonly targetName?: string         // script or scenario name (start-* modes)
+  readonly targetName?: string         // script name (start-script mode)
 }
 
 // Bounds. 60s minimum prevents runaway spam; 7-day maximum supports
@@ -54,7 +50,7 @@ export interface TriggerInput {
   readonly targetName?: unknown
 }
 
-const VALID_MODES: ReadonlySet<string> = new Set(['execute', 'post', 'start-script', 'start-scenario'])
+const VALID_MODES: ReadonlySet<string> = new Set(['execute', 'post', 'start-script'])
 
 export const validateTriggerInput = (input: TriggerInput, agentKind: 'ai' | 'human'): string | null => {
   if (typeof input.name !== 'string' || input.name.trim() === '') return 'name is required'
@@ -64,7 +60,7 @@ export const validateTriggerInput = (input: TriggerInput, agentKind: 'ai' | 'hum
     return `intervalSec must be between ${MIN_INTERVAL_SEC} and ${MAX_INTERVAL_SEC}`
   }
   if (typeof input.mode !== 'string' || !VALID_MODES.has(input.mode)) {
-    return `mode must be one of: execute, post, start-script, start-scenario`
+    return `mode must be one of: execute, post, start-script`
   }
   if (agentKind === 'human' && input.mode === 'execute') return `human agents cannot use mode 'execute'`
   if (input.enabled !== undefined && typeof input.enabled !== 'boolean') return 'enabled must be a boolean'
@@ -72,7 +68,7 @@ export const validateTriggerInput = (input: TriggerInput, agentKind: 'ai' | 'hum
   if (input.mode === 'execute' || input.mode === 'post') {
     if (typeof input.prompt !== 'string' || input.prompt.trim() === '') return 'prompt is required for execute/post modes'
   } else {
-    // start-script / start-scenario
+    // start-script
     if (typeof input.targetName !== 'string' || input.targetName.trim() === '') {
       return `targetName is required for ${input.mode} mode`
     }

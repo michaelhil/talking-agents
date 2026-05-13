@@ -76,7 +76,7 @@ export const scanPacks = async (rootDir: string): Promise<ReadonlyArray<Pack>> =
 // subdir — packs that don't ship that subdir are silently omitted.
 export const scanPackSubdirs = async (
   rootDir: string,
-  subdir: 'scripts' | 'geodata' | 'wikis' | 'scenarios',
+  subdir: 'scripts' | 'geodata' | 'wikis',
 ): Promise<ReadonlyArray<{ readonly pack: string; readonly dir: string }>> => {
   const packs = await scanPacks(rootDir)
   const out: Array<{ pack: string; dir: string }> = []

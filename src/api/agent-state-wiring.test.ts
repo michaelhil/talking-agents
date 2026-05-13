@@ -185,7 +185,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     const aiAgents = sys.team.listAgents().filter(a => a.kind === 'ai')
     expect(aiAgents.length).toBe(1)
     const helper = aiAgents[0]!
-    expect(helper.name).toBe('AI')
+    expect(helper.name).toBe('Aiden')
 
     // 2. Per-agent subscription must have been routed through the wrapper.
     // Pre-fix: zero entries — the only places that called subscribeAgentState
@@ -213,7 +213,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     while (Date.now() < deadline) {
       stateEvents = broadcasts.filter(b =>
         b.instanceId === cookieId && b.msg.type === 'agent_state' &&
-        (b.msg as { agentName?: string }).agentName === 'AI',
+        (b.msg as { agentName?: string }).agentName === 'Aiden',
       )
       if (stateEvents.length > 0) break
       await new Promise(r => setTimeout(r, 25))
@@ -257,7 +257,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
 
     const sys = await registry.getOrLoad('cookieinst123abc')
     const helper = sys.team.listAgents().find(a => a.kind === 'ai')!
-    expect(helper.name).toBe('AI')
+    expect(helper.name).toBe('Aiden')
 
     sys.removeAgent(helper.id)
     expect(unsubscribed).toContain(helper.id)
@@ -335,7 +335,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     const sys1 = await registry.getOrLoad(cookieId)
     const helper1 = sys1.team.listAgents().find(a => a.kind === 'ai')!
     const helperId = helper1.id
-    expect(helper1.name).toBe('AI')
+    expect(helper1.name).toBe('Aiden')
 
     // Wait for autosave to flush (seed triggers one).
     await new Promise(r => setTimeout(r, 100))
@@ -349,7 +349,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     const isGenerating = (data: string): boolean => {
       try {
         const m = JSON.parse(data) as { type?: string; state?: string; agentName?: string }
-        return m.type === 'agent_state' && m.state === 'generating' && m.agentName === 'AI'
+        return m.type === 'agent_state' && m.state === 'generating' && m.agentName === 'Aiden'
       } catch { return false }
     }
     {

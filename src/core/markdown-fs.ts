@@ -1,14 +1,11 @@
 // ============================================================================
 // Shared filesystem scan helper for "directory of markdown documents."
 //
-// Used by both:
+// Used by:
 //   - src/core/scripts/script-store.ts (scripts/<name>/script.md or <name>.md)
-//   - src/core/scenarios/store.ts      (scenarios/<name>/scenario.md or <name>.md)
 //
-// Both subsystems independently arrived at the same shape: walk a dir, accept
-// either `<name>/inner.md` or `<name>.md`, validate the name regex, read the
-// file, parse, log + skip on errors. Two consumers is enough to extract;
-// adding a third should require zero new code here.
+// Walk a dir, accept either `<name>/inner.md` or `<name>.md`, validate the
+// name regex, read the file, parse, log + skip on errors.
 //
 // Generic parameter `T` is whatever the consumer's parser produces.
 // ============================================================================
@@ -30,8 +27,8 @@ export interface MarkdownScanOptions<T> {
   // Names must match this regex. Both directory names and flat-file stems
   // are tested; mismatches are skipped with a warning under `logPrefix`.
   readonly validNameRe: RegExp
-  // Log tag — e.g. "scripts" or "scenarios". Used in console.warn for
-  // skip / parse-error diagnostics.
+  // Log tag — e.g. "scripts". Used in console.warn for skip / parse-error
+  // diagnostics.
   readonly logPrefix: string
   // Parser. Throw to signal an invalid file (caller logs + skips).
   readonly parse: (name: string, raw: string) => T

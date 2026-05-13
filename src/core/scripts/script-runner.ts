@@ -28,9 +28,7 @@ import { asAIAgent } from '../../agents/shared.ts'
 export interface ScriptRunner {
   readonly start: (roomId: string, scriptName: string) => Promise<{ ok: boolean; reason?: string }>
   // Start with an already-parsed Script object, bypassing the store + pack-
-  // activation gate. Used by the scenario engine's inline-script op so a
-  // scenario can include a script literal without registering it in the
-  // store. The Script must already be parsed (caller's responsibility).
+  // activation gate. The Script must already be parsed (caller's responsibility).
   readonly startWith: (roomId: string, script: Script) => Promise<{ ok: boolean; reason?: string }>
   readonly stop: (roomId: string) => Promise<{ ok: boolean; reason?: string }>
   readonly forceAdvance: (roomId: string) => Promise<{ ok: boolean; reason?: string }>
@@ -194,9 +192,8 @@ export const createScriptRunner = (deps: ScriptRunnerDeps): ScriptRunner => {
   }
 
   // Skip-the-store / skip-the-pack-gate variant. The caller already has a
-  // parsed Script (e.g. a scenario inlined the body in an inline-script op).
-  // The room + already-running checks still apply; everything else is the
-  // shared internal flow.
+  // parsed Script. The room + already-running checks still apply; everything
+  // else is the shared internal flow.
   const startWith = async (roomId: string, script: Script): Promise<{ ok: boolean; reason?: string }> => {
     if (runs.has(roomId)) return { ok: false, reason: 'a script is already running in this room' }
     const system = getSystem()

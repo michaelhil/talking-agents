@@ -41,13 +41,11 @@ export interface SchedulerDeps {
   // Optional: callback after a trigger is dispatched. Tests use it as a
   // signal; production might surface a "trigger fired" log line. Best-effort.
   readonly onFired?: (agentId: string, triggerId: string) => void
-  // Narrow capabilities for the start-script / start-scenario trigger modes.
-  // Wired in main.ts where scriptRunner + scenarioRunner exist. Optional so
-  // tests + headless boots that never use these modes can omit them.
+  // Narrow capability for the start-script trigger mode. Wired in main.ts
+  // where scriptRunner exists. Optional so tests + headless boots that never
+  // use this mode can omit it.
   readonly startScript?: (roomId: string, name: string) => Promise<{ ok: boolean; reason?: string }>
-  readonly startScenario?: (name: string) => Promise<{ ok: boolean; reason?: string }>
   readonly isScriptRunningInRoom?: (roomId: string) => boolean
-  readonly isScenarioRunning?: () => boolean
 }
 
 export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler => {
@@ -108,7 +106,6 @@ export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler =>
     // Per-mode busy gate. Skip without marking lastFiredAt so the trigger
     // re-evaluates next tick (target frees up → trigger fires).
     if (trigger.mode === 'start-script' && deps.isScriptRunningInRoom?.(trigger.roomId)) return
-    if (trigger.mode === 'start-scenario' && deps.isScenarioRunning?.()) return
 
     // Mark fired BEFORE dispatch (overrun protection).
     agent.markTriggerFired?.(triggerId, now())
@@ -135,12 +132,6 @@ export const createTriggerScheduler = (deps: SchedulerDeps): TriggerScheduler =>
       deps.startScript?.(trigger.roomId, target)
         .then(r => { if (!r.ok) console.warn(`[trigger ${trigger.name}] start-script "${target}" failed: ${r.reason ?? ''}`) })
         .catch(err => console.error(`[trigger ${trigger.name}] start-script threw:`, err))
-    } else if (trigger.mode === 'start-scenario') {
-      const target = trigger.targetName
-      if (!target) return
-      deps.startScenario?.(target)
-        .then(r => { if (!r.ok) console.warn(`[trigger ${trigger.name}] start-scenario "${target}" failed: ${r.reason ?? ''}`) })
-        .catch(err => console.error(`[trigger ${trigger.name}] start-scenario threw:`, err))
     }
     deps.onFired?.(agentId, triggerId)
   }

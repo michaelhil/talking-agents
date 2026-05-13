@@ -86,26 +86,6 @@ export type WSOutbound =
   | { readonly type: 'script_dialogue_appended'; readonly roomName: string; readonly scriptId: string; readonly stepIndex: number; readonly entry: { readonly speaker: string; readonly content: string; readonly messageId: string; readonly whispersByCast: Readonly<Record<string, { readonly turn: number; readonly whisper: { readonly ready_to_advance: boolean; readonly notes?: string; readonly addressing?: string; readonly role_update?: string }; readonly usedFallback: boolean; readonly rawResponse?: string; readonly errorReason?: string }>> } }
   | { readonly type: 'script_completed'; readonly roomName: string; readonly scriptId: string }
   | { readonly type: 'script_catalog_changed' }
-  // Scenario engine events. Each carries the runId so the UI can route
-  // overlay state per-run (in v1 only one run per instance is allowed,
-  // but the runId is still authoritative).
-  | { readonly type: 'scenario_started'; readonly runId: string; readonly scenarioId: string; readonly title: string; readonly totalOps: number }
-  | { readonly type: 'scenario_op_executed'; readonly runId: string; readonly opIndex: number; readonly kind: string }
-  | {
-      readonly type: 'scenario_guide_shown'
-      readonly runId: string
-      readonly kind: 'tooltip' | 'modal' | 'toast'
-      readonly selector?: string
-      readonly title?: string
-      readonly body: string
-      // Toast variant only meaningful when kind === 'toast'.
-      readonly variant?: 'success' | 'error'
-      readonly waitFor: { readonly type: 'click' | 'post' | 'timer'; readonly selector?: string; readonly room?: string; readonly seconds?: number } | null
-    }
-  | { readonly type: 'scenario_completed'; readonly runId: string }
-  | { readonly type: 'scenario_failed'; readonly runId: string; readonly reason: string }
-  | { readonly type: 'scenario_stopped'; readonly runId: string }
-  | { readonly type: 'scenario_catalog_changed' }
   | { readonly type: 'ollama_health'; readonly health: OllamaHealth }
   | { readonly type: 'agent_activity'; readonly agentName: string; readonly event: EvalEvent }
   // Provider routing events (from src/llm/router.ts)

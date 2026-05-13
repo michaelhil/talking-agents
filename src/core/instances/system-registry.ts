@@ -36,7 +36,7 @@
 //   2. loadSnapshot + restoreFromSnapshot  — agents rehydrated.
 //   3. buildAutoSaver              — debounced snapshot writer.
 //   4. opts.onSystemCreated(...)   — caller's wiring runs HERE.
-//   5. welcome scenario (if no snapshot)  — demo content.
+//   5. seedInstance(system) (if no snapshot)  — Cafe + Aiden + You.
 //   6. return { system, autoSaver }
 // THEN in getOrLoad:
 //   7. map.set(id, entry)          — registry knows about the system.
@@ -59,7 +59,7 @@ import { instancePaths, isValidInstanceId, sharedPaths, trashPath } from '../pat
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { asAIAgent } from '../../agents/shared.ts'
-import { WELCOME_DEFAULT_SCENARIO_ID } from '../../packs/synthetic-welcome/index.ts'
+import { seedInstance } from './seed-instance.ts'
 
 // --- Defaults & env ---
 
@@ -109,8 +109,8 @@ export interface SystemRegistryOptions {
   // instances.
   //
   // The hook is awaited. It MUST complete (wireAgentTracking +
-  // wireSystemEvents installed) before welcome scenario runs — otherwise
-  // the seeded Helper bypasses the spawn-wrapper and never gets per-agent
+  // wireSystemEvents installed) before seedInstance runs — otherwise
+  // the seeded AI bypasses the spawn-wrapper and never gets per-agent
   // hooks (state subscription, attachAgent). Returning Promise<void> is
   // mandatory for any hook that does async work.
   readonly onSystemCreated?: (system: System, id: string, autoSaver: AutoSaver) => Promise<void> | void
@@ -255,47 +255,22 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
     // AWAITED on purpose: the hook installs wireAgentTracking (the spawn
     // wrapper that installs per-agent state subscriptions, provider-event
     // attach, etc.) and wireSystemEvents (the system-wide WS broadcast
-    // subscribers). welcome scenario below calls system.spawnAIAgent —
-    // if it ran before the wrapper was installed, the seeded Helper would
-    // bypass per-agent wiring (no thinking indicator, no state broadcasts,
-    // no provider-event scoping). The hook is async because of
-    // logging.configure; without await, the first await inside the hook
-    // releases a microtask and welcome scenario races ahead.
+    // subscribers). seedInstance below calls system.spawnAIAgent — if it
+    // ran before the wrapper was installed, the seeded agent would bypass
+    // per-agent wiring (no thinking indicator, no state broadcasts, no
+    // provider-event scoping). The hook is async because of logging.configure;
+    // without await, the first await inside the hook releases a microtask
+    // and seedInstance races ahead.
     await opts.onSystemCreated?.(system, id, autoSaver)
 
-    // First-run seeding: when no snapshot existed, run the bundled welcome
-    // scenario so an invitee lands on a Cafe + AI + Human. Same end-state
-    // as the prior hardcoded seed-example.ts, but expressed as a scenario
-    // that the user can re-run, view as markdown, or replace.
-    //
+    // First-run seeding: when no snapshot existed, spawn Cafe + Aiden + You.
     // Skipped when SAMSINN_SEED_EXAMPLE=0 (legacy env preserved).
     if (!snapshot && process.env.SAMSINN_SEED_EXAMPLE !== '0') {
       try {
-        // The scenarioStore reload kicked off inside createSystem may not
-        // have completed yet; force-await one before running.
-        await system.scenarioStore.reload()
-        const scenario = system.scenarioStore.get(WELCOME_DEFAULT_SCENARIO_ID)
-        if (scenario) {
-          const result = await system.scenarioRunner.run(scenario)
-          if (!result.ok) {
-            console.error(`[registry] welcome scenario failed to start: ${result.reason}`)
-          } else {
-            // Wait for the run to terminate — welcome has no awaits, so
-            // this completes synchronously after the ops execute.
-            const runId = result.runId!
-            const deadlineMs = Date.now() + 5_000
-            while (Date.now() < deadlineMs) {
-              const r = system.scenarioRunner.getRun(runId)
-              if (!r || r.status === 'completed' || r.status === 'failed' || r.status === 'stopped') break
-              await new Promise(res => setTimeout(res, 25))
-            }
-          }
-        } else {
-          console.error(`[registry] welcome scenario ${WELCOME_DEFAULT_SCENARIO_ID} not found in store`)
-        }
+        await seedInstance(system)
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
-        console.error(`[registry] welcome scenario seeding threw (continuing with empty House): ${reason}`)
+        console.error(`[registry] seedInstance threw (continuing with empty House): ${reason}`)
       }
       // Persist the seed so a refresh keeps it (without waiting for the
       // autosaver's debounce). Best-effort — autosaver will retry on its
@@ -436,12 +411,6 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
         }
       } catch (err) {
         console.error(`[registry] evict ${id} scriptRunner cleanup threw: ${err instanceof Error ? err.message : String(err)}`)
-      }
-      // Stop active scenario runs — clears abandonment timers, post-wait
-      // listeners, and the awaiting-resume promise resolver map. Without
-      // this an awaiting run holds the System closure indefinitely.
-      try { entry.system.scenarioRunner.stopAll() } catch (err) {
-        console.error(`[registry] evict ${id} scenarioRunner.stopAll threw: ${err instanceof Error ? err.message : String(err)}`)
       }
       map.delete(id)
     })()

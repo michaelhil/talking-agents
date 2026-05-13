@@ -23,7 +23,7 @@ import type { Trigger, TriggerMode } from '../../../core/triggers/types.ts'
 const MIN_INTERVAL_SEC = 60
 const MAX_INTERVAL_SEC = 604_800  // 7 days — long-cycle triggers (weekly status, etc.)
 
-const VALID_MODES: ReadonlySet<string> = new Set(['execute', 'post', 'start-script', 'start-scenario'])
+const VALID_MODES: ReadonlySet<string> = new Set(['execute', 'post', 'start-script'])
 
 // Mirrors src/core/triggers/types.ts validateTriggerInput. Kept here as a UX
 // convenience for fast in-form errors; the server is authoritative.
@@ -35,7 +35,7 @@ const validateTriggerInput = (input: Record<string, unknown>, agentKind: 'ai' | 
     return `intervalSec must be between ${MIN_INTERVAL_SEC} and ${MAX_INTERVAL_SEC}`
   }
   if (typeof input.mode !== 'string' || !VALID_MODES.has(input.mode)) {
-    return `mode must be one of: execute, post, start-script, start-scenario`
+    return `mode must be one of: execute, post, start-script`
   }
   if (agentKind === 'human' && input.mode === 'execute') return `human agents cannot use mode 'execute'`
   if (input.enabled !== undefined && typeof input.enabled !== 'boolean') return 'enabled must be a boolean'
@@ -112,7 +112,7 @@ export const openTriggerForm = async (
   const nameInput = createInput({ value: existing?.name ?? '', placeholder: 'Check vatsim status' })
   body.appendChild(nameLabel); body.appendChild(nameInput)
 
-  // --- Mode (AI gets 4 options; human gets post + start-script + start-scenario) ---
+  // --- Mode (AI gets execute + post + start-script; human gets post + start-script) ---
   // Note: the mode selector is rendered BEFORE prompt/target so the
   // conditional swap below has somewhere to attach.
   let modeValue: TriggerMode = existing?.mode ?? (agentKind === 'human' ? 'post' : 'execute')
@@ -126,7 +126,6 @@ export const openTriggerForm = async (
     { value: 'execute', label: 'Execute — run prompt internally, post the reply', aiOnly: true },
     { value: 'post', label: 'Post — post prompt verbatim as the agent' },
     { value: 'start-script', label: 'Start script — kick off a script in the room' },
-    { value: 'start-scenario', label: 'Start scenario — run an instance-wide scenario' },
   ]
   for (const opt of modeOptions) {
     if (opt.aiOnly && agentKind === 'human') continue
@@ -147,7 +146,7 @@ export const openTriggerForm = async (
   promptWrap.appendChild(promptLabel); promptWrap.appendChild(promptTextarea)
   body.appendChild(promptWrap)
 
-  // --- Target picker (used for start-script / start-scenario) ---
+  // --- Target picker (used for start-script) ---
   const targetLabel = document.createElement('label')
   targetLabel.className = 'block text-xs text-text-muted mt-3'
   targetLabel.textContent = 'Target'
@@ -157,9 +156,8 @@ export const openTriggerForm = async (
   targetWrap.appendChild(targetLabel); targetWrap.appendChild(targetSelect)
   body.appendChild(targetWrap)
 
-  // Cache fetched lists so toggling mode doesn't re-fetch on every flip.
+  // Cache fetched list so toggling mode doesn't re-fetch on every flip.
   let scriptsCache: Array<{ name: string; title: string }> | undefined
-  let scenariosCache: Array<{ name: string; title: string; pack: string }> | undefined
 
   const populateTargetForMode = async (m: TriggerMode): Promise<void> => {
     targetSelect.innerHTML = ''
@@ -184,37 +182,13 @@ export const openTriggerForm = async (
         if (s.name === targetNameValue) o.selected = true
         targetSelect.appendChild(o)
       }
-    } else if (m === 'start-scenario') {
-      if (!scenariosCache) {
-        const r = await fetch('/api/scenarios').catch(() => null)
-        if (r?.ok) {
-          const data = await r.json() as { scenarios: Array<{ name: string; title: string; pack: string }> }
-          scenariosCache = data.scenarios
-        } else {
-          scenariosCache = []
-        }
-      }
-      if (scenariosCache.length === 0) {
-        const o = document.createElement('option')
-        o.value = ''; o.textContent = '(no scenarios available)'
-        o.disabled = true; targetSelect.appendChild(o); return
-      }
-      for (const s of scenariosCache) {
-        const o = document.createElement('option')
-        // Scenarios are id-keyed as `${pack}/${name}`; the Trigger.targetName
-        // is what scenarioStore.get accepts. Send the full id so a scenario
-        // from a non-local pack can be selected.
-        o.value = s.name; o.textContent = `[${s.pack}] ${s.name} — ${s.title}`
-        if (s.name === targetNameValue) o.selected = true
-        targetSelect.appendChild(o)
-      }
     }
     targetSelect.onchange = () => { targetNameValue = targetSelect.value }
   }
 
   const applyModeUI = (): void => {
     const m = modeValue
-    const isStart = m === 'start-script' || m === 'start-scenario'
+    const isStart = m === 'start-script'
     promptWrap.style.display = isStart ? 'none' : ''
     targetWrap.style.display = isStart ? '' : 'none'
     if (isStart) void populateTargetForMode(m)
@@ -280,7 +254,7 @@ export const openTriggerForm = async (
       const unit = unitSelect.value as 'minutes' | 'hours'
       const intervalSec = unit === 'hours' ? num * 3600 : num * 60
 
-      const isStart = modeValue === 'start-script' || modeValue === 'start-scenario'
+      const isStart = modeValue === 'start-script'
       const merged: Record<string, unknown> = {
         name,
         prompt,
@@ -385,8 +359,8 @@ export const openAgentTriggers = async (
       const enabledBadge = t.enabled
         ? '<span class="text-text-muted">enabled</span>'
         : '<span class="text-amber-500">disabled</span>'
-      // Body line: prompt for execute/post; "→ <name>" for start-* modes.
-      const bodyLine = (t.mode === 'start-script' || t.mode === 'start-scenario')
+      // Body line: prompt for execute/post; "→ <name>" for start-script.
+      const bodyLine = t.mode === 'start-script'
         ? `→ ${escapeHtml(t.targetName ?? '(no target)')}`
         : escapeHtml(t.prompt)
       row.innerHTML = `

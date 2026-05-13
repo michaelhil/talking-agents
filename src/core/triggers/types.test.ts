@@ -62,7 +62,7 @@ describe('validateTriggerInput', () => {
     expect(validateTriggerInput({ ...validBody(), intervalSec: 'fast' }, 'ai')).toMatch(/intervalSec/)
   })
 
-  // start-script + start-scenario modes (Phase A of automation extension)
+  // start-script mode (Phase A of automation extension)
 
   test('start-script accepts when targetName provided', () => {
     expect(validateTriggerInput(
@@ -78,14 +78,14 @@ describe('validateTriggerInput', () => {
     )).toMatch(/targetName/)
   })
 
-  test('start-scenario accepts for human agent (no execute restriction)', () => {
+  test('start-script accepts for human agent (no execute restriction)', () => {
     expect(validateTriggerInput(
-      { ...validBody(), mode: 'start-scenario', prompt: undefined, targetName: 'welcome' },
+      { ...validBody(), mode: 'start-script', prompt: undefined, targetName: 'tour' },
       'human',
     )).toBeNull()
   })
 
-  test('start-* modes do not require prompt', () => {
+  test('start-script does not require prompt', () => {
     expect(validateTriggerInput(
       { ...validBody(), mode: 'start-script', prompt: '', targetName: 'x' },
       'ai',

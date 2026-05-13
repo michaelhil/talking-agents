@@ -135,9 +135,9 @@ describe('pack activation — end-to-end with House + Room', () => {
   test('effectiveActivePacks is order-stable: implicit packs first, explicit appended', () => {
     const house = createHouse({})
     const room = house.createRoom({ name: 'X', createdBy: SYSTEM_SENDER_ID })
-    expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'welcome', 'demos'])
+    expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'demos', 'pwr-ops'])
     room.setActivePacks(['z', 'a'])
-    expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'welcome', 'demos', 'z', 'a'])
+    expect(effectiveActivePacks(room)).toEqual(['core', 'local', 'demos', 'pwr-ops', 'z', 'a'])
   })
 
   test('snapshot-style restore round-trips activePacks', () => {

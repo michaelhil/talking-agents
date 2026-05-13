@@ -90,7 +90,7 @@ describe('addAgentToRoom', () => {
   // Auto-switch heuristic: when a SECOND AI joins a broadcast room, the room
   // auto-switches to manual mode to prevent two AIs spamming each other.
   // The heuristic is correct for interactive adds (a user inviting a second
-  // AI to a chat). It's WRONG for orchestrator-driven adds (scenarios, scripts)
+  // AI to a chat). It's WRONG for orchestrator-driven adds (seed, scripts)
   // — those callers already picked their delivery mode and the heuristic would
   // silently flip it under their feet, causing the orchestrator's trigger
   // messages to never reach the just-added AI.
@@ -120,14 +120,14 @@ describe('addAgentToRoom', () => {
     expect(room.deliveryMode).toBe('manual')
   })
 
-  test('second AI does NOT auto-switch when added by a scenario', async () => {
+  test('second AI does NOT auto-switch when added by seed', async () => {
     const { house, team, routeMessage } = createTestSystem()
     const ai1 = makeAIStub('AI1'); const ai2 = makeAIStub('AI2')
     team.addAgent(ai1); team.addAgent(ai2)
     const room = house.createRoom({ name: 'R', createdBy: 'system' })
 
     await addAgentToRoom(ai1.id, ai1.name, room.profile.id, undefined, team, routeMessage, house)
-    await addAgentToRoom(ai2.id, ai2.name, room.profile.id, 'scenario', team, routeMessage, house)
+    await addAgentToRoom(ai2.id, ai2.name, room.profile.id, 'seed', team, routeMessage, house)
     expect(room.deliveryMode).toBe('broadcast')
   })
 
@@ -143,7 +143,7 @@ describe('addAgentToRoom', () => {
   })
 
   test('ORCHESTRATED_INVITERS is the canonical sentinel set', () => {
-    expect(ORCHESTRATED_INVITERS.has('scenario')).toBe(true)
+    expect(ORCHESTRATED_INVITERS.has('seed')).toBe(true)
     expect(ORCHESTRATED_INVITERS.has('script-runner')).toBe(true)
     expect(ORCHESTRATED_INVITERS.has('Alice')).toBe(false)
     expect(ORCHESTRATED_INVITERS.has('')).toBe(false)

@@ -69,12 +69,7 @@ import { dirname } from 'node:path'
 import { type SkillStore } from './skills/loader.ts'
 import { createScriptStore, type ScriptStore } from './core/scripts/script-store.ts'
 import { createScriptRunner, type ScriptRunner, type ScriptEventEmitter } from './core/scripts/script-runner.ts'
-import { createScenarioStore, type ScenarioStore } from './core/scenarios/store.ts'
-import { createScenarioRunner, type ScenarioRunner, type ScenarioEventEmitter } from './core/scenarios/runner.ts'
-import { buildWelcomeExtraSource } from './packs/synthetic-welcome/index.ts'
-import { buildDemosExtraSource } from './packs/synthetic-demos/index.ts'
 import { createWriteScriptTool } from './tools/built-in/script-codegen.ts'
-import { createWriteScenarioTool } from './tools/built-in/scenario-codegen.ts'
 import { sharedPaths } from './core/paths.ts'
 
 import { createOllamaUrlRegistry, type OllamaUrlRegistry } from './core/ollama-urls.ts'
@@ -139,13 +134,8 @@ export interface System {
   readonly scriptsDir: string
   readonly scriptRunner: ScriptRunner
   readonly setOnScriptEvent: (cb: ScriptEventEmitter) => void
-  // Multi-subscriber observer slot (lateBinding.add). The scenario runner's
-  // `start-script` op uses this to await `script_completed` instead of polling.
-  // Returns an unsubscribe function.
+  // Multi-subscriber observer slot (lateBinding.add). Returns an unsubscribe.
   readonly addScriptEventListener: (cb: ScriptEventEmitter) => () => void
-  readonly scenarioStore: ScenarioStore
-  readonly scenarioRunner: ScenarioRunner
-  readonly setOnScenarioEvent: (cb: ScenarioEventEmitter) => void
   readonly packsDir: string
   readonly knowledgeDir: string
   readonly providersStorePath: string
@@ -187,10 +177,7 @@ export interface System {
   // scheduleSave so edits don't stay in memory until the next message-post.
   readonly notifyAgentSettingsChanged: () => void
   readonly setOnEvalEvent: (callback: OnEvalEvent) => void
-  // Multi-subscriber observer slot (lateBinding.add). Used by the scenario
-  // runner's `wait-for-llm-response` arranger so it can subscribe without
-  // displacing the wire-system-events primary subscriber. Returns an
-  // unsubscribe function.
+  // Multi-subscriber observer slot (lateBinding.add). Returns an unsubscribe.
   readonly addEvalEventListener: (cb: OnEvalEvent) => () => void
   readonly setOnProviderBound: (callback: OnProviderBound) => void
   readonly setOnProviderAllFailed: (callback: OnProviderAllFailed) => void
@@ -355,7 +342,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   const summaryRunCompleted = lateBinding<(roomId: string, target: SummaryTarget, text: string) => void>('summaryRunCompleted')
   const summaryRunFailed = lateBinding<(roomId: string, target: SummaryTarget, reason: string) => void>('summaryRunFailed')
   const scriptEvent = lateBinding<ScriptEventEmitter>('scriptEvent')
-  const scenarioEvent = lateBinding<ScenarioEventEmitter>('scenarioEvent')
 
   // Diagnostics ring buffer — subscribes to the multi-subscriber eval-event
   // channel so it coexists with the wire-system-events broadcaster.
@@ -364,11 +350,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
 
   // Forward-declared (matches schedulerRef pattern). HouseCallbacks.onScriptMessage closes over this.
   let scriptRunnerRef: ScriptRunner | undefined
-  // Forward-decl for trigger-scheduler (start-script / start-scenario modes).
-  // Both runners + scenarioStore are constructed below; triggerScheduler is
-  // built earlier.
-  let scenarioRunnerRef: ScenarioRunner | undefined
-  let scenarioStoreRef: ScenarioStore | undefined
 
   const resolveAgentName: ResolveAgentName = (name) => team.getAgent(name)?.id
   const resolveTag: ResolveTagFn = (tag) => team.listByTag(tag).map(a => a.id)
@@ -483,16 +464,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
       scriptRunnerRef
         ? scriptRunnerRef.start(roomId, name)
         : Promise.resolve({ ok: false, reason: 'scriptRunner not yet wired' }),
-    startScenario: async (name) => {
-      if (!scenarioRunnerRef) return { ok: false, reason: 'scenarioRunner not yet wired' }
-      const sc = scenarioStoreRef?.get(name)
-      if (!sc) return { ok: false, reason: `scenario "${name}" not found` }
-      const r = await scenarioRunnerRef.run(sc)
-      return { ok: r.ok, ...(r.reason ? { reason: r.reason } : {}) }
-    },
     isScriptRunningInRoom: (roomId) => scriptRunnerRef?.getRun(roomId) !== undefined,
-    isScenarioRunning: () =>
-      (scenarioRunnerRef?.listRuns() ?? []).some(r => r.status === 'running' || r.status === 'awaiting'),
   })
 
   // System-level membership operations — extracted to core/room-operations.ts.
@@ -727,47 +699,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
   // findMissingCast defensive abort never fires).
   roomDeleted.add((roomId) => { void scriptRunner.stop(roomId) })
 
-  // Scenario engine — per-instance store + runner. The store discovers
-  // scenarios from installed packs (<pack>/scenarios/) and from the bundled
-  // synthetic 'welcome' pack which ships with the binary.
-  //
-  // The runner shares the per-instance message hook so 'guide-tooltip' /
-  // 'guide-modal' ops with `waitFor: post` resolve when the user sends a
-  // message in the named room.
-  const scenariosDir = sharedPaths.scenarios()
-  const scenarioStore = createScenarioStore({
-    baseDir: scenariosDir,
-    resolvePackDirs: () => scanPackSubdirs(packsDir, 'scenarios'),
-    // Lazy: called per reload so the welcome pack's default-model resolution
-    // (which reads from live provider state) happens after System is fully
-    // constructed and providers are wired.
-    extraSources: () => systemRef.current
-      ? [
-          buildWelcomeExtraSource(systemRef.current),
-          buildDemosExtraSource(systemRef.current),
-        ]
-      : [],
-  })
-  // Initial reload deferred until after systemRef.current is assigned (see
-  // the post-construction `void scenarioStore.reload()` near the bottom of
-  // createSystem). Scripts can reload eagerly because they have no
-  // System-bound bundled sources.
-  const scenarioRunner = createScenarioRunner({
-    getSystem: () => systemRef.current as System,
-    emit: (runId, event, detail) => scenarioEvent.proxy(runId, event, detail),
-  })
-  // Wire forward-refs so the trigger-scheduler (built earlier) can dispatch
-  // start-script / start-scenario triggers via narrow capabilities.
-  scenarioStoreRef = scenarioStore
-  scenarioRunnerRef = scenarioRunner
-  // Pipe message events into scenarioRunner so post-wait guides can resume.
-  messagePosted.add((roomId, message) => scenarioRunner.onRoomMessage(roomId, message))
-
-  // write_scenario — pure data (writes markdown files under
-  // $SAMSINN_HOME/packs/local/scenarios/). Mirror of write_script. Validation
-  // happens server-side via scenarioStore.upsert.
-  toolRegistry.register(createWriteScenarioTool(scenarioStore, () => { /* onChange already broadcasts */ }))
-
   // --- Effective-model cache (Phase 4: derive-on-read) ---
   // Cache of currently-available models from llm.models(), refreshed in the
   // background. Used by every agent's per-call effective-model resolver so the
@@ -958,9 +889,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     scriptRunner,
     setOnScriptEvent: scriptEvent.set,
     addScriptEventListener: scriptEvent.add,
-    scenarioStore,
-    scenarioRunner,
-    setOnScenarioEvent: scenarioEvent.set,
     packsDir,
     knowledgeDir: sharedPaths.knowledge(),
     providersStorePath: sharedPaths.providers(),
@@ -1011,9 +939,6 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     limitMetrics: shared.limitMetrics,
   }
   systemRef.current = system
-  // Deferred scenario-store load: needs systemRef set first so the lazy
-  // extraSources getter (welcome pack model resolution) can read providerKeys.
-  void scenarioStore.reload().catch(err => console.error('[scenarios] reload failed:', err))
   // Kick off the cache refresh. Race with the very first eval is benign —
   // an empty cache returns `{ model: preferred, ... }` and the router can
   // route bare cloud names by trying each provider in order. The cache

@@ -1,62 +1,9 @@
 // ============================================================================
-// Synthetic 'demos' pack — bundled with the binary, hosts the capability-
-// showcase scenarios users find via Settings → Scenarios or the empty-state
-// strip.
+// Synthetic 'demos' pack — bundled with the binary. Ships the bundled tools
+// the Aviation demo uses (norway_platforms, vatsim_arrivals).
 //
-// Like 'welcome', this pack ships in the binary (no install, always
-// implicitly active). Welcome stays separate as the first-boot seed; demos
-// here are user-discoverable capability tours.
-//
-// Phase 1 ships 3 demos:
-//   - first-conversation: guided tour of basic UI affordances
-//   - diagram-thinking: agent draws a mermaid flowchart inline
-//   - biometric-awareness: agent observes via webcam (installs the
-//     samsinn-biometrics pack — needs explicit consent in the dialog)
-//
-// Phase 2+ adds: two-agent-debate, aviation-live, research-workspace,
-// triggers-and-summary (each blocked on additional ops or pack installs).
+// Always implicitly active (see src/packs/activation.ts:IMPLICIT_ACTIVE) so
+// every room sees these tools without an install step.
 // ============================================================================
 
-import type { System } from '../../main.ts'
-import type { ExtraSource } from '../../core/scenarios/store.ts'
-import { buildBundledExtraSource } from '../bundled-scenario-loader.ts'
-
 export const DEMOS_PACK_NAMESPACE = 'demos'
-
-// Demo scenarios reference `__DEFAULT_MODEL__` literally in their .md
-// sources. Resolution is deferred to run-time (see DEFAULT_MODEL_PLACEHOLDER
-// in src/core/scenarios/types.ts) — at run-start the model resolves to the
-// user's pick from the run dialog, or the system's current curated default.
-// This used to be load-time substitution via pickDemoModel(); that approach
-// froze a value at boot and persisted bad resolutions until restart.
-export const buildDemosExtraSource = (_system: System): ExtraSource =>
-  buildBundledExtraSource({
-    pack: DEMOS_PACK_NAMESPACE,
-    scenarios: [
-      // Showcase demos (category: demo) — scenarios for flows that
-      // genuinely need orchestration (pack install, agent spawn, multi-
-      // stage consent). Simple "post a prompt to the existing AI" demos
-      // live in src/ui/modules/showcase-prompts.ts as chips, not here —
-      // forcing one-shot prompts through the scenarios runner created a
-      // class of bugs (auto-switch-to-manual, persona-template fights,
-      // wait-on-llm-response races).
-      {
-        name: 'biometric-awareness',
-        file: './biometric-awareness.scenario.md',
-        importMetaUrl: import.meta.url,
-      },
-      // Tutorials (category: tutorial) — guided, user-driven.
-      {
-        name: 'first-conversation',
-        file: './first-conversation.scenario.md',
-        importMetaUrl: import.meta.url,
-      },
-      {
-        name: 'diagram-thinking',
-        file: './diagram-thinking.scenario.md',
-        importMetaUrl: import.meta.url,
-      },
-    ],
-    // No tokens — `__DEFAULT_MODEL__` is left as-is in the .md and
-    // resolved at run-time by ops.ts:resolveModel.
-  })

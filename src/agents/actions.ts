@@ -15,15 +15,9 @@ import { makeJoinFields } from './shared.ts'
 // orchestrator already picked the delivery mode it wants and the heuristic
 // would flip it under their feet. The heuristic stays for interactive
 // adds (UI flows where invitedBy is undefined or a human/AI agent name).
-//
-// Without this, every scenario that spawns a second AI into a room that
-// already has one (e.g. demos targeting the user's Cafe) silently switched
-// the room to manual mode, meaning the scenario's post-message trigger
-// was never delivered to AI peers and the wait-for-llm-response sat in
-// `awaiting` until the 30-min abandonment timeout.
 export const ORCHESTRATED_INVITERS: ReadonlySet<string> = new Set([
-  'scenario',
   'script-runner',
+  'seed',
 ])
 
 export const addAgentToRoom = async (
@@ -48,7 +42,7 @@ export const addAgentToRoom = async (
 
   // Live-path auto-switch: Broadcast → Manual on second AI join.
   // Skipped during snapshot restore (which bypasses this function and calls
-  // room.addMember directly) and skipped for orchestrated adds (scenarios,
+  // room.addMember directly) and skipped for orchestrated adds (seed,
   // scripts) — those callers picked their delivery mode deliberately and
   // the heuristic would silently override it. See ORCHESTRATED_INVITERS
   // above for the rationale.

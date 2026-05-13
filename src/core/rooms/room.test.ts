@@ -490,7 +490,7 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
       senderId: 'sys',
       content: 'welcome banner',
       type: 'system',
-      cause: { kind: 'scenario', name: 'welcome-tour', step: 3 },
+      cause: { kind: 'biometric', name: 'capture-abc' },
     })
     room.post({
       senderId: 'reminder',
@@ -502,7 +502,7 @@ describe('Room — Directed Addressing [[AgentName]]', () => {
     const recent = room.getRecent(10)
     expect(recent).toHaveLength(3)
     expect(recent[0]!.cause).toEqual({ kind: 'script', name: 'demo', step: 0 })
-    expect(recent[1]!.cause).toEqual({ kind: 'scenario', name: 'welcome-tour', step: 3 })
+    expect(recent[1]!.cause).toEqual({ kind: 'biometric', name: 'capture-abc' })
     expect(recent[2]!.cause).toEqual({ kind: 'trigger', name: 'morning briefing' })
   })
 

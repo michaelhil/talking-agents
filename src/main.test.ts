@@ -73,9 +73,8 @@ describe('lateBinding warn-once', () => {
       // tests skip that). Firing it without a subscriber should warn once.
       //
       // (The original version of this test fired `messagePosted` via room.post
-      // — but the scenario runner now subscribes to messagePosted internally
-      // for post-wait guides, so that slot is no longer "unsubscribed" by
-      // default.)
+      // — but other in-process subscribers (summary scheduler, etc.) listen
+      // there, so that slot is no longer "unsubscribed" by default.)
       system.house.addBookmark('first')
       system.house.addBookmark('second')
       system.house.addBookmark('third')
