@@ -5,7 +5,10 @@
 // JSON code blocks under canonical section headings. See ParsedScenario
 // in types.ts for the file layout.
 
-import type { ParsedScenario, ScenarioInjection, ScenarioParseResult } from './types.ts'
+import type { EalClass, ParsedScenario, ScenarioInjection, ScenarioParseResult } from './types.ts'
+
+const EAL_CLASSES: ReadonlyArray<EalClass> = ['UE', 'Alert', 'SAE', 'GE']
+const isEalClass = (v: string): v is EalClass => (EAL_CLASSES as ReadonlyArray<string>).includes(v)
 
 const SECTION_HEADINGS = {
   initialState: 'Initial state',
@@ -165,8 +168,17 @@ export const parseScenario = (source: string): ScenarioParseResult => {
   const scenarioId = fm.fields['scenario-id'] ?? ''
   if (!scenarioId) return { error: 'missing frontmatter scenario-id' }
   const title = fm.fields['title'] ?? scenarioId
+  const expectedEalRaw = fm.fields['expected-eal-class'] ?? ''
+  if (!expectedEalRaw) return { error: `scenario '${scenarioId}': required frontmatter field 'expected-eal-class' missing` }
+  if (!isEalClass(expectedEalRaw)) return { error: `scenario '${scenarioId}': expected-eal-class '${expectedEalRaw}' must be one of ${EAL_CLASSES.join(', ')}` }
+  const expectedEalClass: EalClass = expectedEalRaw
+  const timingSource = fm.fields['timing-source'] ?? ''
+  if (!timingSource) return { error: `scenario '${scenarioId}': required frontmatter field 'timing-source' missing (use a UFSAR section ref or the literal 'synthetic')` }
 
   const warnings: string[] = []
+  if (timingSource === 'synthetic') {
+    warnings.push(`scenario '${scenarioId}': timing-source is 'synthetic' — invented timing, not anchored to a published transient analysis`)
+  }
 
   // Preamble: prose between frontmatter end and first `## ` heading
   const preambleLines: string[] = []
@@ -203,6 +215,8 @@ export const parseScenario = (source: string): ScenarioParseResult => {
     injections,
     expectedTraversal,
     expectedTerminalState,
+    expectedEalClass,
+    timingSource,
     warnings,
   }
   return parsed

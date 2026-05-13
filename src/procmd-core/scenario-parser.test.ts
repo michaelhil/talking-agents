@@ -5,6 +5,8 @@ const SB_LOCA = `---
 type: scenario
 scenario-id: sb-loca
 title: Small-break LOCA (3-inch cold-leg break)
+expected-eal-class: Alert
+timing-source: Vogtle UFSAR §15.6.5
 ---
 
 Reactor at 100% power; a 3-inch cold-leg break in loop 1 develops over 30 s.
@@ -72,6 +74,8 @@ describe('parseScenario', () => {
     const r = parseScenario(`---
 type: scenario
 scenario-id: x
+expected-eal-class: UE
+timing-source: synthetic
 ---
 
 ## Initial state
@@ -88,6 +92,8 @@ scenario-id: x
     const r = parseScenario(`---
 type: scenario
 scenario-id: x
+expected-eal-class: UE
+timing-source: synthetic
 ---
 
 ## Expected traversal
@@ -104,6 +110,8 @@ scenario-id: x
     const r = parseScenario(`---
 type: scenario
 scenario-id: x
+expected-eal-class: UE
+timing-source: synthetic
 ---
 
 ## Injections
@@ -116,10 +124,35 @@ scenario-id: x
     expect(r.warnings.some(w => w.includes('at-time-s'))).toBe(true)
   })
 
+  test('rejects missing expected-eal-class', () => {
+    const r = parseScenario(`---\ntype: scenario\nscenario-id: x\ntiming-source: synthetic\n---\n`)
+    expect('error' in r).toBe(true)
+    if ('error' in r) expect(r.error).toMatch(/expected-eal-class/)
+  })
+
+  test('rejects unknown expected-eal-class value', () => {
+    const r = parseScenario(`---\ntype: scenario\nscenario-id: x\nexpected-eal-class: Maybe\ntiming-source: synthetic\n---\n`)
+    expect('error' in r).toBe(true)
+  })
+
+  test('rejects missing timing-source', () => {
+    const r = parseScenario(`---\ntype: scenario\nscenario-id: x\nexpected-eal-class: UE\n---\n`)
+    expect('error' in r).toBe(true)
+    if ('error' in r) expect(r.error).toMatch(/timing-source/)
+  })
+
+  test('warns on synthetic timing', () => {
+    const r = parseScenario(`---\ntype: scenario\nscenario-id: x\nexpected-eal-class: UE\ntiming-source: synthetic\n---\n`)
+    if ('error' in r) throw new Error(r.error)
+    expect(r.warnings.some(w => w.includes('synthetic'))).toBe(true)
+  })
+
   test('camelCase atTimeS is also accepted on input', () => {
     const r = parseScenario(`---
 type: scenario
 scenario-id: x
+expected-eal-class: UE
+timing-source: synthetic
 ---
 
 ## Injections

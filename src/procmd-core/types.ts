@@ -138,6 +138,8 @@ export interface ScenarioInjection {
   readonly atTimeS: number
 }
 
+export type EalClass = 'UE' | 'Alert' | 'SAE' | 'GE'
+
 export interface ParsedScenario {
   readonly scenarioId: string
   readonly title: string
@@ -147,6 +149,19 @@ export interface ParsedScenario {
   /** Ordered list of `<procedure-id>#<step-id>` refs the scenario expects to traverse. */
   readonly expectedTraversal: ReadonlyArray<string>
   readonly expectedTerminalState: Readonly<Record<string, string | number | boolean>>
+  /**
+   * F.1 — declared expected highest EAL class reached over the scenario
+   * timeline. Validator runs eal_classify against the scenario and errors
+   * on mismatch. Required field for v1.
+   */
+  readonly expectedEalClass: EalClass
+  /**
+   * F.2 — source for the scenario timing data. Either a UFSAR section
+   * reference (e.g. "Vogtle UFSAR §15.6.5") or the literal "synthetic".
+   * Validator emits a warning at deploy time on synthetic timing so the
+   * synthetic count is visible.
+   */
+  readonly timingSource: string
   readonly warnings: ReadonlyArray<string>
 }
 

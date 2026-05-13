@@ -129,6 +129,10 @@ export const createWikiSource = (
       if (basename === '_manifest.json' || path === binding.manifestFile) {
         return `${siteRoot}_manifest.json`.replace(/([^:])\/\/+/g, '$1/')
       }
+      // F.1 — _eal-rules.json sibling, same Pages-fallback pattern.
+      if (basename === '_eal-rules.json') {
+        return `${siteRoot}_eal-rules.json`.replace(/([^:])\/\/+/g, '$1/')
+      }
       // Procedure markdown: <procedureDir>/<id>.md → site/procedures/<id>.md
       const procPrefix = binding.procedureDir.replace(/\/$/, '') + '/'
       if (path.startsWith(procPrefix) && path.endsWith('.md')) {

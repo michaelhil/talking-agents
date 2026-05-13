@@ -9,9 +9,17 @@
 
 export { parseProcedure, PARSER_PROCMD_VERSION, ACCEPTED_PROCMD_VERSIONS } from './parser.ts'
 export { parseScenario } from './scenario-parser.ts'
+export {
+  parsePredicate,
+  evalPredicateOverTimeSeries,
+  projectScenarioTimeline,
+  classifyEal,
+  tagsInPredicate,
+} from './eal-predicate.ts'
 export type {
   Branch,
   BranchTarget,
+  EalClass,
   ParsedDecision,
   ParsedFrontmatter,
   ParsedProcedure,
@@ -22,3 +30,15 @@ export type {
   ScenarioParseResult,
   TagDefinition,
 } from './types.ts'
+export type {
+  EalClassificationResult,
+  EalRule,
+  EalRulesFile,
+  Predicate,
+  PredicateAtom,
+  PredicateBoolean,
+  PredicateOp,
+  PredicateParseError,
+  PredicateParseResult,
+  ProjectedSample,
+} from './eal-predicate.ts'
