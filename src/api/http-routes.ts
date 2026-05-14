@@ -11,6 +11,7 @@
 import type { System } from '../main.ts'
 import type { WSOutbound } from '../core/types/ws-protocol.ts'
 import { authEnabled, isValidSession, sessionFromRequest } from './auth.ts'
+import { getInstanceId } from './instance-cookie.ts'
 import { houseRoutes } from './routes/house.ts'
 import { skillRoutes } from './routes/skills.ts'
 import { roomRoutes } from './routes/rooms.ts'
@@ -101,6 +102,26 @@ export const handleAPI = async (
   deps: RouteDeps,
 ): Promise<Response | null> => {
   const ctx: RouteContext = { system, instanceId, ...deps }
+
+  // F5: cookieless /api/* → 401. Bots that probe the API without first
+  // going through /ws (which is where real UI flow mints a cookie) can't
+  // create instances. Exempted: /api/auth (UI calls this BEFORE having a
+  // cookie to render the token prompt) and /api/system/info (version
+  // banner on the same screen). All other /api/* require an existing
+  // cookie. Real UI never sees this — `GET /` minted the cookie before
+  // any /api call.
+  //
+  // The check uses getInstanceId() (raw cookie read) instead of trusting
+  // `instanceId`, because resolveOrMintInstance in server.ts may have
+  // minted a fresh id for a cookieless caller; we want the unminted view.
+  if (
+    pathname.startsWith('/api/') &&
+    pathname !== '/api/auth' &&
+    pathname !== '/api/system/info' &&
+    getInstanceId(req) === null
+  ) {
+    return new Response('No session', { status: 401 })
+  }
 
   // Auth gate. Scoped to /api/* so static paths (/, /index.html, /dist.css,
   // /favicon.ico) can load and the UI can boot to show the token prompt.

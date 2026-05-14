@@ -104,3 +104,38 @@ export const resolveInstanceId = (req: Request, url: URL): ResolvedInstance => {
   if (queried) return { id: queried, source: 'query' }
   return { id: null, source: 'none' }
 }
+
+// Resolve OR mint an instance id and decide whether the response needs to
+// set a fresh cookie. This is the policy `server.ts` ran inline before; it
+// lives here so the mint-vs-reuse decision can be unit-tested alongside the
+// other instance-cookie helpers without spinning up a server.
+//   - When `resolveInstanceId` returns an id (join / cookie / query), reuse
+//     it and DON'T issue a Set-Cookie (cookie source already has it, or the
+//     join/query handlers higher up have their own Set-Cookie response).
+//   - When nothing identifies the visitor, mint a fresh id and produce the
+//     Set-Cookie value so the next request lands on the same instance.
+export interface MintedInstance {
+  readonly instanceId: string
+  readonly setCookieValue: string | null
+  readonly isNew: boolean
+}
+export const resolveOrMintInstance = (req: Request, url: URL): MintedInstance => {
+  const resolved = resolveInstanceId(req, url)
+  if (resolved.id !== null) {
+    return { instanceId: resolved.id, setCookieValue: null, isNew: false }
+  }
+  const fresh = generateInstanceId()
+  return {
+    instanceId: fresh,
+    setCookieValue: buildInstanceCookie(fresh, req),
+    isNew: true,
+  }
+}
+
+// WS session-token reuse guard: refuse upgrade when an existing session
+// under the same token is bound to a different instance (browser swapped
+// cookies on us). Returns true ⇒ caller must 403.
+export const isSessionBoundToOtherInstance = (
+  existing: { instanceId: string } | undefined,
+  instanceId: string,
+): boolean => existing !== undefined && existing.instanceId !== instanceId

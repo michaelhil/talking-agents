@@ -27,8 +27,8 @@
 //
 // What lives outside the registry's concern:
 //   - Snapshot path resolution (uses instancePaths from core/paths.ts)
-//   - Per-instance event-callback wiring (Phase F: wireSystemEvents)
-//   - Janitor (Phase E: instance-cleanup.ts) — operates on disk only
+//   - Per-instance event-callback wiring (wireSystemEvents)
+//   - Janitor (instance-cleanup.ts) — operates on disk only
 //
 // === buildSystem ordering (subtle; was the source of 5d73a8e) ===
 // Inside buildSystem(id):
@@ -101,7 +101,7 @@ export interface SystemRegistryOptions {
   readonly idleMs?: number                      // override default 30 min
   readonly drainMs?: number                     // override default 5s
   // Hook called immediately after a fresh System is constructed (either
-  // first load or post-eviction reload). Phase F wires WS broadcasts here.
+  // first load or post-eviction reload). Bootstrap wires WS broadcasts here.
   // The autoSaver is passed in directly because the registry's map entry
   // isn't set until AFTER this hook returns — so registry.autoSaverFor(id)
   // would return null inside the hook. Subtle and was the source of a
@@ -115,7 +115,7 @@ export interface SystemRegistryOptions {
   // mandatory for any hook that does async work.
   readonly onSystemCreated?: (system: System, id: string, autoSaver: AutoSaver) => Promise<void> | void
   // Hook called immediately before a System is dropped from memory.
-  // Phase F removes the WS callback wiring here.
+  // Bootstrap removes the WS callback wiring here.
   readonly onSystemEvicted?: (system: System, id: string) => void
   // Fires exactly once, after the first successful getOrLoad in this
   // process. Replaces the boot-time validateBootstrap call: the contract
@@ -161,7 +161,7 @@ export interface SystemRegistry {
   // is how silent-skip bugs hide — see CLAUDE.md "no silent skips on
   // optional dependencies."
   readonly tryGetLive: (id: string) => System | undefined
-  // Agent → instance reverse index for provider routing events. Phase F4
+  // Agent → instance reverse index for provider routing events. Bootstrap
   // wires shared.setProviderEventDispatcher to use this.
   readonly attachAgent: (agentId: string, instanceId: string) => void
   readonly detachAgent: (agentId: string) => void
@@ -211,17 +211,22 @@ export const createSystemRegistry = (opts: SystemRegistryOptions): SystemRegistr
 
   // Build the per-instance autosaver. Callback wiring (which schedules
   // save on each mutation) lives in src/api/wire-system-events.ts, which
-  // gets the saver via autoSaverFor(id). Phase F's onSystemCreated hook
-  // calls wireSystemEvents — that's the single source of save scheduling.
+  // gets the saver via autoSaverFor(id). The onSystemCreated hook calls
+  // wireSystemEvents — that's the single source of save scheduling.
   const buildAutoSaver = (_system: System, snapshotPath: string): AutoSaver =>
     createAutoSaver(_system, snapshotPath)
 
   // Build a fresh System for `id`, restoring from snapshot if present.
   // Note: we DO NOT mkdir here. The instance dir is created lazily by
   // saveSnapshot's own mkdir(recursive) on the first real autosave write.
-  // This means cookieless visitors that never trigger a meaningful save
-  // (and the now-removed boot getOrLoad) leave no trace on disk. Was the
-  // dominant source of empty-instance accumulation before Plan A.
+  //
+  // Drive-by traffic (bots, monitoring probes, anonymous home-page hits)
+  // is now stopped one layer up: server.ts serves static paths before
+  // getOrLoad runs, and handleAPI rejects cookieless /api/* with 401.
+  // So this factory is reached only when there's a deliberate session
+  // signal (the UI opening /ws, or an explicit /api call from a cookie
+  // holder). Stale cookies for purged ids are soft-expired by server.ts
+  // before they reach getOrLoad.
   const buildSystem = async (id: string): Promise<{ system: System; autoSaver: AutoSaver }> => {
     const paths = instancePaths(id)
     const system = createSystem({

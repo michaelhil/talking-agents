@@ -17,7 +17,9 @@ import type { System } from '../main.ts'
 const noopDeliver: DeliverFn = () => {}
 const noopBroadcast = (_msg: WSOutbound): void => {}
 const noopSubscribe = (): void => {}
-const TEST_INSTANCE_ID = 'test-instance'
+// 16-char lowercase alphanumeric to satisfy isValidInstanceId so the
+// cookie attached by `req()` below passes the F5 cookieless-→-401 gate.
+const TEST_INSTANCE_ID = 'testinstance1234'
 
 const makeSystem = (): System => {
   const house = createHouse({ deliver: noopDeliver })
@@ -64,12 +66,17 @@ const makeSystem = (): System => {
   } as unknown as System
 }
 
+// All requests carry the samsinn_instance cookie. handleAPI gates
+// cookieless /api/* with 401 (F5); production never sees a cookieless
+// API call because the UI mints via GET /. Tests mirror that contract.
+const COOKIE = `samsinn_instance=${TEST_INSTANCE_ID}`
+
 const req = (method: string, path: string, body?: unknown): Request => {
   const url = `http://localhost${path}`
-  if (!body) return new Request(url, { method })
+  if (!body) return new Request(url, { method, headers: { cookie: COOKIE } })
   return new Request(url, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', cookie: COOKIE },
     body: JSON.stringify(body),
   })
 }
@@ -254,6 +261,59 @@ describe('HTTP Routes', () => {
   test('unknown route returns null', async () => {
     const res = await call(system, req('GET', '/no-such-route'), '/no-such-route')
     expect(res).toBeNull()
+  })
+})
+
+// === F5: cookieless /api/* gate ===
+//
+// Bots/scanners probing the API without first going through the UI's
+// GET / + /ws handshake should get 401, NOT create an instance via the
+// downstream registry.getOrLoad call. /api/auth and /api/system/info are
+// exempt because the UI calls them before any cookie exists (to render
+// the token prompt + version banner).
+
+describe('HTTP Routes — F5 cookieless /api/* gate', () => {
+  const reqNoCookie = (method: string, path: string): Request =>
+    new Request(`http://localhost${path}`, { method })
+
+  test('cookieless GET /api/rooms → 401', async () => {
+    const sys = makeSystem()
+    const res = await handleAPI(reqNoCookie('GET', '/api/rooms'), '/api/rooms', sys, TEST_INSTANCE_ID, {
+      broadcast: noopBroadcast,
+      subscribeAgentState: noopSubscribe,
+    })
+    expect(res?.status).toBe(401)
+  })
+
+  test('cookieless GET /api/auth → allowed (exempt for UI bootstrap)', async () => {
+    const sys = makeSystem()
+    const res = await handleAPI(reqNoCookie('GET', '/api/auth'), '/api/auth', sys, TEST_INSTANCE_ID, {
+      broadcast: noopBroadcast,
+      subscribeAgentState: noopSubscribe,
+    })
+    expect(res?.status).toBe(200)
+  })
+
+  test('cookieless GET /api/system/info → allowed (exempt for token-prompt banner)', async () => {
+    const sys = makeSystem()
+    const res = await handleAPI(reqNoCookie('GET', '/api/system/info'), '/api/system/info', sys, TEST_INSTANCE_ID, {
+      broadcast: noopBroadcast,
+      subscribeAgentState: noopSubscribe,
+    })
+    expect(res?.status).toBe(200)
+  })
+
+  test('malformed cookie value treated as no cookie → 401 (defends against header injection of bogus ids)', async () => {
+    const sys = makeSystem()
+    const r = new Request('http://localhost/api/rooms', {
+      method: 'GET',
+      headers: { cookie: 'samsinn_instance=../etc/passwd' },
+    })
+    const res = await handleAPI(r, '/api/rooms', sys, TEST_INSTANCE_ID, {
+      broadcast: noopBroadcast,
+      subscribeAgentState: noopSubscribe,
+    })
+    expect(res?.status).toBe(401)
   })
 })
 

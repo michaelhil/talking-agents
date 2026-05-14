@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import {
   generateInstanceId, getInstanceId, buildInstanceCookie,
   getInstanceFromQuery, getJoinFromQuery, resolveInstanceId,
+  resolveOrMintInstance, isSessionBoundToOtherInstance,
   INSTANCE_COOKIE,
 } from './instance-cookie.ts'
 
@@ -146,5 +147,76 @@ describe('resolveInstanceId — precedence', () => {
     const req = mkReq({ cookie: `${INSTANCE_COOKIE}=cookieabcdefghij` })
     const url = new URL('http://x/?join=../bad')
     expect(resolveInstanceId(req, url)).toEqual({ id: 'cookieabcdefghij', source: 'cookie' })
+  })
+})
+
+describe('resolveOrMintInstance — mint-vs-reuse policy', () => {
+  it('reuses cookie id and does NOT set a fresh cookie', () => {
+    const req = mkReq({ cookie: `${INSTANCE_COOKIE}=cookieabcdefghij` })
+    const url = new URL('http://x/')
+    const minted = resolveOrMintInstance(req, url)
+    expect(minted).toEqual({
+      instanceId: 'cookieabcdefghij',
+      setCookieValue: null,
+      isNew: false,
+    })
+  })
+
+  it('reuses ?join= id and does NOT set the cookie here (the /?join handler does that earlier)', () => {
+    const url = new URL('http://x/?join=joinaabcdefghij1')
+    const minted = resolveOrMintInstance(mkReq(), url)
+    expect(minted.instanceId).toBe('joinaabcdefghij1')
+    expect(minted.setCookieValue).toBeNull()
+    expect(minted.isNew).toBe(false)
+  })
+
+  it('reuses ?instance= id without setting a cookie (one-shot scripted callers)', () => {
+    const url = new URL('http://x/?instance=queryabcdefghij1')
+    const minted = resolveOrMintInstance(mkReq(), url)
+    expect(minted.instanceId).toBe('queryabcdefghij1')
+    expect(minted.setCookieValue).toBeNull()
+    expect(minted.isNew).toBe(false)
+  })
+
+  it('mints a fresh id AND builds Set-Cookie when nothing identifies the visitor', () => {
+    const minted = resolveOrMintInstance(mkReq(), new URL('http://x/'))
+    expect(minted.instanceId).toMatch(/^[a-z0-9]{16}$/)
+    expect(minted.setCookieValue).not.toBeNull()
+    expect(minted.setCookieValue!).toContain(`${INSTANCE_COOKIE}=${minted.instanceId}`)
+    expect(minted.isNew).toBe(true)
+  })
+
+  it('two cookieless calls mint different ids', () => {
+    const a = resolveOrMintInstance(mkReq(), new URL('http://x/'))
+    const b = resolveOrMintInstance(mkReq(), new URL('http://x/'))
+    expect(a.instanceId).not.toBe(b.instanceId)
+  })
+
+  it('malformed cookie value triggers mint, not reuse', () => {
+    const req = mkReq({ cookie: `${INSTANCE_COOKIE}=../etc/passwd` })
+    const minted = resolveOrMintInstance(req, new URL('http://x/'))
+    expect(minted.isNew).toBe(true)
+    expect(minted.instanceId).not.toBe('../etc/passwd')
+    expect(minted.setCookieValue).not.toBeNull()
+  })
+})
+
+describe('isSessionBoundToOtherInstance — WS upgrade guard', () => {
+  it('returns false when no existing session under this token', () => {
+    expect(isSessionBoundToOtherInstance(undefined, 'abc123def456ghij')).toBe(false)
+  })
+
+  it('returns false when existing session matches the resolved instance', () => {
+    expect(isSessionBoundToOtherInstance(
+      { instanceId: 'abc123def456ghij' },
+      'abc123def456ghij',
+    )).toBe(false)
+  })
+
+  it('returns true when existing session is bound to a different instance (cookie was switched)', () => {
+    expect(isSessionBoundToOtherInstance(
+      { instanceId: 'abc123def456ghij' },
+      'zzz123def456ghij',
+    )).toBe(true)
   })
 })

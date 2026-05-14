@@ -13,24 +13,12 @@ import { handleAPI } from './http-routes.ts'
 import { handleWSMessage, type WSData } from './ws-handler.ts'
 import {
   INSTANCE_COOKIE,
-  buildInstanceCookie, resolveInstanceId, generateInstanceId,
-  getJoinFromQuery,
+  buildInstanceCookie, getJoinFromQuery,
+  resolveOrMintInstance, isSessionBoundToOtherInstance,
 } from './instance-cookie.ts'
 import { resolve, normalize } from 'node:path'
 import { getCaptureRegistry } from '../core/biometrics/registry.ts'
 
-// Routes that never need a per-instance system. Bypass the cookie
-// resolution + Set-Cookie path. The set is explicit; static files under
-// /dist (bundled CSS + sourcemap) match a separate prefix.
-const PRE_AUTH_INSTANCE_BYPASS: ReadonlySet<string> = new Set([
-  '/', '/index.html',
-  '/favicon.ico',
-  '/api/auth',
-  '/api/system/info',
-  '/health',
-])
-const isInstanceBypass = (pathname: string): boolean =>
-  PRE_AUTH_INSTANCE_BYPASS.has(pathname) || pathname.startsWith('/dist')
 
 // === Server Config ===
 
@@ -240,8 +228,16 @@ export const createServer = (config: ServerConfig) => {
       // === ?join=<id> redirect — set cookie + 303 to a clean URL ===
       // Strip the join param and preserve the rest, so a shared link with
       // extra params (?join=abc&room=general) doesn't loop the redirect.
+      //
+      // F4: refuse joins to ids that don't exist. Without this an attacker-
+      // chosen id propagates through the cookie to the next request, which
+      // materializes a brand-new instance under their chosen id (an
+      // amplification vector for instance-dir spam).
       const joinId = getJoinFromQuery(url)
       if (joinId) {
+        if (!(await registry.exists(joinId))) {
+          return sec(new Response('Instance not found', { status: 404 }))
+        }
         const cleaned = new URL(url)
         cleaned.searchParams.delete('join')
         const target = cleaned.pathname + (cleaned.search || '')
@@ -255,12 +251,46 @@ export const createServer = (config: ServerConfig) => {
       }
 
       // === Resolve which instance this request is for ===
-      // Cookieless requests get a fresh per-visitor id (multi-tenant).
-      const resolved = resolveInstanceId(req, url)
-      const instanceId = resolved.id ?? generateInstanceId()
-      const setCookieValue = resolved.id === null
-        ? buildInstanceCookie(instanceId, req)
-        : null
+      // Cookieless requests get a per-visitor id. The cookie is set on the
+      // way out; the instance itself is materialized lazily by /ws or an
+      // /api/* call from the UI — never by a static GET or a cookieless
+      // probe (see F1/F5 below).
+      let { instanceId, setCookieValue } = resolveOrMintInstance(req, url)
+
+      // F3: stale-cookie soft-expiry. When the cookie names an id that
+      // is neither live in memory nor present on disk (e.g. operator
+      // purged the instance dir; idle-evicted + trashed + purged by the
+      // janitor), drop the cookie and mint a fresh id. Silent — the user
+      // gets a clean session, no error surface. Prevents the
+      // resurrection-from-stale-cookie path that re-seeds an instance
+      // under a previously-deleted id.
+      if (setCookieValue === null && !(await registry.exists(instanceId))) {
+        const fresh = resolveOrMintInstance(new Request(req.url, { method: req.method }), url)
+        instanceId = fresh.instanceId
+        setCookieValue = fresh.setCookieValue
+      }
+
+      // F1: static-only paths never need a per-instance system. Serve
+      // them before getOrLoad so bots/crawlers/uptime probes that just
+      // GET / or /dist.css can't materialize an instance. The cookie is
+      // still attached so the next real call (/ws or /api/*) reuses the
+      // same id.
+      const earlyStatic = await serveStatic(pathname, uiPath, transpiler)
+      if (earlyStatic !== null) {
+        if (setCookieValue) {
+          const headers = new Headers(earlyStatic.headers)
+          headers.append('Set-Cookie', setCookieValue)
+          return sec(new Response(earlyStatic.body, { status: earlyStatic.status, headers }))
+        }
+        return sec(earlyStatic)
+      }
+      // /favicon.ico has no file but bots GET it constantly. 204 with
+      // cookie, no instance.
+      if (pathname === '/favicon.ico') {
+        const headers = new Headers()
+        if (setCookieValue) headers.append('Set-Cookie', setCookieValue)
+        return sec(new Response(null, { status: 204, headers }))
+      }
 
       // === WebSocket upgrade ===
       // v15+: WS sessions are pure viewers of an instance. No agent binding,
@@ -275,8 +305,7 @@ export const createServer = (config: ServerConfig) => {
 
         // Session token reuse — refuse if the existing session is bound to
         // a different instance (browser cookie was switched).
-        const existing = wsManager.sessions.get(sessionToken)
-        if (existing && existing.instanceId !== instanceId) {
+        if (isSessionBoundToOtherInstance(wsManager.sessions.get(sessionToken), instanceId)) {
           return sec(new Response('Session token belongs to a different instance', { status: 403 }))
         }
 
@@ -312,18 +341,8 @@ export const createServer = (config: ServerConfig) => {
         return sec(apiResponse)
       }
 
-      const staticResponse = await serveStatic(pathname, uiPath, transpiler)
-      if (staticResponse) {
-        if (setCookieValue && isInstanceBypass(pathname)) {
-          // Set-Cookie on the page-load GET so the browser has it before
-          // any subsequent XHR / WS upgrade.
-          const headers = new Headers(staticResponse.headers)
-          headers.append('Set-Cookie', setCookieValue)
-          return sec(new Response(staticResponse.body, { status: staticResponse.status, headers }))
-        }
-        return sec(staticResponse)
-      }
-
+      // Static was tried before getOrLoad (F1); reaching here means
+      // neither a route nor a static file matched.
       return sec(new Response('Not found', { status: 404 }))
     },
 
