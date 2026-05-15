@@ -348,7 +348,7 @@ describe('createOpenAICompatibleProvider', () => {
   })
 
   test('non-Anthropic providers: no cache_control leaks anywhere on tools or system', async () => {
-    const others = ['gemini', 'groq', 'cerebras', 'openrouter', 'mistral', 'sambanova', 'ollama'] as const
+    const others = ['gemini', 'kimi', 'groq', 'cerebras', 'openrouter', 'mistral', 'sambanova', 'ollama'] as const
     for (const name of others) {
       const fx = startFixture(() => ({ status: 200, body: okBody }))
       try {

@@ -58,6 +58,14 @@ const CLOUD_TABLE: Record<string, Record<string, number>> = {
     'gpt-oss-120b': 65536,
     'zai-glm-4.7': 128000,
   },
+  kimi: {
+    'kimi-k2-thinking':     256000,
+    'kimi-k2-0905-preview': 256000,
+    'kimi-k2-0711-preview': 128000,
+    'moonshot-v1-8k':         8192,
+    'moonshot-v1-32k':       32768,
+    'moonshot-v1-128k':     131072,
+  },
   groq: {
     'llama-3.3-70b-versatile': 131072,
     'llama-3.1-8b-instant': 131072,

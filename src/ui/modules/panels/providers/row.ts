@@ -58,6 +58,7 @@ import type { CloudProviderName } from '../../../../llm/providers-config.ts'
 const PROVIDER_URLS: Record<CloudProviderName | 'ollama', string> = {
   anthropic:  'https://console.anthropic.com',
   openai:     'https://platform.openai.com',
+  kimi:       'https://platform.moonshot.ai',
   gemini:     'https://aistudio.google.com',
   cerebras:   'https://cloud.cerebras.ai',
   groq:       'https://console.groq.com',
