@@ -38,9 +38,9 @@ export const CURATED_MODELS: Record<string, ReadonlyArray<CuratedModel>> = {
     { id: 'gpt-4o',       label: '4o (premium)' },
   ],
   kimi: [
-    { id: 'kimi-k2-thinking',     label: 'K2 Thinking (reasoning)' },
-    { id: 'kimi-k2-0905-preview', label: 'K2 0905 (fast)' },
-    { id: 'moonshot-v1-128k',     label: 'Moonshot v1 128k' },
+    { id: 'kimi-k2.6',        label: 'K2.6 (latest)' },
+    { id: 'kimi-k2.5',        label: 'K2.5' },
+    { id: 'moonshot-v1-128k', label: 'Moonshot v1 128k' },
   ],
   gemini: [
     // Flash first: Pro's capacity has been chronically tight (frequent 503
