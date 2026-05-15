@@ -125,3 +125,90 @@ describe('stateHandlers.snapshot — stale cache eviction', () => {
     globalThis.fetch = origFetch
   })
 })
+
+// ---------------------------------------------------------------------------
+// PR 4 — thinking persistence on the assistant message bubble.
+// $liveThinking accumulates deltas during gen; the agent_activity handler
+// appends to it on `kind: 'thinking'`. The `message` handler transfers it
+// to $messageThinking keyed by m.id BEFORE setting $roomMessages so the
+// synchronous renderMessage listener can pick it up. Cancel/abort cleanup
+// is in app-thinking.ts's clearThinkingIndicator (not exercised here).
+// ---------------------------------------------------------------------------
+
+import { $liveThinking, $messageThinking } from '../../stores.ts'
+
+describe('stateHandlers — thinking persistence (PR 4)', () => {
+  beforeEach(() => {
+    $roomMessages.set({})
+    $liveThinking.set({})
+    $messageThinking.set({})
+    $agents.set({})
+    // $agentIdByName is computed off $agents, no separate reset needed
+  })
+
+  test('thinking event appends to $liveThinking', () => {
+    $agents.setKey('agent-1', { id: 'agent-1', name: 'Aiden', state: 'generating', kind: 'ai' } as never)
+    stateHandlers.agent_activity!({
+      type: 'agent_activity',
+      agentName: 'Aiden',
+      event: { kind: 'thinking', delta: 'step 1...' },
+    } as never)
+    stateHandlers.agent_activity!({
+      type: 'agent_activity',
+      agentName: 'Aiden',
+      event: { kind: 'thinking', delta: ' step 2.' },
+    } as never)
+    expect($liveThinking.get()['agent-1']).toBe('step 1... step 2.')
+  })
+
+  test('message event transfers $liveThinking → $messageThinking keyed by msg.id, clears live', () => {
+    $agents.setKey('agent-1', { id: 'agent-1', name: 'Aiden', state: 'generating' } as never)
+    $liveThinking.setKey('agent-1', 'the reasoning')
+
+    stateHandlers.message!({
+      type: 'message',
+      message: {
+        id: 'msg-42', roomId: 'room-1', senderId: 'agent-1', senderName: 'Aiden',
+        content: 'the answer', timestamp: 0, type: 'chat',
+      },
+    } as never)
+
+    expect($messageThinking.get()['msg-42']).toBe('the reasoning')
+    expect($liveThinking.get()['agent-1']).toBeUndefined()
+  })
+
+  test('message with no accumulated thinking → $messageThinking unchanged', () => {
+    $agents.setKey('agent-1', { id: 'agent-1', name: 'Aiden', state: 'generating' } as never)
+    stateHandlers.message!({
+      type: 'message',
+      message: {
+        id: 'msg-42', roomId: 'room-1', senderId: 'agent-1', senderName: 'Aiden',
+        content: 'the answer', timestamp: 0, type: 'chat',
+      },
+    } as never)
+    expect($messageThinking.get()['msg-42']).toBeUndefined()
+  })
+
+  test('transfer runs BEFORE $roomMessages.setKey so synchronous renderMessage can read it', () => {
+    $agents.setKey('agent-1', { id: 'agent-1', name: 'Aiden', state: 'generating' } as never)
+    $liveThinking.setKey('agent-1', 'pre-transfer reasoning')
+
+    let seenWhenRoomMessagesFired: string | undefined
+    const unsub = $roomMessages.listen(() => {
+      seenWhenRoomMessagesFired = $messageThinking.get()['msg-99']
+    })
+
+    stateHandlers.message!({
+      type: 'message',
+      message: {
+        id: 'msg-99', roomId: 'room-1', senderId: 'agent-1', senderName: 'Aiden',
+        content: 'final', timestamp: 0, type: 'chat',
+      },
+    } as never)
+
+    unsub()
+    // At the moment the listener fired (synchronously off setKey), the
+    // thinking had to already be in $messageThinking.
+    expect(seenWhenRoomMessagesFired).toBe('pre-transfer reasoning')
+  })
+})

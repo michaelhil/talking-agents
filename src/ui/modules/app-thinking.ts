@@ -42,6 +42,7 @@ interface ThinkingDeps {
   readonly $thinkingTools: MapStore<Record<string, string>>
   readonly $thinkingPreviews: MapStore<Record<string, string>>
   readonly $pendingToolCheckins: MapStore<Record<string, { iterations: number; roomId: string; recentTools: ReadonlyArray<{ tool: string; success: boolean }> }>>
+  readonly $liveThinking: MapStore<Record<string, string>>
   readonly $selectedRoomId: ReadableAtom<string | null>
   readonly $visibleThinkingIndicators: ReadableAtom<ReadonlyArray<IndicatorState>>
   readonly showContextModal: (context: AgentContext, warnings?: string[]) => void
@@ -56,7 +57,7 @@ interface ThinkingController {
 export const createThinkingController = (deps: ThinkingDeps): ThinkingController => {
   const {
     messagesDiv, send,
-    $agentContexts, $agentWarnings, $thinkingTools, $thinkingPreviews, $pendingToolCheckins,
+    $agentContexts, $agentWarnings, $thinkingTools, $thinkingPreviews, $pendingToolCheckins, $liveThinking,
     $visibleThinkingIndicators,
     showContextModal,
   } = deps
@@ -123,6 +124,12 @@ export const createThinkingController = (deps: ThinkingDeps): ThinkingController
     if (agentId in warns) { delete warns[agentId]; $agentWarnings.set(warns) }
     const checkins = { ...$pendingToolCheckins.get() }
     if (agentId in checkins) { delete checkins[agentId]; $pendingToolCheckins.set(checkins) }
+    // $liveThinking is normally cleared by the message-transfer in
+    // state.ts when the assistant's message lands. Cancel/abort doesn't
+    // produce a message → defensive sweep here so the accumulator
+    // doesn't leak across evals.
+    const thinks = { ...$liveThinking.get() }
+    if (agentId in thinks) { delete thinks[agentId]; $liveThinking.set(thinks) }
   }
 
   // Reconcile DOM against the current visible-indicators set. Called by

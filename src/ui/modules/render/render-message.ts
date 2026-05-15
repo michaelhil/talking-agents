@@ -14,6 +14,7 @@ import { getPostRenderProcessors } from '../extensions/post-render-registry.ts'
 import { icon } from '../icon.ts'
 import { appendWhisperBadge } from '../whisper-badge.ts'
 import { showToast } from '../toast.ts'
+import { $messageThinking } from '../stores.ts'
 
 // Best-effort clipboard write. Tries the modern Async Clipboard API first
 // (https/localhost only; some browsers refuse on programmatic clicks), then
@@ -290,6 +291,35 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
     renderMarkdownContent(content, msg.content)
 
     div.appendChild(header)
+
+    // Persisted thinking (PR 4): renders above the response so reading
+    // order is reasoning → answer. `<details>` is open by default so
+    // the user sees the model's chain-of-thought after a kimi-k2.6 or
+    // o-series eval; when the user toggles the global "Thinking" piece
+    // off in the visibility popover (body.mh-hide-thinking), CSS
+    // suppresses the body and collapses to a single-line summary so
+    // the thinking pane doesn't dominate the chat. The user can still
+    // unfold any one message via the disclosure triangle.
+    const thinkingText = $messageThinking.get()[msg.id]
+    if (thinkingText && thinkingText.length > 0) {
+      const det = document.createElement('details')
+      det.className = 'thinking-block text-xs text-text-subtle mb-1 border-l-2 border-border pl-2'
+      det.setAttribute('data-mh-piece', 'thinking')
+      // Default open when the global pref allows; collapsed when hidden.
+      // User can always toggle individual messages via the disclosure
+      // triangle regardless of the global pref.
+      det.open = !document.body.classList.contains('mh-hide-thinking')
+      const sum = document.createElement('summary')
+      sum.className = 'cursor-pointer select-none hover:text-text'
+      sum.textContent = '💭 reasoning'
+      det.appendChild(sum)
+      const body = document.createElement('div')
+      body.className = 'mt-1 whitespace-pre-wrap break-words italic'
+      body.textContent = thinkingText
+      det.appendChild(body)
+      div.appendChild(det)
+    }
+
     div.appendChild(content)
 
     // If a script is active in this room, append the whisper attached to

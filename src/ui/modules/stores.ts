@@ -208,6 +208,26 @@ export const $messageContexts = map<Record<string, AgentContext>>({})
 /** messageId → warnings (transferred from $agentWarnings when message arrives) */
 export const $messageWarnings = map<Record<string, string[]>>({})
 
+/**
+ * Per-agent accumulator for thinking/reasoning deltas during a live eval.
+ * Separate from $thinkingPreviews because the latter is overwritten by
+ * content chunks when the model finishes reasoning — that's correct for
+ * the in-progress display, but it discards the reasoning before the
+ * message lands. The agent-side accumulator survives the chunk overwrite
+ * and gets transferred to $messageThinking when the assistant's message
+ * is posted to the room.
+ */
+export const $liveThinking = map<Record<string, string>>({})
+
+/**
+ * messageId → thinking text (transferred from $liveThinking when the
+ * assistant's message arrives). Rendered in the message bubble as a
+ * collapsible <details> block. Memory-only — does not survive page
+ * reload; reasoning is treated as session-local context, not durable
+ * conversation state.
+ */
+export const $messageThinking = map<Record<string, string>>({})
+
 
 // === Delivery mode + room pause ===
 

@@ -324,6 +324,40 @@
     body.mh-hide-duration [data-mh-piece="duration"] { display: none !important; }
     body.mh-hide-context  [data-mh-piece="context"]  { display: none !important; }
     body.mh-hide-model    [data-mh-piece="model"]    { display: none !important; }
+    /* Thinking visibility — special case. When globally hidden, we don't
+       remove the thinking pane (the user can still inspect individual
+       messages by clicking the disclosure triangle); we collapse it to a
+       single-line preview with an animated ellipsis to show the model
+       IS thinking, just without the spam. The persisted <details>
+       collapses by default; the live indicator's thinking preview gets
+       clamped to one line + animated dots. */
+    body.mh-hide-thinking [data-mh-piece="thinking"][open] { /* user-clicked open: respect */ }
+    body.mh-hide-thinking details[data-mh-piece="thinking"]:not([open]) > summary { color: var(--text-subtle); }
+    /* Live indicator clamp (the in-progress yellow-card preview area).
+       When hidden, clamp the preview to one line and reveal an animated
+       ellipsis after, so the user sees motion without the wall of text. */
+    body.mh-hide-thinking [data-thinking-preview] {
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      max-height: 1.4em;
+    }
+    body.mh-hide-thinking [data-thinking-preview]::after {
+      content: ' …';
+      display: inline-block;
+      animation: think-pulse 1.2s steps(4, end) infinite;
+    }
+    @keyframes think-pulse {
+      0%   { opacity: 0.3; }
+      50%  { opacity: 1; }
+      100% { opacity: 0.3; }
+    }
+    /* When the global hide is on, persisted thinking <details> defaults
+       to closed via JS (render-message.ts checks the body class at
+       render time). User toggling the disclosure triangle on a specific
+       message still works — they get the full reasoning for that one
+       message without un-hiding the global pref. */
     /* Symmetric padding so icon-only buttons read as centered. The 4 px
        flex gap on .toolbar-group handles in-cluster spacing; cluster-level
        dividers are drawn by .toolbar-divider. We deliberately do NOT put

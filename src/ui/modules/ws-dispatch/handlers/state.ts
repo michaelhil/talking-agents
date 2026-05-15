@@ -27,6 +27,8 @@ import {
   $roomIdByName,
   $agentIdByName,
   $pendingToolCheckins,
+  $liveThinking,
+  $messageThinking,
 } from '../../stores.ts'
 import type { WSOutbound } from '../../../../core/types/ws-protocol.ts'
 import { showToast } from '../../toast.ts'
@@ -82,6 +84,8 @@ export const stateHandlers: StateHandlers = {
     $agentWarnings.set({})
     $messageContexts.set({})
     $messageWarnings.set({})
+    $liveThinking.set({})
+    $messageThinking.set({})
     $mutedAgents.set(new Set())
     $turnInfo.set(null)
 
@@ -139,6 +143,22 @@ export const stateHandlers: StateHandlers = {
     const current = $roomMessages.get()[roomId] ?? []
 
     if (current.some(existing => existing.id === m.id)) return
+
+    // Transfer thinking BEFORE the $roomMessages setKey — the listener
+    // that runs renderMessage fires synchronously off the setKey, so
+    // $messageThinking[m.id] must already exist by then for the bubble
+    // to render the persisted reasoning. Warnings/contexts don't need
+    // this because they're rendered through separate stores consulted
+    // after-the-fact via the context modal, not in the initial render.
+    if (m.type === 'chat') {
+      const liveThink = $liveThinking.get()[m.senderId]
+      if (liveThink && liveThink.length > 0) {
+        $messageThinking.setKey(m.id, liveThink)
+        const remainingT = { ...$liveThinking.get() }
+        delete remainingT[m.senderId]
+        $liveThinking.set(remainingT)
+      }
+    }
 
     const updated = [...current, m]
     $roomMessages.setKey(roomId, updated.length > 200 ? updated.slice(-200) : updated)
@@ -232,9 +252,15 @@ export const stateHandlers: StateHandlers = {
 
     const event = msg.event
     if (event.kind === 'thinking' && event.delta) {
+      // Live display (cleared when chunks arrive — existing behavior).
       const prev = $thinkingPreviews.get()[id] ?? ''
       $thinkingPreviews.setKey(id, prev + event.delta)
       $thinkingTools.setKey(id, '__thinking__')
+      // Dedicated accumulator that survives the chunk-overwrite and gets
+      // transferred to $messageThinking when the message lands. This is
+      // the persistence path the user sees on the message bubble.
+      const liveSoFar = $liveThinking.get()[id] ?? ''
+      $liveThinking.setKey(id, liveSoFar + event.delta)
     } else if (event.kind === 'chunk' && event.delta) {
       const tools = $thinkingTools.get()[id]
       if (tools === '__thinking__') {

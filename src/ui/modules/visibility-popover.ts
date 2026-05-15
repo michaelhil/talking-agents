@@ -174,7 +174,7 @@ export const mountVisibilityPopover = (deps: VisibilityPopoverDeps): void => {
 
     const mhHeader = document.createElement('div')
     mhHeader.className = 'px-3 pt-1 pb-1 text-[11px] uppercase tracking-wide text-text-subtle'
-    mhHeader.textContent = 'Message header'
+    mhHeader.textContent = 'Message'
     popover.appendChild(mhHeader)
 
     let mhPrefs = readPrefs()
