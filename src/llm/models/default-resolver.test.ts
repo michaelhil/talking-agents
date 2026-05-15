@@ -67,4 +67,53 @@ describe('resolveDefaultModel', () => {
     ])
     expect(out).toBe('mistral-small-latest')
   })
+
+  // --- Thinking-model filter ---
+  // resolveDefaultModel must never pick a thinking model for a fresh seed.
+  // The kind tag lives in CURATED_MODELS; the resolver consults it.
+
+  test('provider with only thinking-curated models → skipped, next preference wins', async () => {
+    // Stub a thinking-only kimi catalog by injecting into CURATED_MODELS at
+    // runtime. Reverting after asserts so cross-test bleed doesn't happen.
+    const { CURATED_MODELS } = await import('./catalog.ts')
+    const original = CURATED_MODELS.kimi
+    ;(CURATED_MODELS as Record<string, ReadonlyArray<{ id: string; kind?: 'fast' | 'thinking' }>>).kimi = [
+      { id: 'kimi-k2.6', kind: 'thinking' },
+    ]
+    try {
+      const out = resolveDefaultModel([
+        p('kimi', 'ok', ['kimi-k2.6']),
+        p('gemini', 'ok', ['gemini-2.5-flash']),
+      ])
+      // kimi-k2.6 must be skipped; gemini picked.
+      expect(out).toBe('gemini-2.5-flash')
+    } finally {
+      ;(CURATED_MODELS as Record<string, ReadonlyArray<{ id: string }> | undefined>).kimi = original
+    }
+  })
+
+  test('provider with thinking AND fast curated → picks the fast one', async () => {
+    const { CURATED_MODELS } = await import('./catalog.ts')
+    const original = CURATED_MODELS.kimi
+    ;(CURATED_MODELS as Record<string, ReadonlyArray<{ id: string; kind?: 'fast' | 'thinking' }>>).kimi = [
+      { id: 'kimi-k2.6', kind: 'thinking' },
+      { id: 'moonshot-v1-128k' /* default 'fast' */ },
+    ]
+    try {
+      // Only kimi configured — second-pass fallback should still find the fast one.
+      const out = resolveDefaultModel([
+        p('kimi', 'ok', ['kimi-k2.6', 'moonshot-v1-128k']),
+      ])
+      expect(out).toBe('moonshot-v1-128k')
+    } finally {
+      ;(CURATED_MODELS as Record<string, ReadonlyArray<{ id: string }> | undefined>).kimi = original
+    }
+  })
+
+  test('unknown model id (not in catalog) → treated as fast (default-allow)', () => {
+    const out = resolveDefaultModel([
+      p('mistral', 'ok', ['some-future-model-id-not-in-catalog']),
+    ])
+    expect(out).toBe('some-future-model-id-not-in-catalog')
+  })
 })

@@ -20,6 +20,7 @@ import { effectiveActivePackSet } from './packs/activation.ts'
 import { createSummaryScheduler } from './core/summaries/summary-scheduler.ts'
 import { createTriggerScheduler, type TriggerScheduler } from './core/triggers/scheduler.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
+import { DEFAULTS } from './core/types/constants.ts'
 import type { ToolRegistry } from './core/types/tool.ts'
 import type { OnProviderBound, OnProviderAllFailed, OnProviderStreamFailed } from './core/types/llm.ts'
 import type { ProviderRoutingEvent } from './llm/router.ts'
@@ -507,7 +508,7 @@ export const createSystem = (options: CreateSystemOptions = {}): System => {
     if (!ai || !ai.ingestHistory || !ai.forceEvaluate) {
       return { ok: false, queued: false, reason: 'agent does not support manual activation' }
     }
-    const recent = room.getRecent((ai.getHistoryLimit() ?? 20) * 2)
+    const recent = room.getRecent((ai.getHistoryLimit() ?? DEFAULTS.historyLimit) * 2)
     ai.ingestHistory(roomId, recent)
     const queued = agent.state.get() === 'generating' && agent.state.getContext() !== roomId
     ai.forceEvaluate(roomId)

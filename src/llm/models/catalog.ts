@@ -18,6 +18,12 @@ export interface CuratedModel {
   // documented to reject `tools:` in the request for this model — the UI
   // shows a warning in the agent inspector's Tools group when this is false.
   readonly supportsTools?: boolean
+  // Reasoning/thinking class. Thinking models emit a separate reasoning
+  // channel (reasoning_content / reasoning) and typically have 5-15s
+  // time-to-first-content while reasoning. Default-resolver skips them so
+  // a fresh user's Helper agent never lands on a thinking model — users
+  // who want one pick it explicitly in the agent inspector. Absent ≡ 'fast'.
+  readonly kind?: 'fast' | 'thinking'
 }
 
 // Keyed by provider name. Order within an array is the display order.

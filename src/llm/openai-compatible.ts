@@ -68,6 +68,13 @@ interface OAIContentPart {
 interface OAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | ReadonlyArray<OAIContentPart> | null
+  // Reasoning channel on non-streamed responses (Kimi/Moonshot, DeepSeek-R1
+  // and others). Read on inbound; NEVER written on outbound — keeping
+  // reasoning out of round-tripped history is structurally enforced by
+  // ChatRequest.messages[].content being `string`, so toOAIMessages can't
+  // surface it. See note in toOAIMessages.
+  reasoning_content?: string
+  reasoning?: string
   tool_calls?: ReadonlyArray<{
     id: string
     type: 'function'
@@ -102,6 +109,14 @@ interface OAIStreamChunk {
   choices?: ReadonlyArray<{
     delta?: {
       content?: string
+      // Reasoning/thinking channel emitted by some OAI-compat providers
+      // (Kimi/Moonshot, DeepSeek-R1, Qwen QwQ, etc.) BEFORE the final
+      // content. Routed into Samsinn's thinking pane via StreamChunk.thinking;
+      // never round-tripped into outbound history.
+      reasoning_content?: string
+      // Same channel under an alternate field name (OpenAI's o-series
+      // exposes it as `reasoning` in some shapes). Treat identically.
+      reasoning?: string
       tool_calls?: ReadonlyArray<{
         index?: number
         id?: string
@@ -214,6 +229,12 @@ const markLastCacheable = <T>(arr: ReadonlyArray<T>): T[] => {
 }
 
 // === Request conversion ===
+
+// Note on reasoning_content: never round-tripped to outbound history.
+// ChatRequest.messages[].content is a plain string, so there's no path
+// for reasoning fragments to leak into the next request — even if a
+// future caller mistakenly tried, the type system blocks it. See the
+// stream/non-stream handlers above for the inbound capture.
 
 // Moonshot/Kimi rejects assistant messages with empty `content` (400
 // "must not be empty"), while OpenAI/Anthropic/Gemini accept them
@@ -432,6 +453,10 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
         : ''
     const { thinking, content } = splitThinkAndContent(rawContent)
     void thinking // thinking in non-streaming is discarded — samsinn only surfaces it during streaming
+    // Same disposition for the native reasoning channel — read so an
+    // optional future caller can wire it through, discarded here.
+    void choice.message.reasoning_content
+    void choice.message.reasoning
 
     const toolCalls: NativeToolCall[] | undefined = choice.message.tool_calls?.length
       ? choice.message.tool_calls.map(tc => ({
@@ -616,6 +641,16 @@ export const createOpenAICompatibleProvider = (config: OpenAICompatConfig): LLMP
 
             const choice = parsed.choices?.[0]
             if (!choice) continue
+
+            // Native reasoning channel (Kimi, DeepSeek, etc.) — surface as
+            // thinking BEFORE content for this frame so the UI sees reasoning
+            // arrive in its natural order. The `<think>` text-embedded parser
+            // is disjoint from this field, so both can coexist (e.g. DeepSeek
+            // historically emitted both). Both routes feed the same channel.
+            const deltaReasoning = choice.delta?.reasoning_content ?? choice.delta?.reasoning ?? ''
+            if (deltaReasoning) {
+              yield { delta: '', thinking: deltaReasoning, done: false }
+            }
 
             const deltaContent = choice.delta?.content ?? ''
             if (deltaContent) {

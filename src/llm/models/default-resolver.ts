@@ -17,7 +17,15 @@
 // Pure: takes a snapshot of provider state, no I/O, easy to unit test.
 // ============================================================================
 
-import { DEFAULT_PREFERENCE_ORDER } from './catalog.ts'
+import { DEFAULT_PREFERENCE_ORDER, CURATED_MODELS } from './catalog.ts'
+
+// Skip thinking models when picking the default — a fresh user's seed
+// agent should never land on a 10s-time-to-first-content reasoning model.
+// Unknown ids (not in the curated map) are treated as fast (default).
+const isThinking = (provider: string, modelId: string): boolean => {
+  const entry = CURATED_MODELS[provider]?.find(m => m.id === modelId)
+  return entry?.kind === 'thinking'
+}
 
 export interface ProviderSnapshot {
   readonly name: string
@@ -42,16 +50,22 @@ const formatModelRef = (_providerName: string, modelId: string): string => model
 
 export const resolveDefaultModel = (providers: ReadonlyArray<ProviderSnapshot>): string => {
   // First pass: walk the curated preference order, pick the first ok provider
-  // that has at least one model.
+  // whose first NON-thinking model is available.
   for (const prov of DEFAULT_PREFERENCE_ORDER) {
     const p = providers.find(x => x.name === prov && x.status === 'ok')
-    if (!p || p.models.length === 0) continue
-    return formatModelRef(prov, p.models[0]!.id)
+    if (!p) continue
+    const firstFast = p.models.find(m => !isThinking(prov, m.id))
+    if (!firstFast) continue
+    return formatModelRef(prov, firstFast.id)
   }
-  // Second pass: any remaining ok provider with models. Catches providers that
-  // aren't in DEFAULT_PREFERENCE_ORDER (e.g. mistral, openrouter, sambanova,
-  // ollama) so a fresh user with only Ollama configured still gets a default.
-  const fallback = providers.find(x => x.status === 'ok' && x.models.length > 0)
-  if (fallback) return formatModelRef(fallback.name, fallback.models[0]!.id)
+  // Second pass: any remaining ok provider with a non-thinking model. Catches
+  // providers that aren't in DEFAULT_PREFERENCE_ORDER (mistral, openrouter,
+  // sambanova, ollama) so a fresh user with only Ollama configured still
+  // gets a default.
+  for (const p of providers) {
+    if (p.status !== 'ok') continue
+    const firstFast = p.models.find(m => !isThinking(p.name, m.id))
+    if (firstFast) return formatModelRef(p.name, firstFast.id)
+  }
   return ''
 }

@@ -212,6 +212,54 @@ describe('createOpenAICompatibleProvider', () => {
     } finally { fx.stop() }
   })
 
+  test('streaming: delta.reasoning_content routed to thinking channel', async () => {
+    const fx = startFixture(() => ({
+      status: 200, body: '',
+      streamLines: [
+        JSON.stringify({ choices: [{ delta: { reasoning_content: 'step 1...' } }] }),
+        JSON.stringify({ choices: [{ delta: { reasoning_content: ' step 2...' } }] }),
+        JSON.stringify({ choices: [{ delta: { content: 'the answer' } }] }),
+        JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }),
+        '[DONE]',
+      ],
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'kimi', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      const chunks: Array<{ delta: string; done: boolean; thinking?: string }> = []
+      for await (const chunk of provider.stream!({ model: 'kimi-k2.6', messages: [{ role: 'user', content: 'x' }] })) {
+        chunks.push(chunk as { delta: string; done: boolean; thinking?: string })
+      }
+      const allThinking = chunks.map(c => c.thinking ?? '').join('')
+      const allContent = chunks.map(c => c.delta).join('')
+      expect(allThinking).toContain('step 1...')
+      expect(allThinking).toContain('step 2...')
+      expect(allContent).toBe('the answer')
+      // Reasoning must NOT bleed into content.
+      expect(allContent).not.toContain('step')
+    } finally { fx.stop() }
+  })
+
+  test('streaming: delta.reasoning (alt field name) also routed to thinking', async () => {
+    const fx = startFixture(() => ({
+      status: 200, body: '',
+      streamLines: [
+        JSON.stringify({ choices: [{ delta: { reasoning: 'internal' } }] }),
+        JSON.stringify({ choices: [{ delta: { content: 'reply' } }] }),
+        JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }),
+        '[DONE]',
+      ],
+    }))
+    try {
+      const provider = createOpenAICompatibleProvider({ name: 'test', getBaseUrl: () => fx.url, getApiKey: () => 'k' })
+      const chunks: Array<{ delta: string; done: boolean; thinking?: string }> = []
+      for await (const chunk of provider.stream!({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
+        chunks.push(chunk as { delta: string; done: boolean; thinking?: string })
+      }
+      expect(chunks.map(c => c.thinking ?? '').join('')).toContain('internal')
+      expect(chunks.map(c => c.delta).join('')).toBe('reply')
+    } finally { fx.stop() }
+  })
+
   test('models() returns list from /models endpoint', async () => {
     const fx = startFixture(() => ({
       status: 200,
