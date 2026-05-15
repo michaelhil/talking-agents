@@ -18,6 +18,7 @@ coverage/
 .claude/state/
 .claude/projects/
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 
 # Health audit reports — only baseline + spike artifacts + suppression list +
 # the one-time test report commit; daily reports and last-run.txt are ephemeral.
